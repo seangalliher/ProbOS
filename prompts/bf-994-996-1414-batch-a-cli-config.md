@@ -52,6 +52,7 @@ D1 to D7 as stated above this contract; they are recorded in `DECISIONS.md` (6.1
 | R3-A1 | A1 (review round 2) | `src/probos/__main__.py`, `tests/test_bf994_init_config_reaches_its_api.py`, `PROGRESS.md`, `DECISIONS.md` | `init writes its URL and model as typed, judges the path the client sends and asks again for a URL the client cannot parse (#1414 review)` |
 | R3-A2 | A2 (review round 2) | `src/probos/provider_setup.py`, `src/probos/__main__.py`, `tests/test_bf995_setup_redaction.py`, `PROGRESS.md`, `DECISIONS.md` | `setup also hides each API key's Python-quoted spelling (#1414 A2)` |
 | R3-A3 | A3 (review round 2) | `src/probos/routers/config.py`, `tests/test_bf996_hxi_save_on_disk.py`, `PROGRESS.md`, `DECISIONS.md` | `an HXI settings save answers 409 for any file PyYAML cannot parse or any result it cannot dump (#1414 A3)` |
+| R4-A3 | A3 (review round 3) | `src/probos/routers/config.py`, `tests/test_bf996_hxi_save_on_disk.py`, `PROGRESS.md`, `DECISIONS.md` | `an HXI settings save answers 409 only for its dump's own failures; tracker corrections (#1414 review)` |
 
 **Overlap with B15** (from `git diff --stat 40f9305f feat/ad1355-s1-birth-chamber-removal-20261125`):
 
@@ -91,6 +92,7 @@ D1 to D7 as stated above this contract; they are recorded in `DECISIONS.md` (6.1
 - R3-A1: `-m pytest tests/test_bf994_init_config_reaches_its_api.py tests/test_ad1135_provider_setup.py tests/test_ad1135_setup_cli.py -q -n 0`
 - R3-A2: `-m pytest tests/test_bf995_setup_redaction.py tests/test_ad1135_provider_setup.py tests/test_ad1135_setup_cli.py tests/test_ad1137_doctor.py tests/test_ad1137_quickstart_chain.py tests/test_ad1327_verifier_independence.py -q -n 0`
 - R3-A3: `-m pytest tests/test_bf996_hxi_save_on_disk.py tests/test_ad741_config_api.py tests/test_ad741_integration.py tests/test_ad741_secret_redaction.py tests/test_bf908_crew_scope_token.py -q -n 0`
+- R4-A3: `-m pytest tests/test_bf996_hxi_save_on_disk.py tests/test_ad741_config_api.py tests/test_ad741_integration.py tests/test_ad741_secret_redaction.py tests/test_bf908_crew_scope_token.py tests/test_ad1151_durable_tool_outputs.py tests/test_ad1346_admission_file_write_census.py -q -n 0`
 
 **Broad gate:** once, after M4: `scripts/run_test_gate.py --label 1414-batch-a --receipt logs/gates/1414-batch-a.receipt.json`.
 
@@ -2198,7 +2200,7 @@ Review round 2 (three delta re-reviews on `gpt-6.1-sol`, one per slice, on the h
 |---|---|---|
 | F3 `%2F` classified as root | **Fix**: classify on `url.raw_path.strip(b"/") == b""` | It is R1's own regression, so it must be fixed. Your `split(b"?")` and `decode` steps are dropped: init refuses `?` before this runs, and a query would make the path non-root (`openai`) anyway. |
 | F1 typed URL != loaded URL | **Fix**: render URL **and model** with `json.dumps(v, ensure_ascii=False)`; init applies setup's model rule (non-empty, `isprintable()`, `provider_setup.py:228`) | Ordinary reach: typed operator input. The failure is silent (init prints "Created"), and the `/\u002f` routing is a regression. The model has the same defect, and the reviewer named it, so fixing only the URL would bring round 4. JSON leaves only non-printable characters raw (DEL, NEL, U+2028, surrogates). `normalize_base_url` already refuses those for the URL; the model rule refuses them for the model. Weighing: these characters are rare, but the reach is operator input, not an injected fault, so the rule says fix. |
-| F2 URL urllib accepts, httpx refuses | **Fix in init**: `_init_api_format` lets `httpx.InvalidURL` propagate and is called inside the URL loop's `try` | Ordinary reach (typed). Init gates on the same parse the format is judged on, so the acceptance check and the classifier cannot drift apart. R1's `except` -> `openai` branch was unreachable from init anyway: its only caller is `__main__.py:1220`. Rejected home: `normalize_base_url`. It is shared with setup (`:1529`, `provider_setup.py:222`), so changing it changes the AD-1135 contract. Setup's share becomes #1820 item 1. |
+| F2 URL urllib accepts, httpx refuses | **Fix in init**: `_init_api_format` lets `httpx.InvalidURL` propagate and is called inside the URL loop's `try` | Ordinary reach (typed). Init gates on the same parse the format is judged on, so the acceptance check and the classifier cannot drift apart. R1's `except` -> `openai` branch was reachable from init: on the round-2 head init accepted `http://[v1.a]:11434/`, wrote `openai`, and the client raised `InvalidURL` (round-3 finding A1-R3-F2); the gate on the same parse closes it. Rejected home: `normalize_base_url`. It is shared with setup (`:1529`, `provider_setup.py:222`), so changing it changes the AD-1135 contract. Setup's share becomes #1820 item 1. |
 | (pre-empt) home path with `"` or `\` in `repo_path` | **Record**, #1820 item 2, and declare it in brief A1-6 | Not a finding and not a regression. Writing `repo_path` losslessly would turn setup's pinned refusals (`test_ad1135_setup_cli.py:601-628`) into acceptances, which changes AD-1135's contract. |
 
 **Effect on setup's create path and the goldens:** none in bytes. `_setup_scaffold` passes the constants `"http://127.0.0.1:8080/v1"` and `"unset"` (`__main__.py:1313-1320`). The three goldens use ASCII URLs and models with no `"` or `\` (`test_ad1135_provider_setup.py:60-67`). For such strings `json.dumps` gives exactly `"value"`.
@@ -3084,7 +3086,7 @@ REPLACE:
 
 **Claims of the A2 and A3 answer that rested on reading, and what the oracle measured (orchestrator, 2026-11-25).**
 1. `!!omap` and `!!pairs` load as tuples that `safe_dump` cannot represent: refuted (correction 2).
-2. Inside `_write_yaml_atomic` only `OSError` can follow the dump: confirmed by reading and by the dump's output: the statements after `yaml.safe_dump(data, sort_keys=False)` are `tempfile.mkstemp`, `os.fdopen`, two `write` calls and `os.replace` (`routers/config.py`, `_write_yaml_atomic`), and `safe_dump` with `allow_unicode` unset writes ASCII.
+2. Inside `_write_yaml_atomic` only `OSError` can follow the dump: refuted by the round-3 review (A3-R3-F2): `os.fdopen` and `os.replace` can raise `TypeError` or `MemoryError`, which round 3's clause answered 409. R4-A3 (section 6f) converts a failure of the dump, and only of the dump, inside `_write_yaml_atomic`.
 3. The two quoted spellings cover every way a Python `repr` embeds a key: confirmed exhaustively: every key of 1 to 3 characters over `a`, a backslash, `'`, `"`, U+0007, U+00E9, U+0085, U+D800 and `<`, inside 100 hosts each (81,900 pairs, both quote regimes), has its embedded spelling among the key's forms; against the head's `_key_forms` the same probe finds 71,880 outside them.
 4. The quoted forms keep `redact`'s one-pass proof: confirmed: `test_redact_hides_every_form_of_every_accepted_key_beside_and_between_markers` passes on the oracle.
 5. Under the simplified B7 line the three B7 tests stay green and A2-M9 is still killed: confirmed (807 passed in the consumer run; A2-M9 killed). A2-M10's mutant is now the code itself, so the row is retired.
@@ -3096,6 +3098,327 @@ REPLACE:
 11. A2-F1 does not depend on the key: confirmed (a key `zzz-<redacted>` in place of `prefix-<redacted>` prints the same line).
 12. The 200-segment float raises `OverflowError` in `safe_load` and `load_config`: confirmed (the premise lines of `test_a_file_pyyaml_cannot_construct_is_refused_and_left_as_it_is[sexagesimal]` pass).
 13. Ollama's documentation uses the placeholder `api_key='ollama'`: not checked (a web claim); it supported the whole-line boundary the Architect rejected, which is not built.
+
+## 6f. Review round 3: repair R4-A3 (A3) and the two A1 prose corrections (the round-three brake decision)
+
+Review round 3 (three delta re-reviews on `gpt-6.1-sol`, one per slice, on the head `f0403a61`) returned REQUEST CHANGES for all three slices: A1 one P2 (pre-existing) and two P3 prose findings; A2 one P2 (pre-existing); A3 one P2 (pre-existing), one P3 that R3-A3 introduced (A3-R3-F2: its broad `except Exception` around the whole write answered 409 for a failure after the dump) and one P3 that only an injected fault reaches (A3-R3-F3). Round three is the brake: the decision below is the Architect's (the round-three brake consult, session 027bc314), on the findings of the three rounds. The head is `f0403a612d94e43c908533f004fa8fb8ea7b7e9a`.
+
+### R4-A3 decisions
+
+Line numbers in the wording table below are those of contract v8; the edits were made on v8's text and the numbers move in v9.
+
+**My decision is to continue with a fourth round, kept narrow.** Round four repairs one code finding, A3-R3-F2, in two files: `src/probos/routers/config.py` and `tests/test_bf996_hxi_save_on_disk.py`. It also carries wording changes in the contract, PROGRESS and DECISIONS. A1 and A2 code is not touched.
+
+**Why not rescope or split:** A3-R3-F2 is a regression that my own R3-A3 design introduced. Rescope never defers a regression. Splitting would hold back BF-996 with that regression still in it.
+
+**Captain:** none of the escalation conditions apply. No control is weakened and no authority is widened.
+
+#### 1. A3-R3-F2 must be fixed here; I choose S, scoped to the dump
+
+The convergence rule applies because a repair introduced this regression. That alone requires the fix, even though it is injected-only and P3.
+
+I choose **S**, with one simplification: `_write_yaml_atomic` re-raises a dump failure as the existing `_ConfigUnreadable`, so no new class is needed.
+
+- **Why not N:** N puts back a list of exception types. D4 rejected that list once already ("each review round found another").
+- **Why S:** S answers 409 for exactly the dump's own failures, by construction. Anything after the dump goes back to the base behaviour: `OSError` gives 500 `write_failed`, and any other exception gives the server's own 500. The test now injects at `yaml.safe_dump`, the real step, instead of replacing the whole helper.
+- **What the client sees does not change:** still 409 `config_unreadable` with the reason `holds a value that cannot be written back`. That keeps A3-3, D4 and the landing comment mostly intact.
+
+The pairs R4-A3-P1 to R4-A3-P4 are sections 6.41 and 6.42 below (`P-1` to `P-3` of 6.41 edit `src/probos/routers/config.py`; `P-1` of 6.42 edits the test file, re-targeting the injected test at `yaml.safe_dump` and adding the test that is red on the head); P5 and P6 (PROGRESS.md and DECISIONS.md) are sections 6.43 and 6.44, built by the orchestrator from section 5's wording table.
+
+I inject at `os.replace`, not `os.fdopen`, on purpose. A failure at `fdopen` leaks a descriptor and leaves a `.tmp` file (that is A3-R3-F3, recorded below), which would make the test dirty.
+
+**Red on the head:** `test_a_failure_after_the_dump_is_not_answered_as_an_unwritable_value[type-error]` and `[memory-error]`. On the head both get a 409. The re-targeted test is green on the head and after the change.
+
+**Census (contract section 7, rows A3-M11 to A3-M18):**
+
+| Row | Mutant | Killer |
+|---|---|---|
+| A3-M11 (rewritten) | the router's `except _ConfigUnreadable` clause around the write is removed | `test_a_file_holding_a_value_the_dump_refuses_is_refused_and_left_as_it_is[*]`, `test_a_dump_that_fails_with_any_other_exception_answers_409_and_leaves_the_file[*]` |
+| A3-M12 (rewritten) | the dump's `except` in `_write_yaml_atomic` catches only `ValueError` | `test_a_file_holding_a_value_the_dump_refuses_is_refused_and_left_as_it_is[nesting]`, `test_a_dump_that_fails_with_any_other_exception_answers_409_and_leaves_the_file[*]` |
+| A3-M17 (rewritten) | the dump's `except` in `_write_yaml_atomic` catches only `(ValueError, RecursionError)` again | `test_a_dump_that_fails_with_any_other_exception_answers_409_and_leaves_the_file[*]` |
+| A3-M18 | **retired**: the R3 `except Exception` clause it reordered is gone | (none) |
+| A3-M19 (new) | the router's write clause catches `Exception` again, in place of `_ConfigUnreadable` (round 3's clause) | `test_a_failure_after_the_dump_is_not_answered_as_an_unwritable_value[*]` |
+| A3-M20 (new) | the dump's `try` in `_write_yaml_atomic` widens to cover `mkstemp` through `os.replace` | `test_a_failure_after_the_dump_is_not_answered_as_an_unwritable_value[*]` |
+
+- **Result:** A3 becomes 18 of 18 killed. A3-M10 stays a review property and A3-M18 is retired.
+- **What to rerun:** run all A3 rows on the R4 overlay. `routers/config.py` differs and they all share one test file, so this is cheap. The A1 and A2 rows are not rerun because none of their files change.
+
+**Commit subject:** `an HXI settings save answers 409 only for its dump's own failures; contract and tracker corrections (#1414 review)`
+
+#### 2. A1-R3-F2 and A1-R3-F3: docs-only, verified by the orchestrator
+
+Both are contract prose. They change no code and no tracker claim. Put them in the R4 commit; the orchestrator checks them against `probe-a1-r3-reach.txt` and the renderer, and no reviewer verdict is needed on them. Tell the R4 delta reviewer they are contract-only.
+
+- **Line 2201.** Replace `R1's \`except\` -> \`openai\` branch was unreachable from init anyway: its only caller is \`__main__.py:1220\`.` with: `R1's \`except\` -> \`openai\` branch was reachable from init: on the round-2 head init accepted \`http://[v1.a]:11434/\`, wrote \`openai\`, and the client raised \`InvalidURL\` (round-3 finding A1-R3-F2); the gate on the same parse closes it.`
+- **Line 3174.** Replace the whole line with: `- A1-2: the scaffold sets \`llm_timeout_seconds: 300.0\` under \`cognitive:\`, and writes the URL and the model as JSON strings. Setup's edit and \`--force\` paths never add the timeout, and the \`CognitiveConfig\` default stays 30.0.`
+
+#### 3. The three pre-existing P2s
+
+The convergence rule covers findings in the batch's own change and claims. These three are pre-existing, outside Batch A's lines, and the batch does not make them worse, so the filing policy decides where they go. They do get honest wording where Batch A's landing text sits next to them (section 5).
+
+| Finding | Rule applies? | Where it goes | Reason |
+|---|---|---|---|
+| **A3-R3-F1**: the UI reuses a spent CSRF token | No: not in a Batch A file, not a regression (base, round 2 and head behave alike) | **(a) a separate issue; it takes the last discovery slot** | It reaches any operator, on the very feature BF-996 repairs. I confirmed it by reading the code; it was not run in a browser. `useSettingsStore.ts:139-143` returns early when `loaded`; `:199` and `:223` rely on that call to get a fresh token; `routers/config.py:69-71` consumes a token when it is used. It is an independently reachable production defect. |
+| **A1-R3-F1**: `.env` `PROBOS_LLM_URL` with the default `cognitive` | No: pre-existing and outside the claim's lines | **(b) a #1820 item** | Reach is narrower. Compose sets the variable in the real process environment, which works. `.env.example` does not list `PROBOS_LLM_URL` (Grep: no match). `init` and `setup` always write a `cognitive:` section. The fix changes boot behaviour, which this contract forbids. |
+| **A2-R3-F1**: doctor does not withhold short keys | No: outside A2's files and claims (A2-5 and D3 cover setup) | **(b) a #1820 item** | It needs a key under 8 characters placed in a field whose validator quotes it. Real provider keys are longer. The suggested fix would hide Ollama's documented placeholder key, `ollama`, from every doctor message that contains the word. |
+
+There is no budget exception: one slot is used, by A3-R3-F1.
+
+The orchestrator should file the A3-R3-F1 issue **before the R4 commit**, so PROGRESS and the contract can name its number.
+
+**New issue: HXI settings: a second save in one page session answers 403 `invalid_csrf` until a reload**
+- **Reach:** any operator who saves twice without reloading the page.
+- **Cause:** `openSettings()` returns early when `loaded` (BF-304's cache), so `applyDraft`'s refresh after a 200 or a 403 keeps the token it already spent.
+- **Not repaired in Batch A:** it is the UI client's defect, pre-existing, and a TypeScript change would need its own UI tests and review.
+- **Smallest repair:** after any POST that consumed the token, fetch a fresh snapshot and token, bypassing the cache, without losing a rejected draft.
+
+**#1820 item: `.env` `PROBOS_LLM_URL` is ignored when there is no `cognitive:` section**
+- **Reach:** the URL is set only in `.env`, and the config file is missing or has no `cognitive:` section.
+- **Cause:** `SystemConfig.cognitive` is built once at import (`config.py:3915`, validator `:336-341`), and `main()` loads `.env` afterwards (`__main__.py:4266-4267`).
+- **Not repaired:** it changes boot behaviour, which Batch A's contract forbids.
+- **Smallest repair:** a `default_factory` for `CognitiveConfig`, with a boot-order test.
+
+**#1820 item: doctor shows short keys that a validator quotes**
+- **Reach:** a `cognitive.llm_api_key*` value under 8 characters that is also the value of a field whose validator quotes it with `{v!r}` (for example `attachments.vision_tier`). It shows literally, or in its repr spelling, in doctor's config-load error and DEBUG log (`doctor/runner.py:24,133`).
+- **Not repaired:** it is outside Batch A, and withholding short values hides ordinary words, as AD-1137's comment says.
+- **Smallest repair:** doctor withholds each key's whole forms, whatever their length, only inside the validation-error text, not every message.
+
+#### 4. A3-R3-F3: record it on #1820
+
+It is injected-only, P3, pre-existing and not a regression, so the rule says record it.
+
+**#1820 item: a failed `os.fdopen` in `_write_yaml_atomic` leaks a descriptor and leaves a `.tmp` file**
+- **Reach:** injected only (`routers/config.py:190-201`). `mkstemp`'s descriptor is not closed when `fdopen` fails, and on Windows the unlink of the still-open file fails silently.
+- **Answer to the client:** correct, 500 `write_failed`.
+- **Smallest repair:** close `fd` if `fdopen` raises, then unlink.
+
+#### 5. Wording that must change before the gate
+
+| Where | Change |
+|---|---|
+| PROGRESS.md:7 (BF-996), as a whole-line pair | (a) Replace `; any other exception from the write step gets the same answer (\`test_a_dump_that_fails_with_any_other_exception_answers_409_and_leaves_the_file\`, the failure injected).` with `; any other exception from the dump gets the same answer (\`test_a_dump_that_fails_with_any_other_exception_answers_409_and_leaves_the_file\`, the failure injected at the dump), and one from a later step of the write is not answered as a value that cannot be written back (\`test_a_failure_after_the_dump_is_not_answered_as_an_unwritable_value\`, the failure injected).` (b) After `...\`test_two_saves_before_a_restart_keep_both_changes\`).` add ` From the HXI, a second save in one page session is still refused 403 until a reload, because the settings store reuses a spent CSRF token (pre-existing; #1852).` (c) Replace `17 of 17 killed (rows A3-M1 to A3-M9 and A3-M11 to A3-M18,` with `18 of 18 killed (rows A3-M1 to A3-M9, A3-M11 to A3-M17, A3-M19 and A3-M20,`, and `A3-M10 is a review property.` with `A3-M10 is a review property, and A3-M18 was retired with the clause it reordered.` |
+| DECISIONS.md:19 (D4) | Replace `listing the parse's and the dump's exception types (each review round found another, and the dump runs before any file is opened, so anything but \`OSError\` there is the dump's).` with `listing the parse's and the dump's exception types (each review round found another); catching any exception from the whole write as the dump's (a later step can raise more than \`OSError\`, so \`_write_yaml_atomic\` converts a failure of the dump, and only of the dump, to \`_ConfigUnreadable\`).` |
+| Contract line 3087 (claim 2) | Replace the whole line with `2. Inside \`_write_yaml_atomic\` only \`OSError\` can follow the dump: refuted by the round-3 review (A3-R3-F2): \`os.fdopen\` and \`os.replace\` can raise \`TypeError\` or \`MemoryError\`, which round 3's clause answered 409. R4-A3 (section 6f) converts a failure of the dump, and only of the dump, inside \`_write_yaml_atomic\`.` |
+| Contract line 3199 (A3-3) | Replace from `So does a merged mapping` to the end of the line with: `So does a merged mapping, from the file or the patch, that \`yaml.safe_dump\` refuses with any exception (an integer of over 4,300 digits, nesting too deep), with the reason \`holds a value that cannot be written back\`: \`_write_yaml_atomic\` turns a failure of its dump, and only of its dump, into \`_ConfigUnreadable\` before any file is opened. An \`OSError\` from a later step is still 500 \`write_failed\`; any other exception from a later step is not caught by the router (500, as on the base).` |
+| Contract, landing item 3 (line 3217) | Append: ` From the HXI, a second save in one page session is still refused 403 until a reload (the settings store reuses a spent CSRF token): pre-existing, #1852.` |
+| Contract, landing item 4 (line 3214) | Append: ` Set only in a .env file, it does not reach a startup whose config file is missing or has no cognitive: section (the default is built before .env loads): pre-existing, recorded on #1820.` |
+| Contract, census line (3219) | Change `A3 17/17 killed` to `A3 18/18 (A3-M18 retired) killed`. |
+| Contract, new section 6f | Insert before `## 7.` (line 3100): this decision table and the pairs R4-A3-P1 to P4. Leave the history in 6d and 6e (lines 2231 and 2242) as written; 6f supersedes them. |
+| #1820 wave comment | Grows from ten items to thirteen: A1-R3-F1, A2-R3-F1 and A3-R3-F3. |
+
+D3 does not name doctor's threshold: D3 is about setup's messages, and doctor is a separate #1820 item. D4's design sentence otherwise stands, and it does not need to mention the CSRF behaviour, which belongs to the client.
+
+#### 6. Bounds of round four
+
+- **Code:** `src/probos/routers/config.py` (P1 to P3) and `tests/test_bf996_hxi_save_on_disk.py` (P4).
+- **Prose:** the contract, PROGRESS.md:7 and DECISIONS.md:19, as listed above.
+- **Findings in scope:** A3-R3-F2, plus the A1-R3-F2 and A1-R3-F3 prose. Nothing else.
+- **Delta review:** one A3 reviewer on `gpt-6.1-sol` reads `git diff f0403a61 <R4 head>` only. Properties to check:
+  1. Only an exception raised by `yaml.safe_dump` becomes a 409.
+  2. `OSError` from a later step is still 500 `write_failed`.
+  3. Any other later exception is a 500, not a 409.
+  4. The 409 response body is unchanged.
+  5. The two tests inject at the right step, and the second is red on `f0403a61`.
+  6. The tracker and contract sentences match the code.
+
+  A1 and A2 are not re-reviewed.
+- **Focused check:** `tests/test_bf996_hxi_save_on_disk.py`, `tests/test_ad741_config_api.py`, `tests/test_ad741_integration.py`, `tests/test_ad741_secret_redaction.py`, `tests/test_bf908_crew_scope_token.py`, `tests/test_ad1151_durable_tool_outputs.py` and `tests/test_ad1346_admission_file_write_census.py`. Then the preflight, and the A3 census on the R4 overlay.
+- **Broad gate:** once, after the R4 review is clean or its findings are repaired as a delta, about 68 minutes. Any further finding goes through the round-three brake again; it does not start a round five on its own.
+
+### Oracle corrections and findings (orchestrator)
+
+1. Pairs R4-A3-P1 to P4 needed no correction. Each SEARCH occurs once at its turn and starts and ends on a line boundary (`apply_pairs.py`), `src/probos/routers/config.py` and the test file compile, and the A/B is the one the Architect predicted (Measured, item 2). P5 (PROGRESS.md line 7) and P6 (DECISIONS.md line 19) are built from the real lines by the orchestrator (`make_r4_trackers.py`): each of the Architect's replaced texts occurs exactly once in its line.
+2. The reach of A3-R3-F1 (the HXI settings store reuses a spent CSRF token) is wider than the answer states. The answer confirmed it "by reading the code; it was not run in a browser". The orchestrator ran it on the router (a token is accepted once, accepted at age 300 s, refused at 301 s) and on the shipped `useSettingsStore` under vitest, with a server double that spends a token as `post_config` does: GET t1; POST 200; POST 403; POST 403 after closing and reopening the dialog, with one GET in all. Because the router spends the token as its first statement, before the body is checked, a 422, 400, 409 or 500 spends it too: a validation error followed by the corrected save answers 403 as well. The 403 path also discards the draft (the early return of `openSettings()` resets it), and a first save more than 300 s after the page's first config fetch is refused, because nothing fetches a second token. The sentence in PROGRESS.md and in the landing comment keeps the Architect's wording ("a second save in one page session is still refused 403 until a reload"), which stays true; the full reach is in the issue filed for it (#1852).
+3. The history of that finding: AD-741 (`39a3290f`, 2026-05-17) added the router's token and a store whose `openSettings` fetched on every open, so the message "CSRF token expired - re-opening Settings." was true then; BF-304 (`7e1600c3`, 2026-05-24) made `openSettings` return early when the snapshot is loaded, which stopped the refresh.
+4. The two A1 sentences of section 2 of the answer were checked against the round-2 head's probe (`probe-a1-r3-reach.txt`): init accepted `http://[v1.a]:11434/`, wrote `openai`, and the client raised `InvalidURL` (so R1's `except` branch was reachable from init); the scaffold's JSON rendering is A1-6.
+5. Packaging: as in rounds 2 and 3 the contract (this text, v9) is committed first and alone, so the Builder's tree is clean at the head it reads; the repair commit then holds the code, the test file, PROGRESS.md and DECISIONS.md. Its subject therefore omits "contract and" from the Architect's wording: `an HXI settings save answers 409 only for its dump's own failures; tracker corrections (#1414 review)`.
+
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-25; oracle, census and the evidence for the filed issue by the orchestrator, 2026-11-25
+
+**Milestone R4-A3.** It applies to the head `f0403a61` (R3-A3). Files: `src/probos/routers/config.py`, `tests/test_bf996_hxi_save_on_disk.py`, `PROGRESS.md` (line 7) and `DECISIONS.md` (D4); this contract is rewritten by the orchestrator and committed before this milestone, not by the Builder. It changes none of A1's or A2's files. Commit subject: `an HXI settings save answers 409 only for its dump's own failures; tracker corrections (#1414 review)`. **The Builder may not:** do anything section 5 forbids, change any A1 or A2 file or the contract. If a premise line of a new test fails, that is a hard stop: report it to the Architect. The rows A3-M19 and A3-M20 are the Architect's (A3-M18 is retired).
+
+### 6.41 `src/probos/routers/config.py` (R4-A3)
+
+**P-1**
+SEARCH:
+```
+class _ConfigUnreadable(Exception):
+    """The config file cannot be the base of a save; ``str()`` is a reason that quotes none of the file."""
+
+
+def _read_disk_mapping(path: Path) -> dict[str, Any]:
+```
+REPLACE:
+```
+class _ConfigUnreadable(Exception):
+    """The config file, or the mapping a save would write, cannot be used; ``str()`` is a reason that quotes none of it."""
+
+
+def _read_disk_mapping(path: Path) -> dict[str, Any]:
+```
+
+**P-2**
+SEARCH:
+```
+def _write_yaml_atomic(path: str, data: dict) -> None:
+    p = Path(path)
+    header = f"# Edited via HXI {time.strftime('%Y-%m-%d %H:%M:%S')} UTC\n"
+    body = yaml.safe_dump(data, sort_keys=False)
+    fd, tmp = tempfile.mkstemp(dir=str(p.parent), prefix=p.name, suffix=".tmp")
+```
+REPLACE:
+```
+def _write_yaml_atomic(path: str, data: dict) -> None:
+    p = Path(path)
+    header = f"# Edited via HXI {time.strftime('%Y-%m-%d %H:%M:%S')} UTC\n"
+    try:
+        body = yaml.safe_dump(data, sort_keys=False)
+    except Exception as exc:  # any type from the dump, and only from the dump: it runs before any file is opened
+        raise _ConfigUnreadable("holds a value that cannot be written back") from exc
+    fd, tmp = tempfile.mkstemp(dir=str(p.parent), prefix=p.name, suffix=".tmp")
+```
+
+**P-3**
+SEARCH:
+```
+    except Exception as exc:
+        # Every step after _write_yaml_atomic's first statement, the dump, raises OSError (the dump's text is ASCII),
+        # so this is the dump, which runs before any file is opened. It refuses values the merged mapping can hold
+        # and load_config accepts: an integer of over 4,300 decimal digits (a YAML hex literal loads) and nesting
+        # deeper than the dump's recursion allows (from the file, or from the patch, which JSON nests as deep as it
+        # likes). Any other exception it raises is the dump's too and gets the same answer.
+        logger.warning(
+            "AD-741 config save refused (cfg_path=%s): the dump raised %s; the file is unchanged.",
+            cfg_path, type(exc).__name__,
+        )
+        return JSONResponse(
+            status_code=409, content={"error": "config_unreadable", "reason": "holds a value that cannot be written back"},
+        )
+```
+REPLACE:
+```
+    except _ConfigUnreadable as exc:
+        # _write_yaml_atomic raises this only for its dump, which runs before any file is opened. The dump refuses
+        # values the merged mapping can hold and load_config accepts: an integer of over 4,300 decimal digits (a YAML
+        # hex literal loads) and nesting deeper than the dump's recursion allows (from the file, or from the patch,
+        # which JSON nests as deep as it likes). Any other exception from the dump gets the same answer; an exception
+        # from a later step is not the dump's and is not answered here.
+        logger.warning(
+            "AD-741 config save refused (cfg_path=%s): the dump raised %s; the file is unchanged.",
+            cfg_path, type(exc.__cause__).__name__,
+        )
+        return JSONResponse(
+            status_code=409, content={"error": "config_unreadable", "reason": str(exc)},
+        )
+```
+
+### 6.42 `tests/test_bf996_hxi_save_on_disk.py` (R4-A3)
+
+**P-1**
+SEARCH:
+```
+def test_a_dump_that_fails_with_any_other_exception_answers_409_and_leaves_the_file(
+    error: Exception, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # No loadable value is known to make the dump raise anything but ValueError or RecursionError, so the fault is injected:
+    # the dump runs before a file is opened, so an exception that is not an OSError is the dump's.
+    path = _empty_file(tmp_path)
+    client, runtime = _client(path)
+
+    def fail(cfg_path: str, data: dict[str, Any]) -> None:
+        raise error
+
+    monkeypatch.setattr(config_router, "_write_yaml_atomic", fail)
+
+    response = _save(client, {"system": {"log_level": "DEBUG"}})
+
+    assert (response.status_code, response.json()) == (
+        409, {"error": "config_unreadable", "reason": "holds a value that cannot be written back"},
+    )
+    assert path.read_text(encoding="utf-8") == "{}\n"
+    assert runtime.config.system.log_level == "INFO"
+```
+REPLACE:
+```
+def test_a_dump_that_fails_with_any_other_exception_answers_409_and_leaves_the_file(
+    error: Exception, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # No loadable value is known to make the dump raise anything but ValueError or RecursionError, so the fault is injected
+    # at the dump itself, the one step whose failures the router answers 409.
+    path = _empty_file(tmp_path)
+    client, runtime = _client(path)
+
+    def fail(data: Any, **kwargs: Any) -> str:
+        raise error
+
+    monkeypatch.setattr(config_router.yaml, "safe_dump", fail)
+
+    response = _save(client, {"system": {"log_level": "DEBUG"}})
+
+    assert (response.status_code, response.json()) == (
+        409, {"error": "config_unreadable", "reason": "holds a value that cannot be written back"},
+    )
+    assert path.read_text(encoding="utf-8") == "{}\n"
+    assert list(tmp_path.glob("*.tmp")) == []  # the dump runs before a temporary file is made
+    assert runtime.config.system.log_level == "INFO"
+
+
+@pytest.mark.parametrize("error", [TypeError("not a path"), MemoryError()], ids=["type-error", "memory-error"])
+def test_a_failure_after_the_dump_is_not_answered_as_an_unwritable_value(
+    error: BaseException, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Round 3 answered any exception from the write step 409 "cannot be written back" (A3-R3-F2). Only the dump's failures
+    # are that; a later step's exception that is not an OSError reaches the server's own 500, as on the base.
+    path = _empty_file(tmp_path)
+    _, runtime = _client(path)
+    client = TestClient(create_app(runtime), raise_server_exceptions=False)
+
+    def fail(src: Any, dst: Any) -> None:
+        raise error
+
+    monkeypatch.setattr(config_router.os, "replace", fail)
+
+    response = _save(client, {"system": {"log_level": "DEBUG"}})
+
+    assert response.status_code == 500
+    assert "config_unreadable" not in response.text
+    assert path.read_text(encoding="utf-8") == "{}\n"
+    assert list(tmp_path.glob("*.tmp")) == []  # the temporary file is removed when the replace fails
+    assert runtime.config.system.log_level == "INFO"
+```
+
+### 6.43 `PROGRESS.md` (R4-A3)
+
+**P-1**
+SEARCH:
+```
+**BF-996 (2026-11-25), #1414 -- an HXI settings save merges its patch onto the config file as it is on disk, so edits made since boot are kept.** `POST /api/config` wrote a dump of the configuration the process booted with. It now writes the file's own sections plus the patch, with all-commented sections dropped by `drop_null_sections`, the helper `load_config` now shares, and validates that result before writing it. An out-of-band edit and an earlier save awaiting restart both survive (`tests/test_bf996_hxi_save_on_disk.py::test_a_save_keeps_an_edit_made_to_the_file_after_boot`, `test_two_saves_before_a_restart_keep_both_changes`). A value set by `PROBOS_LLM_URL` is not written (`test_a_save_writes_no_value_the_environment_set`). A missing file receives only the patch (`test_a_save_onto_a_missing_file_writes_only_the_patch`), and a secret already in the file stays (`test_a_secret_already_in_the_file_survives_a_save`). A file that is not UTF-8, is not YAML or is not a mapping answers 409 `config_unreadable` and is left byte for byte (`test_an_unusable_file_is_refused_and_left_as_it_is`). Any exception from the parse counts as not YAML: besides `YAMLError`, PyYAML raises `ValueError` for an impossible date, `RecursionError` for deep nesting and, from its constructors, `KeyError`, `IndexError`, `AttributeError` or `OverflowError` (`!!bool` on a non-boolean, an empty `!!int` or `!!float`, `!!timestamp` on a non-date, a long sexagesimal float; `test_a_file_pyyaml_cannot_construct_is_refused_and_left_as_it_is`). So does a config path the OS will not stat (`test_a_config_path_the_os_will_not_stat_is_refused_and_left_as_it_is`, the denial injected) or read (`test_a_directory_at_the_config_path_is_refused_and_left_as_it_is`), and a merged result the YAML dump refuses with any exception: an integer of over 4,300 decimal digits written in hex, or nesting too deep to dump (`test_a_file_holding_a_value_the_dump_refuses_is_refused_and_left_as_it_is`); any other exception from the write step gets the same answer (`test_a_dump_that_fails_with_any_other_exception_answers_409_and_leaves_the_file`, the failure injected). A write the OS refuses still answers 500 `write_failed` (`test_a_write_the_os_refuses_answers_write_failed_and_leaves_the_file`, the refusal injected). One that does not validate answers 409 `config_invalid` with `loc` and `type` only (`test_a_file_that_does_not_validate_is_refused_without_quoting_it`). One whose validation raises `OverflowError` (an integer too large for a float in `dm_agentic.budget_awareness_thresholds`) answers 409 `config_invalid` with one entry whose `loc` is empty (`test_a_file_a_validator_cannot_check_is_refused_and_left_as_it_is`); the validator, which stops `load_config` at boot on the same file, is a #1820 item. The secret-path guard still runs before the file is read (`test_a_secret_path_is_refused_before_the_file_is_read`); it, the runtime 422, `changed_fields` and hot reload are unchanged (`tests/test_ad741_config_api.py`, `tests/test_ad741_integration.py`, `tests/test_ad741_secret_redaction.py`). `tests/test_bf908_crew_scope_token.py` now expects no `auth` section in the written file. The facade baseline gains `drop_null_sections`. Mutation census: 17 of 17 killed (rows A3-M1 to A3-M9 and A3-M11 to A3-M18, run once on the candidate overlay of `dea82930` after the review repairs), each by its named cases; A3-M10 is a review property. Contract `prompts/bf-994-996-1414-batch-a-cli-config.md`.
+```
+REPLACE:
+```
+**BF-996 (2026-11-25), #1414 -- an HXI settings save merges its patch onto the config file as it is on disk, so edits made since boot are kept.** `POST /api/config` wrote a dump of the configuration the process booted with. It now writes the file's own sections plus the patch, with all-commented sections dropped by `drop_null_sections`, the helper `load_config` now shares, and validates that result before writing it. An out-of-band edit and an earlier save awaiting restart both survive (`tests/test_bf996_hxi_save_on_disk.py::test_a_save_keeps_an_edit_made_to_the_file_after_boot`, `test_two_saves_before_a_restart_keep_both_changes`). From the HXI, a second save in one page session is still refused 403 until a reload, because the settings store reuses a spent CSRF token (pre-existing; #1852). A value set by `PROBOS_LLM_URL` is not written (`test_a_save_writes_no_value_the_environment_set`). A missing file receives only the patch (`test_a_save_onto_a_missing_file_writes_only_the_patch`), and a secret already in the file stays (`test_a_secret_already_in_the_file_survives_a_save`). A file that is not UTF-8, is not YAML or is not a mapping answers 409 `config_unreadable` and is left byte for byte (`test_an_unusable_file_is_refused_and_left_as_it_is`). Any exception from the parse counts as not YAML: besides `YAMLError`, PyYAML raises `ValueError` for an impossible date, `RecursionError` for deep nesting and, from its constructors, `KeyError`, `IndexError`, `AttributeError` or `OverflowError` (`!!bool` on a non-boolean, an empty `!!int` or `!!float`, `!!timestamp` on a non-date, a long sexagesimal float; `test_a_file_pyyaml_cannot_construct_is_refused_and_left_as_it_is`). So does a config path the OS will not stat (`test_a_config_path_the_os_will_not_stat_is_refused_and_left_as_it_is`, the denial injected) or read (`test_a_directory_at_the_config_path_is_refused_and_left_as_it_is`), and a merged result the YAML dump refuses with any exception: an integer of over 4,300 decimal digits written in hex, or nesting too deep to dump (`test_a_file_holding_a_value_the_dump_refuses_is_refused_and_left_as_it_is`); any other exception from the dump gets the same answer (`test_a_dump_that_fails_with_any_other_exception_answers_409_and_leaves_the_file`, the failure injected at the dump), and one from a later step of the write is not answered as a value that cannot be written back (`test_a_failure_after_the_dump_is_not_answered_as_an_unwritable_value`, the failure injected). A write the OS refuses still answers 500 `write_failed` (`test_a_write_the_os_refuses_answers_write_failed_and_leaves_the_file`, the refusal injected). One that does not validate answers 409 `config_invalid` with `loc` and `type` only (`test_a_file_that_does_not_validate_is_refused_without_quoting_it`). One whose validation raises `OverflowError` (an integer too large for a float in `dm_agentic.budget_awareness_thresholds`) answers 409 `config_invalid` with one entry whose `loc` is empty (`test_a_file_a_validator_cannot_check_is_refused_and_left_as_it_is`); the validator, which stops `load_config` at boot on the same file, is a #1820 item. The secret-path guard still runs before the file is read (`test_a_secret_path_is_refused_before_the_file_is_read`); it, the runtime 422, `changed_fields` and hot reload are unchanged (`tests/test_ad741_config_api.py`, `tests/test_ad741_integration.py`, `tests/test_ad741_secret_redaction.py`). `tests/test_bf908_crew_scope_token.py` now expects no `auth` section in the written file. The facade baseline gains `drop_null_sections`. Mutation census: 18 of 18 killed (rows A3-M1 to A3-M9, A3-M11 to A3-M17, A3-M19 and A3-M20, run once on the candidate overlay of `dea82930` after the review repairs), each by its named cases; A3-M10 is a review property, and A3-M18 was retired with the clause it reordered. Contract `prompts/bf-994-996-1414-batch-a-cli-config.md`.
+```
+
+### 6.44 `DECISIONS.md` (R4-A3)
+
+**P-1**
+SEARCH:
+```
+- *D4.* An HXI save writes the on-disk mapping plus the patch, validated, never a dump of the running config; an unusable file answers 409 `config_unreadable` (one the OS will not stat or read, one whose parse raises any exception, and a merged result the YAML dump refuses with any exception, included), an invalid result 409 `config_invalid` with `loc` and `type` only, and a validator's `OverflowError` 409 `config_invalid` with one entry, `loc` empty; a write the OS refuses stays 500 `write_failed`. No await runs between the read and the write. Rejected: refusing a save when the file's hash differs from boot (runtime plumbing, and it blocks a legitimate save); making the `budget_awareness_thresholds` validator raise `ValueError` in this batch (it changes `load_config`'s boot failure on such a file, which this batch keeps; #1820); listing the parse's and the dump's exception types (each review round found another, and the dump runs before any file is opened, so anything but `OSError` there is the dump's).
+```
+REPLACE:
+```
+- *D4.* An HXI save writes the on-disk mapping plus the patch, validated, never a dump of the running config; an unusable file answers 409 `config_unreadable` (one the OS will not stat or read, one whose parse raises any exception, and a merged result the YAML dump refuses with any exception, included), an invalid result 409 `config_invalid` with `loc` and `type` only, and a validator's `OverflowError` 409 `config_invalid` with one entry, `loc` empty; a write the OS refuses stays 500 `write_failed`. No await runs between the read and the write. Rejected: refusing a save when the file's hash differs from boot (runtime plumbing, and it blocks a legitimate save); making the `budget_awareness_thresholds` validator raise `ValueError` in this batch (it changes `load_config`'s boot failure on such a file, which this batch keeps; #1820); listing the parse's and the dump's exception types (each review round found another); catching any exception from the whole write as the dump's (a later step can raise more than `OSError`, so `_write_yaml_atomic` converts a failure of the dump, and only of the dump, to `_ConfigUnreadable`).
+```
+
+### Measured by the orchestrator (R4-A3)
+
+- The pairs on a fresh oracle at the head `f0403a61` (tree `3bdcd79f`): P1 to P4 from the answer and P5 and P6 from `make_r4_trackers.py` apply with no problem. The oracle's tree is `8977885429de684f7b980b0a9702541db2dcb95e`; blobs: `src/probos/routers/config.py` `fa42073210b2d9f776f3cacf564661243c5e8a67`, `tests/test_bf996_hxi_save_on_disk.py` `097ca63990dd245d4e5860cce9d6a8c5bc3def38`, `PROGRESS.md` `c221e6ccba2b6c5d56c4c3e55c234ff249ce03d0`, `DECISIONS.md` `ad1af2a83266a6e74d41e6ec06d67ac2d46bc53b`.
+- A/B on the A3 test file: on the overlay 29 passed (the 27 of the head plus the two cases of the new test). The same file against the head's source: 2 failed, 27 passed. The two failures are `test_a_failure_after_the_dump_is_not_answered_as_an_unwritable_value[type-error]` and `[memory-error]`, each `assert 409 == 500` (the head answers 409 "the dump raised TypeError" for an exception injected at `os.replace`); the re-targeted test `test_a_dump_that_fails_with_any_other_exception_answers_409_and_leaves_the_file[*]` passes on both trees.
+- Census on the overlay: the baseline (the A1, A2 and A3 test files, `test_ad1135_provider_setup.py` and `test_ad741_secret_redaction.py`) is 270 passed, 1 skipped, 0 failed (the A1 and A2 files are unchanged, so their rows are not rerun); A3 is 18 of 18 killed (rows A3-M1 to A3-M9, A3-M11 to A3-M17, A3-M19 and A3-M20), and every named killer fails in its row: A3-M11 fails `[hex-int]`, `[nesting]`, `[representer-error]` and `[type-error]`; A3-M12 fails `[nesting]` and the two injected cases; A3-M17 the two injected cases; A3-M19 and A3-M20 the two cases `[type-error]` and `[memory-error]` of the new test. A3-M10 is a review property and A3-M18 is retired.
+- The Architect's seven-file focused list on the overlay (`tests/test_bf996_hxi_save_on_disk.py`, `test_ad741_config_api.py`, `test_ad741_integration.py`, `test_ad741_secret_redaction.py`, `test_bf908_crew_scope_token.py`, `test_ad1151_durable_tool_outputs.py`, `test_ad1346_admission_file_write_census.py`): 177 passed.
+- The seven script checks pass on the overlay: `check_config_facade.py`, `gen_ad_ledger.py --check`, `gen_config_reference.py --check`, `check_config_profiles.py`, `check_architecture_principles.py`, `check_seam_contracts.py`, `check_store_registry.py`.
+- The filed issue for A3-R3-F1 is #1852 (a duplicate search at 18:41Z over 1,544 issues: none). The three other pre-existing findings go to the #1820 wave comment after the merge: A1-R3-F1, A2-R3-F1 and A3-R3-F3.
 
 ## 7. Mutation census and generated-artifact commands
 
@@ -3140,14 +3463,16 @@ REPLACE:
 | A3-M8 | a missing file answers 409 | `test_a_save_onto_a_missing_file_writes_only_the_patch` |
 | A3-M9 | the YAML `except` clause catches only `yaml.YAMLError` | `test_an_unusable_file_is_refused_and_left_as_it_is[impossible-date,deep-nesting]` |
 | A3-M10 | `changed_fields` is computed from the disk diff | no test; Diff Reviewer property A3-5 |
-| A3-M11 | the write's dump clause (`except Exception`) is removed | `test_a_file_holding_a_value_the_dump_refuses_is_refused_and_left_as_it_is[*]`, `test_a_dump_that_fails_with_any_other_exception_answers_409_and_leaves_the_file[*]` |
-| A3-M12 | the write's dump clause catches only `ValueError` | `test_a_file_holding_a_value_the_dump_refuses_is_refused_and_left_as_it_is[nesting]`, `test_a_dump_that_fails_with_any_other_exception_answers_409_and_leaves_the_file[*]` |
+| A3-M11 | the router's `except _ConfigUnreadable` clause around the write is removed | `test_a_file_holding_a_value_the_dump_refuses_is_refused_and_left_as_it_is[*]`, `test_a_dump_that_fails_with_any_other_exception_answers_409_and_leaves_the_file[*]` |
+| A3-M12 | the dump's `except` in `_write_yaml_atomic` catches only `ValueError` | `test_a_file_holding_a_value_the_dump_refuses_is_refused_and_left_as_it_is[nesting]`, `test_a_dump_that_fails_with_any_other_exception_answers_409_and_leaves_the_file[*]` |
 | A3-M13 | the disk validation's `OverflowError` clause is removed | `test_a_file_a_validator_cannot_check_is_refused_and_left_as_it_is` |
 | A3-M14 | `path.exists()` runs before the reader's `try` again | `test_a_config_path_the_os_will_not_stat_is_refused_and_left_as_it_is` |
 | A3-M15 | the secret guard is moved after the disk read | `test_a_secret_path_is_refused_before_the_file_is_read` |
 | A3-M16 | the reader's `except` catches only `(yaml.YAMLError, ValueError, RecursionError)` again | `test_a_file_pyyaml_cannot_construct_is_refused_and_left_as_it_is[*]` |
-| A3-M17 | the write's dump clause catches only `(ValueError, RecursionError)` again | `test_a_dump_that_fails_with_any_other_exception_answers_409_and_leaves_the_file[*]` |
-| A3-M18 | the write's `except Exception` clause comes before `except OSError` | `test_a_write_the_os_refuses_answers_write_failed_and_leaves_the_file` |
+| A3-M17 | the dump's `except` in `_write_yaml_atomic` catches only `(ValueError, RecursionError)` again | `test_a_dump_that_fails_with_any_other_exception_answers_409_and_leaves_the_file[*]` |
+| A3-M18 | retired by R4-A3: the round-3 `except Exception` clause it reordered is gone | -- |
+| A3-M19 | the router's write clause catches `Exception` again, in place of `_ConfigUnreadable` (round 3's clause) | `test_a_failure_after_the_dump_is_not_answered_as_an_unwritable_value[*]` |
+| A3-M20 | the dump's `try` in `_write_yaml_atomic` widens to cover `mkstemp` through `os.replace` | `test_a_failure_after_the_dump_is_not_answered_as_an_unwritable_value[*]` |
 
 Generated artifacts, in order, at M4, on the post-B15 base (interpreter `d:/ProbOS/.venv/Scripts/python.exe`):
 
@@ -3171,7 +3496,7 @@ Preflight phases that fail if a step is missing:
 
 **A1. Consumers to accept the change:** `OpenAICompatibleClient` (`llm_client.py:866`, `:2383`, `:2494`), `load_config`, and setup's create path (`_setup_scaffold`).
 - A1-1: `_cmd_init` writes `ollama` only when the URL, given one trailing slash and parsed by httpx as the client does (dot segments removed), has port 11434 and an encoded path (`raw_path`) that is empty or slashes only, so `/%2F` is `openai`. Every other URL, including `http://localhost:11434/v1` and `/v1/.`, gets `openai`. The model-default line is unchanged.
-- A1-2: the only scaffold change is `llm_timeout_seconds: 300.0` under `cognitive:`. Setup's edit and `--force` paths never add it, and the `CognitiveConfig` default stays 30.0.
+- A1-2: the scaffold sets `llm_timeout_seconds: 300.0` under `cognitive:`, and writes the URL and the model as JSON strings. Setup's edit and `--force` paths never add the timeout, and the `CognitiveConfig` default stays 30.0.
 - A1-3: the init goldens move only by that line and by the Ollama row's format word; the comment says why.
 - A1-4: the docs and the compose comment say `PROBOS_LLM_URL` replaces only the shared URL and that per-tier URLs win. The compose example still ends in `/v1`.
 - A1-5: init asks for the endpoint URL again, printing setup's reason, for any URL `provider_setup.normalize_base_url` refuses (a query or fragment, credentials, whitespace, a scheme other than http(s), no host, a port that does not parse or is 0), and, printing httpx's reason, for any URL httpx cannot parse once given its trailing slash (the parse the format is judged on, inside the same `try`). It writes the URL as typed once one passes.
@@ -3196,7 +3521,7 @@ Preflight phases that fail if a step is missing:
 **A3. Consumers:** the HXI settings store (`ui/src/store/useSettingsStore.ts:196-229`) and the next boot's `load_config`.
 - A3-1: what is written equals `_deep_merge(on-disk mapping, patch)`. The on-disk mapping is passed through `drop_null_sections`, the same function `load_config` calls, and is never a dump of `runtime.config`.
 - A3-2: that mapping passes `SystemConfig.model_validate` before the write. On failure the answer is 409 `config_invalid` with `loc` and `type` only, and the file and `runtime.config` are unchanged. An `OverflowError` from a validator, which pydantic does not wrap, answers 409 `config_invalid` with the one entry `{"loc": [], "type": "OverflowError"}`; the validator itself is a #1820 item.
-- A3-3: a missing file starts from `{}`. A file whose existence check or read raises `OSError`, that is not UTF-8, whose parse raises any exception (besides `YAMLError`, PyYAML raises `ValueError`, `RecursionError`, and from its constructors `KeyError`, `IndexError`, `AttributeError` and `OverflowError`) or that is not a mapping answers 409 `config_unreadable` with a fixed reason and is left untouched. So does a merged mapping, from the file or the patch, that `yaml.safe_dump` refuses with any exception (an integer of over 4,300 digits, nesting too deep), with the reason `holds a value that cannot be written back`; the dump runs before any file is opened. An `OSError` from the write is still 500 `write_failed`.
+- A3-3: a missing file starts from `{}`. A file whose existence check or read raises `OSError`, that is not UTF-8, whose parse raises any exception (besides `YAMLError`, PyYAML raises `ValueError`, `RecursionError`, and from its constructors `KeyError`, `IndexError`, `AttributeError` and `OverflowError`) or that is not a mapping answers 409 `config_unreadable` with a fixed reason and is left untouched. So does a merged mapping, from the file or the patch, that `yaml.safe_dump` refuses with any exception (an integer of over 4,300 digits, nesting too deep), with the reason `holds a value that cannot be written back`: `_write_yaml_atomic` turns a failure of its dump, and only of its dump, into `_ConfigUnreadable` before any file is opened. An `OSError` from a later step is still 500 `write_failed`; any other exception from a later step is not caught by the router (500, as on the base).
 - A3-4: no `await` runs between the disk read and `_write_yaml_atomic`.
 - A3-5: the secret guard (400) runs first. The runtime merge and 422, the 503, the runtime-based `changed_fields` and hot reload are unchanged.
 - A3-6: `load_config` behaves the same for every input, including the `AttributeError` for a top level that is not a mapping.
@@ -3211,12 +3536,12 @@ Batch A (CLI and configuration) is merged in <PR #...> (<sha>), gated by <receip
 
 - [x] Item 2 (init with Ollama posted to /v1/api/chat): BF-994. init writes the openai format for its /v1 default; only an Ollama root as the client sends it (port 11434, an encoded path that is empty once dot segments are removed) keeps ollama. init asks again for a URL setup's rule refuses, such as one with a query, for a URL the client could not be built from, and for a model that is not printable text, and it writes the URL and the model exactly as typed. Proof: tests/test_bf994_init_config_reaches_its_api.py, a real OpenAICompatibleClient over a mock transport (POST /v1/chat/completions for the detected default, /api/chat for a typed root and for /v1/.., /%2F/chat/completions for /%2F). Setup's acceptance of a URL httpx cannot parse and a home path the scaffold cannot carry are recorded on #1820.
 - [x] Item 5 (30 s timeout in generated configs): BF-994. The scaffold shared by init and setup's create path sets llm_timeout_seconds: 300.0; existing files are unchanged.
-- [x] Item 4 (PROBOS_LLM_URL reaches only the shared URL): behaves as documented; docs/getting-started/configuration.md and the docker-compose.yml comment now say a tier with its own llm_base_url_<tier> keeps it. No code change.
+- [x] Item 4 (PROBOS_LLM_URL reaches only the shared URL): behaves as documented; docs/getting-started/configuration.md and the docker-compose.yml comment now say a tier with its own llm_base_url_<tier> keeps it. No code change. Set only in a .env file, it does not reach a startup whose config file is missing or has no cognitive: section (the default is built before .env loads): pre-existing, recorded on #1820.
 - [x] Item 6 (excerpt over 200 characters): BF-995. Cut marker U+2026; a key of "." gives 200 characters (227 before).
 - [x] Item 7 (setup redacts only the key being configured): BF-995. Setup redacts every cognitive.llm_api_key* value in the existing file at the eight sites that print text from it, in each key's literal, encoded and Python-quoted spellings (a validator's {v!r}, a model shown with repr), a key with no UTF-8 form included. Other secret kinds in the file are out of this item's scope; the config path lines, a key that is part of the <redacted> marker and a key that only the words printed around a value complete are recorded on #1820.
-- [x] Item 3 (HXI save reverts out-of-band edits): BF-996. The save merges its patch onto the file as it is on disk; a file it cannot stat, read, parse or validate, or a merged result the YAML dump refuses, answers 409 and is left as it is, and a write the OS refuses still answers 500 write_failed. Proof: tests/test_bf996_hxi_save_on_disk.py through the real router. The budget_awareness_thresholds validator's OverflowError, which also stops a boot, is a #1820 item.
+- [x] Item 3 (HXI save reverts out-of-band edits): BF-996. The save merges its patch onto the file as it is on disk; a file it cannot stat, read, parse or validate, or a merged result the YAML dump refuses, answers 409 and is left as it is, and a write the OS refuses still answers 500 write_failed. Proof: tests/test_bf996_hxi_save_on_disk.py through the real router. The budget_awareness_thresholds validator's OverflowError, which also stops a boot, is a #1820 item. From the HXI, a second save in one page session is still refused 403 until a reload (the settings store reuses a spent CSRF token): pre-existing, #1852.
 
-Mutation census: A1 14/14 (A1-M9 retired), A2 13/13 (A2-M10 retired), A3 17/17 killed; A3-M10 is a review property.
+Mutation census: A1 14/14 (A1-M9 retired), A2 13/13 (A2-M10 retired), A3 18/18 (A3-M18 retired) killed; A3-M10 is a review property.
 Not ticked here: items 1, 8 to 14 (Batches B and C, the item 10 consolidation, item 13 as a limit).
 ```
 
