@@ -10,6 +10,16 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ## Era V — Civilization (Phases 31-36)
 
+### Acclimation S1 -- the AD-486 Birth Chamber and the department activation scheduler deleted (2026-11-25, #1700, AD-1355)
+
+- *Scope.* `holodeck/__init__.py` and the deleted `chamber.py`, `gates.py`, `phases.py`, `affect.py`, `scheduler.py`; `startup/finalize.py`, `agent_onboarding.py`, `assignment.py`, `proactive.py`, `config.py`, `config_models/crew.py`, `config_models/__init__.py`, `events.py`, `event_persistence.py`, `config/system.yaml`; test `tests/test_ad1355_birth_chamber_removed.py`. Contract `prompts/ad-1355-s1-birth-chamber-removal.md`. Slice S1 of #1700.
+- *D1.* A config that still carries `holodeck_birth_chamber:` loads with the key ignored, as `SystemConfig` ignores unknown keys (the BF-926 and AD-1270 slice 4c precedent); the tracked yaml drops it. Rejected: a warned legacy key (new loader machinery for a section whose only effect was off by default).
+- *D2.* The six `HOLODECK_*` event types whose one producer was the chamber are deleted with their grandfathered rows; AD-539b's four `HOLODECK_SCENARIO_*` stay. A grandfathered member is never routed to events.db, and the durable reader resolves an unknown name to none, so no stored row is orphaned. Rejected: keeping them as reserved values (members with no producer).
+- *D3.* The deletion is proved by a census of `src/` for the four names #1700's acceptance line lists, with controls that it reads the real tree and reports a planted reference, and by the default-path suites; no differential boot test, because every deleted branch was unreachable at the default.
+- *D4.* This entry's heading does not lead with the AD number, so the ledger keeps AD-1355 allocated and open while S2 to S9 remain.
+- *Effect.* None at the default. An operator who had set `enabled: true` now gets the default path: admitted agents are no longer held at `ship_records` or skipped by the proactive loop, and assignment subscriptions are no longer queued.
+- *Reversal.* Revert the three S1 commits.
+
 ### BF-992 -- Readers that hold a slot id count episodes under the agent's sovereign id: boot camp, recall probe, profile (2026-11-24, #1324)
 
 - *Scope.* `boot_camp.py`, `startup/finalize.py`, `cognitive/episodic.py`, `cognitive/qualification_tests.py`, `acm.py`, `cognitive/memory_probes.py`; tests `tests/test_bf992_boot_camp_episode_owner.py`, `tests/test_bf992_slot_id_readers.py`. Contract `prompts/bf-992-episode-owner-id.md`. Builds the #1324 register addition of 2026-10-29.

@@ -445,17 +445,19 @@ def _problem_lines(text: str, kind: str) -> list[str]:
 
 
 def test_every_member_is_declared_or_grandfathered_never_both() -> None:
-    """DECL-1: 396 members = 42 declared + 354 grandfathered, disjoint (AD-1337 S2 declared SECRET_MASKED).
+    """DECL-1: 390 members = 42 declared + 348 grandfathered, disjoint (AD-1337 S2 declared SECRET_MASKED).
 
     AD-1270 (#1324) slice 4c deleted BOOT_CAMP_PHASE_ADVANCED with its one producer (AD-509's
     tracker): 397 -> 396, 356 -> 355; and BOOT_CAMP_PHASE_ADVANCE with AD-638's phases 2 and 3:
-    396 -> 395, 355 -> 354. The DECL-3 golden snapshot keeps its 356 names.
+    396 -> 395, 355 -> 354. AD-1355 S1 (#1700) deleted the six grandfathered HOLODECK_* members
+    whose one producer was AD-486's Birth Chamber: 396 -> 390, 354 -> 348. The DECL-3 golden
+    snapshot keeps its 356 names.
     """
     names = set(EventType.__members__)
     declared = set(ep.DECLARATIONS)
     assert not declared & ep.GRANDFATHERED
     assert declared | ep.GRANDFATHERED == names
-    assert (len(names), len(declared), len(ep.GRANDFATHERED)) == (396, 42, 354)
+    assert (len(names), len(declared), len(ep.GRANDFATHERED)) == (390, 42, 348)
     assert isinstance(ep.GRANDFATHERED, frozenset)
     assert ep.assert_complete(EventType.__members__) is None
 
@@ -590,4 +592,4 @@ def test_every_member_keeps_str_equality_and_pickle_identity() -> None:
         )
     ]
     assert broken == []
-    assert len(EventType) == 396  # AD-1270 (#1324) slice 4c deleted two members; AD-1337 S2 (#1560) added SECRET_MASKED
+    assert len(EventType) == 390  # AD-1270 (#1324) slice 4c deleted two members; AD-1337 S2 (#1560) added SECRET_MASKED; AD-1355 S1 (#1700) deleted six

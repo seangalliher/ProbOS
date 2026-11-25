@@ -851,20 +851,6 @@ onboarding:
   enabled: true
   activation_trust_threshold: 0.65
   naming_ceremony: true
-holodeck_birth_chamber:
-  enabled: false
-  bypass_for_existing_agents: true
-  department_order:
-  - security
-  - operations
-  - engineering
-  - science
-  - medical
-  calibration_min_episodes: 5
-  affective_baseline_check_enabled: true
-  auto_advance_enabled: true
-  auto_advance_poll_interval_seconds: 2.0
-  max_self_discovery_probe_attempts: 3
 holodeck_scenarios:
   enabled: false
   auto_register_with_harness: true

@@ -359,6 +359,8 @@ async def _off_observation(
     assert "nudge_cooldown_seconds" not in config["boot_camp"]
     # BF-962/963 (#1792) deleted the unread orientation flag.
     assert "populate_ward_room_department" not in config["orientation"]
+    # AD-1355 S1 (#1700) deleted AD-486's Birth Chamber section.
+    assert "holodeck_birth_chamber" not in config
     # BF-937 (#1678) changed a default: promoted agents go to {data_dir}/promoted-agents, never the source checkout.
     assert config["self_improvement"]["persistence_root_dir"] == ""
     runtime = _local_runtime()

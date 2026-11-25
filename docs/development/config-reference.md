@@ -766,21 +766,6 @@ AD-442: Onboarding ceremony configuration.
 | `activation_trust_threshold` | `float` | `0.65` | — |  |
 | `naming_ceremony` | `bool` | `True` | — |  |
 
-## `holodeck_birth_chamber`
-
-AD-486: Holodeck Birth Chamber — graduated cognitive onboarding.
-
-| Field | Type | Default | Bounds | Description |
-|---|---|---|---|---|
-| `enabled` | `bool` | `False` | — |  |
-| `bypass_for_existing_agents` | `bool` | `True` | — |  |
-| `department_order` | `list[str]` | `['security', 'operations', 'engineering', 'science', 'medical']` | — |  |
-| `calibration_min_episodes` | `int` | `5` | ≥ 1 |  |
-| `affective_baseline_check_enabled` | `bool` | `True` | — |  |
-| `auto_advance_enabled` | `bool` | `True` | — |  |
-| `auto_advance_poll_interval_seconds` | `float` | `2.0` | ≥ 0.1, ≤ 30.0 |  |
-| `max_self_discovery_probe_attempts` | `int` | `3` | ≥ 1 |  |
-
 ## `holodeck_scenarios`
 
 AD-539b: Holodeck scenario generation from skill gaps.

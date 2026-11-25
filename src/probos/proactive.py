@@ -1130,12 +1130,6 @@ class ProactiveCognitiveLoop:
             shadow_at(_admission, presented_id=agent.id, work_kind="proactive_cycle", seam=SEAM_PROACTIVE, origin="system", origin_id="proactive_cycle", refused=_stopped is not None)
             if _stopped is not None:
                 continue
-            # AD-486: Skip agents still in Birth Chamber (pre-graduation).
-            # Default-disabled chamber (no runtime.birth_chamber) treats
-            # all agents as graduated → zero behavior change.
-            chamber = getattr(rt, "birth_chamber", None)
-            if chamber is not None and not chamber.is_graduated(agent.id):
-                continue
             eligible_agents.append(agent)
 
         # AD-636: Calculate stagger delay

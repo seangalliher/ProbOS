@@ -47,13 +47,13 @@ handoff_to_e2:
 pydantic_version: 2.12.5
 surface_counts:
   aliased_fields: 1
-  canonical_dump_leaves: 1896
-  field_definitions: 1886
+  canonical_dump_leaves: 1884
+  field_definitions: 1877
   incidental: 13
-  own_models: 229
-  owned: 297
-  public_names: 310
-canonical_dump_sha256: 54b84ea6c30b1cfeb1264f03bc9040586d1477b86d8a271f994c3bfe74eb0753
+  own_models: 228
+  owned: 296
+  public_names: 309
+canonical_dump_sha256: 1daa02e0ff25d3dde7b9dd908a38468c533cd0f3b93d73d6b8bd18c3b35c15ea
 non_instantiable:
 - A2APeerConfig
 - BaseModel
@@ -269,7 +269,6 @@ names:
   GroundTruthConfig: {kind: model, tier: owned}
   GroundingConfig: {kind: model, tier: owned}
   GroupChatConfig: {kind: model, tier: owned}
-  HolodeckBirthChamberConfig: {kind: model, tier: owned}
   HolodeckScenarioConfig: {kind: model, tier: owned}
   HolodeckTeamSimulationConfig: {kind: model, tier: owned}
   HooksConfig: {kind: model, tier: owned}
@@ -2090,21 +2089,6 @@ models:
     - {default: 'False', name: scale_aware_facilitation_enabled}
     - {default: '5', name: facilitation_gate_threshold}
     - {default: '0', name: force_facilitation_min}
-  HolodeckBirthChamberConfig:
-    qualname: HolodeckBirthChamberConfig
-    bases:
-    - BaseModel
-    - object
-    schema_sha256: 8169314c573b9b8b3bd5cf7eb0c59cad38a8e5c2b94416b2984a35ba149ac7d8
-    fields:
-    - {default: 'False', name: enabled}
-    - {default: 'True', name: bypass_for_existing_agents}
-    - {default: <required>, has_default_factory: true, name: department_order}
-    - {default: '5', name: calibration_min_episodes}
-    - {default: 'True', name: affective_baseline_check_enabled}
-    - {default: 'True', name: auto_advance_enabled}
-    - {default: '2.0', name: auto_advance_poll_interval_seconds}
-    - {default: '3', name: max_self_discovery_probe_attempts}
   HolodeckScenarioConfig:
     qualname: HolodeckScenarioConfig
     bases:
@@ -3427,7 +3411,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: 1b59da8eed80e6c6bcb1e1184862fa4c4d4601c3e9768347887939433d21eeb6
+    schema_sha256: 160d0b2067c95579890187149f1dc84f18e8578f52db4482ecfb6a29be988861
     fields:
     - {default: SystemInfo(...), name: system}
     - {default: PoolConfig(...), name: pools}
@@ -3462,7 +3446,6 @@ models:
     - {default: QualityTriggerConfig(...), name: quality_trigger}
     - {default: QualityRouterConfig(...), name: quality_router}
     - {default: OnboardingConfig(...), name: onboarding}
-    - {default: HolodeckBirthChamberConfig(...), name: holodeck_birth_chamber}
     - {default: HolodeckScenarioConfig(...), name: holodeck_scenarios}
     - {default: HolodeckTeamSimulationConfig(...), name: team_simulations}
     - {default: SkillRequestConfig(...), name: skill_requests}
