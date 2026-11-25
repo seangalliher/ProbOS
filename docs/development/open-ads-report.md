@@ -35,7 +35,7 @@ Derived from all four authorities. A tree scan sees only the numbers that reache
 
 | Authority | Availability | Captured | Extent |
 |---|---|---|---|
-| `git log` commit subjects | pinned snapshot | 2026-11-25T04:43:09+00:00 at `57699a2e` | 4571 subjects, 1083 numbers |
+| `git log` commit subjects | pinned snapshot | 2026-11-25T10:12:22+00:00 at `3e1d43d4` | 4585 subjects, 1083 numbers |
 | `DECISIONS.md, decisions-era-1-genesis.md, decisions-era-2-emergence.md, decisions-era-3-product.md, decisions-era-4-evolution.md, decisions-era-5-unification.md` | live, every run | at check time | AD/BF entry headings |
 | `PROGRESS.md, progress-era-1-genesis.md, progress-era-2-emergence.md, progress-era-3-product.md, progress-era-4-evolution.md, progress-era-5-unification.md` | live, every run | at check time | AD/BF status head lines |
 | `gh issue list --state all` | pinned snapshot (network) | 2026-10-12T09:12:39+00:00 | 1410 issues, 971 numbers |
@@ -46,7 +46,7 @@ The two pinned layers are refreshed by running the generator (`--online` for iss
 
 | State | AD | BF | Meaning |
 |---|---|---|---|
-| `allocated-open` | 49 | 9 | assigned, issue open, no shipped code |
+| `allocated-open` | 50 | 9 | assigned, issue open, no shipped code |
 | `deferred` | 0 | 0 | assigned, explicitly postponed |
 | `superseded` | 1 | 0 | replaced by a later number |
 | `retired` | 10 | 0 | abandoned, number **not** reusable |
@@ -54,10 +54,11 @@ The two pinned layers are refreshed by running the generator (`--online` for iss
 
 ## Allocated and open — **do not reuse these numbers**
 
-58 numbers. Every one is assigned. A recursive tree scan reports the ones without code as free.
+59 numbers. Every one is assigned. A recursive tree scan reports the ones without code as free.
 
 | Number | Issue | Why | Title |
 |---|---|---|---|
+| `AD-1355` | — | mentioned by an authority, no code and no closure |  |
 | `AD-1319` | [#1464](https://github.com/seangalliher/ProbOS/issues/1464) | issue #1464 open, no code | AD-1319: Ship View - state-bound 3D projection of the live mesh (child of AD-1307) |
 | `AD-1313` | [#1365](https://github.com/seangalliher/ProbOS/issues/1365) | issue #1365 open, no code | AD-1313: Authentic digital visual language and spatial continuity for HXI work |
 | `AD-1312` | [#1366](https://github.com/seangalliher/ProbOS/issues/1366) | issue #1366 open, no code | AD-1312: Contextual crew, knowledge, and administration experience |
@@ -152,7 +153,7 @@ _(none)_
 
 Numbers below the ceiling that no authority mentions. The issue layer is a snapshot and audits allocate before writing code, so silence here is absence of evidence. Confirm against live issues before minting.
 
-**AD** (290): 2-18, 140-141, 154-227, 229-261, 275, 278-280, 285-292, 301, 303, 306-307, 310, 325-336, 356, 374, 420-422, 503-506, 531, 533, 535-537, 542, 544-549, 555, 559, 578, 624, 681, 684, 767-789, 814, 829-831, 844, 848-852, 957, 967-971, 973-974, 1020, 1039, 1056-1064, 1066-1067, 1090, 1096-1118, 1237-1238, 1249, 1252-1255, 1262-1264, 1266, 1268, 1272, 1329-1335, 1338-1339, 1342, 1345, 1348, 1351-1355
+**AD** (289): 2-18, 140-141, 154-227, 229-261, 275, 278-280, 285-292, 301, 303, 306-307, 310, 325-336, 356, 374, 420-422, 503-506, 531, 533, 535-537, 542, 544-549, 555, 559, 578, 624, 681, 684, 767-789, 814, 829-831, 844, 848-852, 957, 967-971, 973-974, 1020, 1039, 1056-1064, 1066-1067, 1090, 1096-1118, 1237-1238, 1249, 1252-1255, 1262-1264, 1266, 1268, 1272, 1329-1335, 1338-1339, 1342, 1345, 1348, 1351-1354
 
 **BF** (351): 1-3, 14-22, 26, 28, 38, 42, 45-48, 50-52, 54-56, 61-62, 70, 72-75, 77, 81, 87-98, 105, 107, 117, 119-122, 176, 180-182, 202, 205, 220-221, 327-330, 333-596, 681, 899, 954, 956, 962-969, 971-979
 
@@ -306,8 +307,8 @@ A *collision* below means two issues each **lead** with the identical number. Su
 9 head-shaped lines could not be parsed. A malformed or historical entry is skipped and counted, never fatal — five eras of formatting conventions are represented in these files.
 
 ```
-PROGRESS.md:1779 head-shaped line yielded no AD/BF token
-PROGRESS.md:1785 head-shaped line yielded no AD/BF token
+PROGRESS.md:1781 head-shaped line yielded no AD/BF token
+PROGRESS.md:1787 head-shaped line yielded no AD/BF token
 progress-era-3-product.md:146 head-shaped line yielded no AD/BF token
 progress-era-3-product.md:167 head-shaped line yielded no AD/BF token
 progress-era-3-product.md:190 head-shaped line yielded no AD/BF token

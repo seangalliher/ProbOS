@@ -672,14 +672,6 @@ violations:
   rationale: Crosses the repository's stated SRP review trigger. No decomposition AD owns this class yet; frozen so a new oversized class cannot land unreviewed.
   review_by: AD-1270h closeout
 - category: srp-size
-  key: probos.events::EventType
-  triggers:
-  - lines
-  disposition: debt
-  owner: AD-1270h
-  rationale: Crosses the repository's stated SRP review trigger. No decomposition AD owns this class yet; frozen so a new oversized class cannot land unreviewed.
-  review_by: AD-1270h closeout
-- category: srp-size
   key: probos.experience.renderer::ExecutionRenderer
   triggers:
   - lines
@@ -707,14 +699,6 @@ violations:
   review_by: AD-1270h closeout
 - category: srp-size
   key: probos.federation.telemetry_relay::FederationTelemetryRelay
-  triggers:
-  - methods
-  disposition: debt
-  owner: AD-1270h
-  rationale: Crosses the repository's stated SRP review trigger. No decomposition AD owns this class yet; frozen so a new oversized class cannot land unreviewed.
-  review_by: AD-1270h closeout
-- category: srp-size
-  key: probos.holodeck.chamber::BirthChamber
   triggers:
   - methods
   disposition: debt
