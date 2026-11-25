@@ -1524,8 +1524,10 @@ def test_committed_baseline_records_the_measured_surface(
     # own_models 228 -> 229, and the check prints names=310.
     # AD-1355 S1 (#1700) removes the owned model HolodeckBirthChamberConfig: public_names 310 -> 309,
     # owned 297 -> 296, own_models 229 -> 228, and the check prints names=309.
-    assert counts["public_names"] == 309  # AD-1355 S1 (#1700): HolodeckBirthChamberConfig
-    assert counts["owned"] == 296  # AD-1355 S1 (#1700): HolodeckBirthChamberConfig was owned
+    # #1414 A3 adds the owned function drop_null_sections, which load_config and the HXI config save share:
+    # public_names 309 -> 310, owned 296 -> 297, and the check prints names=310.
+    assert counts["public_names"] == 310  # #1414 A3: drop_null_sections
+    assert counts["owned"] == 297  # #1414 A3: drop_null_sections is owned
     assert counts["incidental"] == 13
     assert counts["own_models"] == 228  # AD-1355 S1 (#1700): HolodeckBirthChamberConfig
     # AD-1152 adds only the default-False event_correlation_enabled leaf.
@@ -1577,7 +1579,8 @@ def test_committed_baseline_records_the_measured_surface(
     assert counts["aliased_fields"] == 1
     # AD-1270 (#1324) slice 4c removes the BootCampPhaseConfig model (names 310 -> 309, models 230 -> 229).
     # AD-1346 M3c (#1604) adds AdmissionConfig (309 -> 310, 229 -> 230).
-    assert len(baseline["names"]) == 309  # AD-1355 S1 (#1700): HolodeckBirthChamberConfig (310 -> 309)
+    # AD-1355 S1 (#1700) removes HolodeckBirthChamberConfig (310 -> 309).
+    assert len(baseline["names"]) == 310  # #1414 A3: drop_null_sections (309 -> 310)
     assert len(baseline["models"]) == 229  # AD-1355 S1 (#1700): HolodeckBirthChamberConfig (230 -> 229)
 
 
@@ -1815,7 +1818,8 @@ def test_check_is_green_on_the_committed_baseline() -> None:
     assert "config facade check passed" in proc.stdout
     # AD-1270 (#1324) slice 4c removes BootCampPhaseConfig (names=310 -> names=309).
     # AD-1346 M3c (#1604) adds AdmissionConfig (names=309 -> names=310).
-    assert "names=309" in proc.stdout  # AD-1355 S1 (#1700): HolodeckBirthChamberConfig (names=310 -> names=309)
+    # AD-1355 S1 (#1700) removes HolodeckBirthChamberConfig (names=310 -> names=309).
+    assert "names=310" in proc.stdout  # #1414 A3: drop_null_sections (names=309 -> names=310)
 
 
 def test_config_facade_runs_between_the_other_two_config_phases() -> None:

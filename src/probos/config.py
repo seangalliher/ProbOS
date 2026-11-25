@@ -4152,6 +4152,16 @@ class SystemConfig(BaseModel):
         return v
 
 
+def drop_null_sections(document: dict[str, Any]) -> dict[str, Any]:
+    """Return ``document`` without its top-level ``None`` values.
+
+    YAML sections with all values commented out parse as key: None; dropping them lets pydantic use
+    the section's defaults instead of failing validation. load_config and the HXI config save
+    (routers/config.py, #1414 item 3) share this rule.
+    """
+    return {k: v for k, v in document.items() if v is not None}
+
+
 def load_config(path: str | Path) -> SystemConfig:
     """Load and validate system config from a YAML file."""
     path = Path(path)
@@ -4159,7 +4169,4 @@ def load_config(path: str | Path) -> SystemConfig:
         return SystemConfig()
     with open(path, encoding="utf-8") as f:
         raw = yaml.safe_load(f) or {}
-    # YAML sections with all values commented out parse as key: None.
-    # Remove these so pydantic uses defaults instead of failing validation.
-    raw = {k: v for k, v in raw.items() if v is not None}
-    return SystemConfig.model_validate(raw)
+    return SystemConfig.model_validate(drop_null_sections(raw))
