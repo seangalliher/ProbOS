@@ -285,7 +285,8 @@ def test_a_claim_quoted_over_several_lines_leaves_the_reply_unchanged(reply, fir
     ),
 ])
 def test_a_fence_ends_only_on_its_own_kind_and_length(text, expected, eol) -> None:
-    """A fence ends at the first later line of the same character, at least as long; a stray opener masks nothing."""
+    """A fence ends at the first later line of the same character, at least as long; a stray opener makes no
+    fenced span."""
     found = find_lookup_claim(text.replace("\n", eol))
     assert found is not None and expected in found.lower()
 
