@@ -114,8 +114,9 @@ async def build_ws_workforce_snapshot(
         return {"work_items": [], "bookings": [], "resources": []}
     # #1414 item 11: past the cap the snapshot carries the first ``limit`` rows in the
     # store's order (priority, then newest) instead of failing the whole socket. The
-    # HXI upserts snapshot rows without removing any and re-reads every bucket on each
-    # snapshot, so a partial list is correct and the rest arrives by REST.
+    # HXI upserts snapshot rows without removing any and marks every bucket stale, so
+    # a partial list removes nothing; a surface that shows a bucket re-reads it by
+    # REST, up to that bucket's cap.
     visible_items = (await store.list_ws_visible_work_items(limit=limit))[:limit]
     return {
         "work_items": [item.to_dict() for item in visible_items],

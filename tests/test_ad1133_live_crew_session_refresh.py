@@ -619,7 +619,8 @@ async def test_ws_workforce_snapshot_ordinary_overflow_is_stable(
 ) -> None:
     # BF-997 (#1414 item 11) supersedes AD-1133's "Overflow closes 1013" for the
     # workforce source: past the cap the snapshot keeps the first 100 rows in the
-    # store's order (newest first here), and the HXI re-reads the rest by REST.
+    # store's order (newest first here); the HXI marks its buckets stale and a
+    # surface that shows a bucket re-reads it by REST, up to that bucket's cap.
     # Every other snapshot overflow still ends the socket with 1013
     # (test_snapshot_source_overflow_closes_1013_without_partial_frame).
     for index in range(101):
