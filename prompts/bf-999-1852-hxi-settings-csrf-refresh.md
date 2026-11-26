@@ -3,7 +3,8 @@
 **Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-26
 **Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-26 (review round 1 amendment: D8 to D10, sections 6.5 to 6.8, M3)
 **Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-26 (review round 2 amendment: D11, sections 6.9 and 6.10, M4)
-**Status:** M1 `f7086568`, M2 `418cc977` and M3 `fa73f33a` built; the round-2 amendment builds as M4. **Base:** main `f7acb948` (tree `f12fe25c`). **Issue:** #1852 (PR says `Refs #1852`). **Path:** `prompts/bf-999-1852-hxi-settings-csrf-refresh.md`. **Estimated tests:** 1 new vitest file (14 cases after M3; 12 at M1); no existing test changes. **No AD.** BF-999 allocated by the orchestrator (four-source enumeration, 02:32Z); the ledger on main reads latest BF-998, next BF-999 (`docs/development/open-ads-report.md:32`).
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-26 (review round 3 amendment at the round-three brake: section 6.11, M5)
+**Status:** M1 `f7086568`, M2 `418cc977`, M3 `fa73f33a` and M4 `579c8c14` built; the round-3 amendment builds as M5. **Base:** main `f7acb948` (tree `f12fe25c`). **Issue:** #1852 (PR says `Refs #1852`). **Path:** `prompts/bf-999-1852-hxi-settings-csrf-refresh.md`. **Estimated tests:** 1 new vitest file (14 cases after M3; 12 at M1); no existing test changes. **No AD.** BF-999 allocated by the orchestrator (four-source enumeration, 02:32Z); the ledger on main reads latest BF-998, next BF-999 (`docs/development/open-ads-report.md:32`).
 
 ## 1. Problem
 
@@ -65,12 +66,12 @@
   - The new cases check behaviour on the wire (posts and gets). They do not pin the field.
 - **D11 The double answers a POST only from measured router answers (F4).**
   - Why: D10(b)'s M3 rule answered 422 for `'+5000'`, `' 5000 '`, `'5000.0'`, `'1_000'` and `true`; the router answers each of them 200 (orchestrator probe, a TestClient over the unchanged router, head `fa73f33a`). pydantic's lax integer parsing accepts more forms than any rule here can list. The same was true of the "any string" acceptance for the other fields.
-  - Chosen: `MEASURED`, a table keyed by the exact body the store sends for each case's patch (four bodies), each mapped to the router's measured answer: 200, or 422 `validation_failed` with one error entry. A live-token POST whose body is not in the table is recorded in `unmeasured` and refused with a thrown error, which the store reports as an APPLY error, and `afterEach` fails the case on any recorded body. `readPatch` and the 400 `invalid_json` branch are removed. No case and no store path sends a non-JSON body, and the branch also answered `invalid_json` to a JSON `null` body, which the router answers 400 `patch_required` (`config.py`:271-273, read).
+  - Chosen: `MEASURED`, a table keyed by the exact body the store sends for each case's patch (four bodies), each mapped to the router's measured answer: 200, or 422 `validation_failed` with one error entry. A live-token POST whose body is not in the table is recorded in `unmeasured` and refused with a thrown error, which the store reports as an APPLY error, and `afterEach` fails the case on any recorded body. M5 (F5): a POST reads its body only after the optional hold, so a POST still outstanding when a case ends has not reached the table. The double counts POSTs entered and not yet answered (`outstanding`, decremented in a `finally`), and `afterEach` also fails the case when that count is not 0. `readPatch` and the 400 `invalid_json` branch are removed. No case and no store path sends a non-JSON body, and the branch also answered `invalid_json` to a JSON `null` body, which the router answers 400 `patch_required` (`config.py`:271-273, read).
   - Ranked alternatives (rejected):
     - (2) The same table for `memory.max_episodes` only. It leaves the "any string" rule for `system.name` and `system.log_level`.
     - (3) Refuse only `'not-an-int'`. It flips the mismatch: `'abc'`, `'1e3'`, `5.5` and `null` get 200, where the router answers 422.
     - (4) A regex or parser imitating pydantic. It is an unmeasured model that drifts with pydantic.
-  - Branches no case reaches: only the tripwire, by design. It is the check that no case relies on an unmeasured answer. No case exercises it, because such a case would test the double, not the store, and would have to drain `unmeasured`; 9c fires it once. The 403, 422 and 200 answers are each reached by a case. The age refusal is reached under census row S-M6 (T8 sends `t1` at 301 s).
+  - Branches no case reaches: only the tripwire and the outstanding-POST check, by design. It is the check that no case relies on an unmeasured answer. No case exercises it, because such a case would test the double, not the store, and would have to drain `unmeasured`; 9c fires it once. The 403, 422 and 200 answers are each reached by a case. The age refusal is reached under census row S-M6 (T8 sends `t1` at 301 s).
   - Claims: every sentence in the test file that says what the router does is read in `config.py` at a cited line or measured in 9c. Labelled as not router answers: the fixed snapshot, the fixed 200 body (the store reads only a 200's status, `useSettingsStore.ts`:240-247), the hold, `failNextGet` and `refuseEveryPost`. The double ages tokens on the test's `Date.now()`, the router on `time.monotonic()` (`config.py`:55-59). The cases move only the test's clock, and no unmutated case POSTs a token older than 300 s on it.
   - Measurement (re-proof, recorded in 9c; the table's rows are predictions until then):
     - Post each of the four bodies with a fresh token through a TestClient over the unchanged router on a temporary config, and record status and body. Expected: the two log-level bodies and the `'5000'` body answer 200. The `'not-an-int'` body answers 422 with exactly one entry, `{loc: ['memory','max_episodes'], msg: 'Input should be a valid integer, unable to parse string as an integer', type: 'int_parsing'}`. Any difference is a hard stop.
@@ -85,6 +86,7 @@
 | M2 | `PROGRESS.md`, `DECISIONS.md`, `docs/development/open-ads-report.md` and `docs/development/ad-ledger-snapshot.json` (generated) | `trackers and generated ledger for the HXI settings save token (#1852)` |
 | M3 | `ui/src/store/useSettingsStore.ts`, the new test file, `PROGRESS.md`, `DECISIONS.md` (sections 6.5 to 6.8) | `the HXI settings store marks a token spent when its refresh read fails, and the save tests model the router's body order (#1852)` |
 | M4 | the new test file, `PROGRESS.md` (sections 6.9 and 6.10) | `the HXI settings save tests answer each save only from measured router answers (#1852)` |
+| M5 | the new test file (section 6.11) | `Settings store test double: fail a case that ends with a save still outstanding (#1852)` |
 
 Subjects are ASCII and contain no AD- or BF- token. They contain no "close", "fix" or "resolve" substring.
 
@@ -110,6 +112,7 @@ npx vitest run src/store/__tests__/useSettingsStore.bf999.test.tsx src/component
 - **M2:** `scripts/gen_ad_ledger.py --check`; `-m pytest tests/test_ad1184_ad_ledger.py -q -n 0`.
 - **M3:** `npx tsc -b` clean; the M1 vitest command above with 10 files, 80 passed (the 66-test baseline plus 14); `scripts/gen_ad_ledger.py --check` current; full `npx vitest run` 0 failed.
 - **M4:** the M3 gates with the same counts (predicted), plus the 9c measurements and the tripwire probe of D11.
+- **M5:** the M3 gates with the same counts (predicted), plus the outstanding-POST probes of D11 (section 9d).
 - **UI batch gates once on the candidate** (`run_test_gate.py` runs neither): `npx tsc -b`, then `npx vitest run` (0 failed).
 - **Broad gate** once after M2: `scripts/run_test_gate.py --label 1852-bf999 --receipt logs/gates/1852-bf999.receipt.json`.
 
@@ -981,6 +984,8 @@ F4 (P3, injected-only): the M3 double's rule for `memory.max_episodes` answered 
 
 ### 6.9 `ui/src/store/__tests__/useSettingsStore.bf999.test.tsx` (M4; amends the file as committed at `fa73f33a`; ASCII)
 
+*Note (round 3 amendment): 6.11 amends the double's POST branch (a counter and a try/finally around the statements this section wrote) and two of its comments; the rest stands as committed at M4.*
+
 **P-1**
 SEARCH:
 ```
@@ -1146,6 +1151,145 @@ grep -n "function _setNestedPath\|setDraftField: (" ui/src/store/useSettingsStor
 
 Absence: no case POSTs a body that is not JSON (`applyDraft` always serialises `{ patch }`, `useSettingsStore.ts`:236), and the test file has no other 4xx branch after P-4.
 
+## Amendment after review round 3 (2026-11-26)
+
+F5 (P3, injected-only; the regression is the claim, not the code): the double's guard runs at teardown, but a POST held by `hold()` reads its body only after the release, so a case that ends with it outstanding passes. The Architect's decision at the round-three brake is to continue with F5 only. M5 counts the double's POSTs entered and not yet answered, and `afterEach` fails a case that ends with a non-zero count.
+
+### 6.11 `ui/src/store/__tests__/useSettingsStore.bf999.test.tsx` (M5; F5; on the file as committed at `579c8c14`, LF)
+
+**F5-a** (header)
+SEARCH:
+```
+// time.monotonic, the double on the test's Date.now). A POST with a live token is answered from
+// MEASURED, the router's answers to the exact bodies the cases send; any other body fails the
+// case. The fixed snapshot, the 200 body, the hold and the injected faults are not router answers.
+```
+REPLACE:
+```
+// time.monotonic, the double on the test's Date.now). A POST with a live token is answered from
+// MEASURED, the router's answers to the exact bodies the cases send; any other body fails the
+// case, and so does a POST still outstanding when the case ends (held or unsettled, so its body
+// has not been read). The fixed snapshot, the 200 body, the hold and the injected faults are not
+// router answers.
+```
+
+**F5-b** (the MEASURED comment)
+SEARCH:
+```
+// ' 5000 ', '5000.0', '1_000' and true), so no rule here stands for the router: a body missing
+// from the table is recorded and refused, and afterEach fails the case on it.
+```
+REPLACE:
+```
+// ' 5000 ', '5000.0', '1_000' and true), so no rule here stands for the router: a body missing
+// from the table is recorded and refused, and afterEach fails the case on it. A POST reads its
+// body only after the hold, so afterEach also fails a case that ends with a POST outstanding.
+```
+
+**F5-c** (the counter)
+SEARCH:
+```
+const unmeasured: string[] = [];
+
+function installServer(): ServerDouble {
+```
+REPLACE:
+```
+const unmeasured: string[] = [];
+let outstanding = 0; // double POSTs entered and not yet answered or thrown
+
+function installServer(): ServerDouble {
+```
+
+**F5-d** (the POST branch, re-indented inside try/finally; no statement changes)
+SEARCH:
+```
+    if (init?.method === 'POST') {
+      const token = (init.headers as Record<string, string>)['X-Probos-CSRF'];
+      srv.posts.push(token);
+      const wait = gate;
+      if (wait) await wait;
+      // _consume_csrf pops the token; an unknown or expired one is a 403 before the body is read.
+      const issuedAt = live.get(token);
+      live.delete(token);
+      if (srv.refuseEveryPost || issuedAt === undefined || Date.now() - issuedAt > TOKEN_LIFETIME_MS) {
+        return jsonResp({ error: 'invalid_csrf' }, 403);
+      }
+      const sent = String(init.body);
+      const answer = MEASURED.get(sent);
+      if (answer === undefined) {
+        unmeasured.push(sent);
+        throw new Error(`fetch double: no measured router answer for ${sent}`);
+      }
+      const patch = JSON.parse(sent).patch;
+      srv.patches.push(patch);
+      if (answer !== 'ok') return jsonResp({ error: 'validation_failed', errors: [answer] }, 422);
+      srv.saved.push(patch.system?.log_level);
+      // The store reads only the status of a 200, so this body is fixed, not the router's per-save answer.
+      return jsonResp({ ok: true, restart_required: true, changed_fields: ['system.log_level'] });
+    }
+```
+REPLACE:
+```
+    if (init?.method === 'POST') {
+      outstanding += 1;
+      try {
+        const token = (init.headers as Record<string, string>)['X-Probos-CSRF'];
+        srv.posts.push(token);
+        const wait = gate;
+        if (wait) await wait;
+        // _consume_csrf pops the token; an unknown or expired one is a 403 before the body is read.
+        const issuedAt = live.get(token);
+        live.delete(token);
+        if (srv.refuseEveryPost || issuedAt === undefined || Date.now() - issuedAt > TOKEN_LIFETIME_MS) {
+          return jsonResp({ error: 'invalid_csrf' }, 403);
+        }
+        const sent = String(init.body);
+        const answer = MEASURED.get(sent);
+        if (answer === undefined) {
+          unmeasured.push(sent);
+          throw new Error(`fetch double: no measured router answer for ${sent}`);
+        }
+        const patch = JSON.parse(sent).patch;
+        srv.patches.push(patch);
+        if (answer !== 'ok') return jsonResp({ error: 'validation_failed', errors: [answer] }, 422);
+        srv.saved.push(patch.system?.log_level);
+        // The store reads only the status of a 200, so this body is fixed, not the router's per-save answer.
+        return jsonResp({ ok: true, restart_required: true, changed_fields: ['system.log_level'] });
+      } finally {
+        outstanding -= 1;
+      }
+    }
+```
+
+**F5-e** (reset and assert)
+SEARCH:
+```
+    unmeasured.length = 0;
+  });
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+    useSettingsStore.setState(useSettingsStore.getInitialState(), true);
+    expect(unmeasured, 'POST bodies the double has no measured router answer for').toEqual([]);
+  });
+```
+REPLACE:
+```
+    unmeasured.length = 0;
+    outstanding = 0;
+  });
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+    useSettingsStore.setState(useSettingsStore.getInitialState(), true);
+    expect(outstanding, 'double POSTs still outstanding when the case ended').toBe(0);
+    expect(unmeasured, 'POST bodies the double has no measured router answer for').toEqual([]);
+  });
+```
+
+A POST left behind by a failed case never resumes, because only that case holds its `release()`. So resetting the counter to 0 in `beforeEach` cannot pass a leak on to the next case.
+
 ## 7. Mutation census and generated-artifact commands
 
 Each mutant is applied to the M3 candidate's store; 6.5 leaves every S-M1 to S-M19 locator unchanged. Runner: `npx vitest run src/store/__tests__/useSettingsStore.bf999.test.tsx src/components/settings/__tests__/SettingsPanel.test.tsx`. Single-line mutants are written `from -> to`; whole lines, with their indentation.
@@ -1223,10 +1367,11 @@ Guard: `SettingsPanel.test.tsx` "APPLY POSTs the patch with CSRF header and show
 - **R-8 No other readers.** No `?raw` reader, no Python test touched, and `tests/test_ad741_config_api.py` is unchanged. The settings vitest set and the full `npx vitest run` are green.
 - **R-9 Tests cross the seam.**
   - T12 clicks the real APPLY twice in one session.
-  - The double spends the token before it reads the body (a 403 reads nothing) and refuses an unknown token, or one older than `300000` ms by `Date.now()` (`config.py`:55-71, read). A live-token POST is answered only from `MEASURED`, the router's measured answers to the four bodies the cases send (D11, 9c). Any other body is recorded, refused with a thrown error, and fails the case in `afterEach`. The snapshot, the 200 body, the hold and the injected faults are labelled as not router answers.
+  - The double spends the token before it reads the body (a 403 reads nothing) and refuses an unknown token, or one older than `300000` ms by `Date.now()` (`config.py`:55-71, read). A live-token POST is answered only from `MEASURED`, the router's measured answers to the four bodies the cases send (D11, 9c). Any other body is recorded, refused with a thrown error, and fails the case in `afterEach`; so does a POST still outstanding when the case ends (M5, F5). The snapshot, the 200 body, the hold and the injected faults are labelled as not router answers.
   - Every red case is red on `f7acb948` at its posts assertion (section 5).
 - **R-10 Round-1 delta.** The store change is the one `csrfFetchedAt: 0` line and its comment in the refresh-failure `set`. T1 to T12 keep their order. T13 and T14 are appended. No component, router or other test changes.
 - **R-11 Round-2 delta.** Only the test file (6.9) and the BF-999 paragraph of `PROGRESS.md` (6.10) change. T1 to T14, the store, `DECISIONS.md`, every component and every other test are byte-unchanged.
+- **R-12 Round-3 delta.** Only the test file (6.11) changes: the counter, its reset, the try/finally around the unchanged POST statements, the `afterEach` assertion and three comments. T1 to T14, `MEASURED`, the store, `PROGRESS.md`, `DECISIONS.md` and every other file are byte-unchanged.
 
 **#1852 landing comment:**
 
@@ -1287,3 +1432,16 @@ Measured on the oracle tree `oc1` (the M3 candidate, head `fa73f33a`: store `5ee
 - `scripts/gen_ad_ledger.py --check` reports the ledger current (no heading changed). The prompt scan is clean on this file.
 - Correction C-5: E-28 would have put R-11 before the R-10 line (its SEARCH is a prefix of that line); R-11 is placed after the whole R-10 line.
 - Claims about the double: the old rule sentences (`behaves like`, the integer regex, `any string`, the 400 `invalid_json` branch, `readPatch`) now appear only in the replayed 6.2 and 6.6 blocks, in the SEARCH text of 6.9, and in D10 and D11 where they are marked as built at M3 and superseded.
+
+### 9d Review round 3 repair re-proof (orchestrator, 2026-11-26)
+
+Measured on the oracle tree `oc1` (the M4 candidate, head `579c8c14`: store `5ee13d2e`, test file `167b8d77`, `PROGRESS.md` `9a897c07`, `DECISIONS.md` `fae55d23`, all equal to the committed blobs) with the five pairs of 6.11 applied on top. Every prediction of the amendment held.
+
+- Pairs: the five pairs of 6.11 apply, each SEARCH occurring once at its turn (the test file is LF in the tree).
+- Amended file: 14 of 14 pass. The focused list gives 10 files, 80 passed; `npx tsc -b` prints nothing and exits 0 (the `init` narrowing holds inside the try).
+- Probe O-1 (the reviewer's scenario, a scratch copy with one extra case appended, not committed): the case holds a POST whose body is `{"patch":{"memory":{"max_episodes":"+5000"}}}` and ends without releasing it. It now fails in `afterEach` with "double POSTs still outstanding when the case ended: expected 1 to be +0" (1 failed, 14 skipped by the name filter); on the M4 file the same case passed (round 3's probe).
+- Probe O-2 (a scratch copy with `outstanding -= 1;` commented out): all 14 cases fail in `afterEach` with "double POSTs still outstanding" (expected 1, or 2 where a case sends two POSTs to 0). The scratch copies were removed and the real file is byte-identical to what 6.11 produces.
+- A/B on the original base `f7acb948` (JSON reporter): 12 failed, 2 passed (T1 and T6), as at M4.
+- Census (`mutants_bf999.py`, re-run on the final file though the amendment said none was needed): 21 cases unmutated, all passing; rows S-M1 to S-M20 are all killed and the failing set of every row equals the 9c campaign's, so the counter adds no kill and loses none.
+- `PROGRESS.md` and `DECISIONS.md` are untouched by M5, so `scripts/gen_ad_ledger.py --check` still reports the ledger current. The prompt scan is clean on this file.
+- Corrections: C-5 style placement for E-35 (the M5 gate line after the M4 line) and E-37 (R-12 after the whole R-11 line) because their SEARCH strings are prefixes of the neighbouring line; C-6 the provenance and status lines; C-7 the M5 row of the milestones table; C-8 a note under the 6.9 heading.
