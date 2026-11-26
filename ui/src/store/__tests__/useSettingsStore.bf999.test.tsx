@@ -5,10 +5,11 @@
 // one token per GET; every POST spends the token it carries and, before the body is read,
 // answers 403 for an unknown token or one older than 300 s (the router ages tokens on
 // time.monotonic, the double on the test's Date.now). A POST with a live token is answered from
-// MEASURED, the router's answers to the exact bodies the cases send; any other body fails the
-// case, and so does a POST still outstanding when the case ends (held or unsettled, so its body
-// has not been read). The fixed snapshot, the 200 body, the hold and the injected faults are not
-// router answers.
+// MEASURED, the router's answers to the exact bodies the cases send. A case fails when a POST to
+// a double it installed carried a live token and any other body, or is still outstanding when the
+// case ends (held or unsettled, so its body has not been read). Each case records both in its own
+// ledger. The fixed snapshot, the 200 body, the hold and the injected faults are not router
+// answers.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 
@@ -64,8 +65,9 @@ interface ServerDouble {
 // over the unchanged src/probos/routers/config.py (contract D11): 'ok' is a 200, an entry is a
 // 422 validation_failed carrying it. pydantic parses integers laxly (it accepts '+5000',
 // ' 5000 ', '5000.0', '1_000' and true), so no rule here stands for the router: a body missing
-// from the table is recorded and refused, and afterEach fails the case on it. A POST reads its
-// body only after the hold, so afterEach also fails a case that ends with a POST outstanding.
+// from the table is recorded in the case's ledger and refused, and afterEach fails the case on
+// it. A POST reads its body only after the hold, so afterEach also fails a case whose ledger
+// still counts a POST outstanding.
 const INT_PARSING = {
   loc: ['memory', 'max_episodes'],
   msg: 'Input should be a valid integer, unable to parse string as an integer',
@@ -77,10 +79,17 @@ const MEASURED = new Map<string, 'ok' | typeof INT_PARSING>([
   ['{"patch":{"system":{"name":"Vessel"},"memory":{"max_episodes":"not-an-int"}}}', INT_PARSING],
   ['{"patch":{"system":{"name":"Vessel"},"memory":{"max_episodes":"5000"}}}', 'ok'],
 ]);
-const unmeasured: string[] = [];
-let outstanding = 0; // double POSTs entered and not yet answered or thrown
+// A case's record of its doubles: POSTs entered and not yet answered or thrown, and bodies with
+// no measured answer. beforeEach gives each case a new ledger and installServer() captures it,
+// so a POST an earlier case left outstanding settles into that case's ledger, never a later one.
+interface Ledger {
+  outstanding: number;
+  unmeasured: string[];
+}
+let ledger: Ledger = { outstanding: 0, unmeasured: [] };
 
 function installServer(): ServerDouble {
+  const mine = ledger;
   let issued = 0;
   const live = new Map<string, number>();
   let gate: Promise<void> | null = null;
@@ -101,7 +110,7 @@ function installServer(): ServerDouble {
   vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
     if (String(input) !== '/api/config') throw new Error(`unexpected request ${String(input)}`);
     if (init?.method === 'POST') {
-      outstanding += 1;
+      mine.outstanding += 1;
       try {
         const token = (init.headers as Record<string, string>)['X-Probos-CSRF'];
         srv.posts.push(token);
@@ -116,7 +125,7 @@ function installServer(): ServerDouble {
         const sent = String(init.body);
         const answer = MEASURED.get(sent);
         if (answer === undefined) {
-          unmeasured.push(sent);
+          mine.unmeasured.push(sent);
           throw new Error(`fetch double: no measured router answer for ${sent}`);
         }
         const patch = JSON.parse(sent).patch;
@@ -126,7 +135,7 @@ function installServer(): ServerDouble {
         // The store reads only the status of a 200, so this body is fixed, not the router's per-save answer.
         return jsonResp({ ok: true, restart_required: true, changed_fields: ['system.log_level'] });
       } finally {
-        outstanding -= 1;
+        mine.outstanding -= 1;
       }
     }
     srv.gets += 1;
@@ -153,15 +162,14 @@ describe('BF-999 the settings store holds a live CSRF token for every save (#185
   beforeEach(() => {
     vi.restoreAllMocks();
     useSettingsStore.setState(useSettingsStore.getInitialState(), true);
-    unmeasured.length = 0;
-    outstanding = 0;
+    ledger = { outstanding: 0, unmeasured: [] };
   });
   afterEach(() => {
     cleanup();
     vi.restoreAllMocks();
     useSettingsStore.setState(useSettingsStore.getInitialState(), true);
-    expect(outstanding, 'double POSTs still outstanding when the case ended').toBe(0);
-    expect(unmeasured, 'POST bodies the double has no measured router answer for').toEqual([]);
+    expect(ledger.outstanding, 'double POSTs still outstanding when the case ended').toBe(0);
+    expect(ledger.unmeasured, 'POST bodies the double has no measured router answer for').toEqual([]);
   });
 
   it('the first save sends the token the page mount read was issued', async () => {
