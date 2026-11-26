@@ -10,6 +10,17 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ## Era V — Civilization (Phases 31-36)
 
+### BF-999 -- the HXI settings store fetches a fresh CSRF token before each save and keeps the draft on a refused save (2026-11-26, #1852)
+
+- *Scope.* `ui/src/store/useSettingsStore.ts` (`applyDraft`, `csrfFetchedAt`, `_fetchSnapshot`); test `ui/src/store/__tests__/useSettingsStore.bf999.test.tsx`. Contract `prompts/bf-999-1852-hxi-settings-csrf-refresh.md`. The router (`src/probos/routers/config.py`) and its CSRF scheme are unchanged.
+- *D1.* The token is refreshed lazily, at the start of a save, when it is spent or aged; the refresh replaces the snapshot and its fetch time only, keeping the draft and every view field, and a refresh read that fails marks the token spent, so the next save reads first whatever the clock shows. Rejected: a forced read after every answered save (it still needs the save-time age check and costs a read after every save). A save changes the live config only when every field it changes is hot-reload: the router then applies them to `runtime.config` after the write (BF-299, `src/probos/routers/config.py`) and the next `GET /api/config` returns them; a save that changes a restart-required field changes only the file on disk until restart.
+- *D2.* A 403 is answered before the router reads the body, so the store fetches a new token and sends the same patch once more; a second 403 ends the save with the draft kept. This supersedes the AD-741 spec's "re-fetch config to refresh token, prompt operator to re-apply" (`prompts/archive/ad-741-settings-control-panel.md:432`).
+- *D3.* A token is replaced before use at 240 s by `Date.now()`, 60 s inside the router's 300 s lifetime; D2's resend covers a server restart and a wall-clock jump.
+- *D4.* `openSettings` keeps its early return; reading on every open would still need D1's save-time check.
+- *D5.* One save at a time: a module-private latch set before the first await and cleared in `finally`. A save no longer calls `openSettings`, so it never re-opens a dialog closed while it was in flight.
+- *D6.* `csrfFetchedAt` is public state (0 = none or spent) so the store's initial state resets it.
+- *Reversal.* Revert the commit; no API, persisted format or security control changes.
+
 ### BF-997 / BF-998 -- #1414 Batch B: the HXI event stream past 100 work items, dropped work-state frames, a refused notification read (2026-11-25, #1414)
 
 - *Scope.* `routers/workforce.py` (`build_ws_workforce_snapshot`), `ws_event_stream.py` (`_resyncs_on_drop` and the two drop sites), `ui/src/components/bridge/BridgeNotifications.tsx`; tests `tests/test_bf997_ws_snapshot_and_work_state_resync.py`, `ui/src/components/bridge/__tests__/BridgeNotifications.issue1414.test.tsx`, and the test-only `ui/e2e/conversation-viewport.spec.ts` change for item 8. Contract `prompts/bf-997-998-1414-batch-b-hxi-live-state.md`.
