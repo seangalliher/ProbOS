@@ -1,7 +1,8 @@
 # BF-999 -- #1852: the HXI settings store holds a live CSRF token for every save
 
 **Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-26
-**Status:** ready to prove on the oracle. **Base:** main `f7acb948` (tree `f12fe25c`). **Issue:** #1852 (PR says `Refs #1852`). **Path:** `prompts/bf-999-1852-hxi-settings-csrf-refresh.md`. **Estimated tests:** 1 new vitest file (12 cases); no existing test changes. **No AD.** BF-999 allocated by the orchestrator (four-source enumeration, 02:32Z); the ledger on main reads latest BF-998, next BF-999 (`docs/development/open-ads-report.md:32`).
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-26 (review round 1 amendment: D8 to D10, sections 6.5 to 6.8, M3)
+**Status:** M1 `f7086568` and M2 `418cc977` built; the round-1 amendment builds as M3. **Base:** main `f7acb948` (tree `f12fe25c`). **Issue:** #1852 (PR says `Refs #1852`). **Path:** `prompts/bf-999-1852-hxi-settings-csrf-refresh.md`. **Estimated tests:** 1 new vitest file (14 cases after M3; 12 at M1); no existing test changes. **No AD.** BF-999 allocated by the orchestrator (four-source enumeration, 02:32Z); the ledger on main reads latest BF-998, next BF-999 (`docs/development/open-ads-report.md:32`).
 
 ## 1. Problem
 
@@ -13,7 +14,7 @@
 
 - `SettingsState` gains `csrfFetchedAt: number` (Date.now() when `snapshot.csrf_token` was fetched; 0 = none or spent). `loadSnapshot` and `openSettings` stamp it on success.
 - `applyDraft`: a module-private `applying` latch (one save at a time); before each POST, if the token is spent or `>= 240000` ms old, fetch a fresh snapshot (`_fetchSnapshot`) and stamp it; mark the token spent before the POST is sent; on a 403 at the first attempt, repeat once with a fresh token; any other answer ends it. No `openSettings()` call remains in `applyDraft`.
-- A failed token read sends nothing, keeps the draft, says so, and leaves the token spent, so the next press reads first.
+- A failed token read sends nothing, keeps the draft, says so, and marks the token spent (`csrfFetchedAt: 0`), whether it was spent or only aged, so the next press reads first (D8).
 - Rejected heavier designs: change the router (multi-use or cookie tokens: a security-control change, out of scope); a shared fetch wrapper (one caller); a public `applying` state plus a disabled APPLY button (touches `SettingsTopBar.tsx` and every test reset helper; the latch is enough).
 
 ## 3. Decisions
@@ -22,11 +23,11 @@
   - (2) A forced GET after every answered POST (the issue's proposal). Rejected:
     - It still needs the APPLY-time age check and the failed-read path, so it adds a second refresh site.
     - It costs a GET after every save even when no second save follows.
-    - After a 200 it brings an identical snapshot. The router snapshots and merges onto the live `runtime.config` (`config.py:234`, `:289-290`), which a save does not change before restart.
+    - For the token it brings nothing the next save's refresh does not. A save changes the live config only when every field it changes is hot-reload: the router then applies them to `runtime.config` after the write (`config.py`:384-395, BF-299), and the GET snapshot (`:234`) returns them. A save that changes a restart-required field changes only the file on disk until restart (D9).
   - (3) Refresh only the token. Rejected: the GET returns the whole snapshot anyway. After a ProbOS restart, the new process's snapshot is the right one.
   - (4) Refresh on 200 and 403 only. Rejected: every answered status spends the token (`:263-265`).
   - **A failed GET** (non-ok or a throw):
-    - The POST is not sent. `snapshot` is untouched and `csrfFetchedAt` stays 0.
+    - The POST is not sent. `snapshot` is untouched and `csrfFetchedAt` is set to 0, whether the token was spent or only aged (D8).
     - `applyStatus: 'rejected'`, with `applyMessage` `Could not get a save token (<reason>); nothing was saved. Press APPLY to try again.`. `<reason>` is `config GET failed: <status>` or `config GET error: <err>`.
 - **D2 The 403 policy: the store fetches a new token and resends the same patch once.** This is safe: the router answers 403 before reading the body (`:263-267`).
   - If the resend is answered, its answer sets the status as usual.
@@ -50,6 +51,17 @@
   - A test that sets `snapshot` directly leaves `csrfFetchedAt` at 0, so its APPLY would read first. No such test calls `applyDraft`: Absence Verified, row 6.
   - Rejected: a second `csrfSpent` boolean (two fields for one fact) and a module-private stamp (test resets through `setState` would not reach it).
 - **D7 Messages.** The 200, 422, 400, other-status and network-error texts are byte-unchanged; the 422 and 400 texts keep their U+2014. The 403 text is replaced and the refresh-failure text is new. New text is ASCII.
+- **D8 A failed refresh read marks the token spent (F1).** The refresh branch only runs once the store has decided not to send the token (spent, or `>= 240000` ms by `Date.now()`). Its failure `set` now carries `csrfFetchedAt: 0` along with the status and the message, so the next press reads first whatever `Date.now()` shows later. Before this, an aged, unspent token kept its old stamp. After a backward clock step, the next press sent it without reading.
+  - Rejected: an age check on `Math.abs(Date.now() - fetchedAt)`. It would change the clock policy for every save, which is R-6's ground and covered by the resend. It still reuses the token after a backward step shorter than 240 s, and it leaves the state wrong: the stamp says "fresh" for a token the store chose to replace.
+- **D9 D1's rationale is corrected for hot-reload fields (F2).** A save changes the live config only when every field it changes is hot-reload. The router then applies those fields to `runtime.config` after the write (`config.py`:384-395, BF-299), and the next `GET /api/config` returns them. A save that changes any restart-required field changes only the file on disk until restart.
+  - The forced read after every save stays rejected for the two reasons that remain true: it still needs the save-time age check, and it costs a read after every save. For the token, it brings nothing the next save's refresh does not.
+  - Observation, not a decision: the dialog shows "Restart required to take effect." and keeps its old snapshot even after an all-hot-reload save (blind spot 5).
+- **D10 The fetch double follows the router's order and refusals (F3).**
+  - (a) A POST records its token, then (after the optional hold) the token is spent and checked. Only an accepted token leads to the body being parsed. `srv.patches` now records the patch of each accepted POST. A body that is not JSON gets 400 `invalid_json`; no case exercises it.
+  - (b) The only 422 is for a `memory.max_episodes` that is not an integer string. It carries the router's error entry `{loc: ['memory','max_episodes'], msg: 'Input should be a valid integer, unable to parse string as an integer', type: 'int_parsing'}`, which is the value `tests/test_ad741_config_api.py` uses. The double accepts `'5000'`, `5000` and `-1`, as the router does.
+  - The fake `BAD` enum value goes. T3 was its only user, and only as a draft value; T12 renders the select but sets the draft directly.
+  - Numbering: T1 to T12 keep their order and numbers. T3 changes in place (its values and an exact `applyErrors` check). The F1 coverage is appended as one `it.each` at the end of the file: T13 (503) and T14 (throws). Both start from an aged, unspent token.
+  - The new cases check behaviour on the wire (posts and gets). They do not pin the field.
 
 ## 4. Milestones and commit subjects
 
@@ -57,6 +69,7 @@
 |---|---|---|
 | M1 | `ui/src/store/useSettingsStore.ts`, new `ui/src/store/__tests__/useSettingsStore.bf999.test.tsx` | `the HXI settings store fetches a fresh CSRF token before each save and keeps the draft on a refused save (#1852)` |
 | M2 | `PROGRESS.md`, `DECISIONS.md`, `docs/development/open-ads-report.md` and `docs/development/ad-ledger-snapshot.json` (generated) | `trackers and generated ledger for the HXI settings save token (#1852)` |
+| M3 | `ui/src/store/useSettingsStore.ts`, the new test file, `PROGRESS.md`, `DECISIONS.md` (sections 6.5 to 6.8) | `the HXI settings store marks a token spent when its refresh read fails, and the save tests model the router's body order (#1852)` |
 
 Subjects are ASCII and contain no AD- or BF- token. They contain no "close", "fix" or "resolve" substring.
 
@@ -80,6 +93,7 @@ Subjects are ASCII and contain no AD- or BF- token. They contain no "close", "fi
 npx vitest run src/store/__tests__/useSettingsStore.bf999.test.tsx src/components/settings src/__tests__/IntentSurface.audioRender.test.tsx src/__tests__/MobileShell.test.tsx src/__tests__/CompactApp.sidebar-integration.test.tsx
 ```
 - **M2:** `scripts/gen_ad_ledger.py --check`; `-m pytest tests/test_ad1184_ad_ledger.py -q -n 0`.
+- **M3:** `npx tsc -b` clean; the M1 vitest command above with 10 files, 80 passed (the 66-test baseline plus 14); `scripts/gen_ad_ledger.py --check` current; full `npx vitest run` 0 failed.
 - **UI batch gates once on the candidate** (`run_test_gate.py` runs neither): `npx tsc -b`, then `npx vitest run` (0 failed).
 - **Broad gate** once after M2: `scripts/run_test_gate.py --label 1852-bf999 --receipt logs/gates/1852-bf999.receipt.json`.
 
@@ -89,6 +103,9 @@ npx vitest run src/store/__tests__/useSettingsStore.bf999.test.tsx src/component
   - T4, T5, T7, T8: received `['t1']`.
   - T2, T3, T9, T10, T11, T12: received `['t1', 't1']`.
 - The #1852 probe (`zzProbe1852.test.ts`) on the candidate: **2 failed**, both at `expect(srv.gets()).toBe(1)` (received 2).
+- After M3, the amended file (14 cases):
+  - on the round-1 store (`f7086568`): **2 failed, 12 passed**. T13 and T14 fail at `expect(srv.posts).toEqual(['t2'])`, received `['t1']`;
+  - on `f7acb948`: **12 failed, 2 passed** (T1, T6). T2 to T12 fail as above; T13 and T14 fail at `expect(srv.posts).toEqual([])`, received `['t1']`.
 
 ## Verified Against Codebase (2026-11-26, tree `f7acb948`)
 
@@ -99,6 +116,7 @@ ui/src/store/useSettingsStore.ts (250 lines, read whole)
   168 closeSettings; 178-233 applyDraft (191 header; 196-206 200 branch, 199 openSettings(); 207-212 422; 213-217 400; 218-223 403, 223 openSettings(); 224-229 other; 230-232 catch)
 src/probos/routers/config.py  50-52 _csrf_tokens, _CSRF_TTL_SECONDS = 300; 55-59 _gc_csrf (now - t > TTL); 62-66 _issue_csrf (monotonic); 69-71 _consume_csrf (pop)
   231-248 GET (234 runtime.config live; 247 csrf_token); 260-265 POST consumes first, 403 invalid_csrf; 267-270 body read after; 289-292 merge onto live config; 294-303 422; 305-307 503; 313-319 409
+  374-395 BF-299: when every changed field is hot_reload, restart_required is false and each field is applied to runtime.config after the write
 ui/src/components/settings/SettingsTopBar.tsx  13 applyDraft; 79-82 APPLY onClick={applyDraft} disabled={!dirty} testid settings-topbar-apply; 112-141 settings-restart-banner; 176-179 settings-status-message
 ui/src/components/settings/SettingsPanel.tsx  13-17 renders only when open; 35 SettingsTopBar; 46 SettingsStatusBar
 ui/src/components/settings/__tests__/SettingsPanel.test.tsx  77-95 reset (no csrfFetchedAt); 192-218 APPLY 200 case (every GET answers token fake-token-abc)
@@ -123,6 +141,7 @@ PROGRESS.md:1 "# ProbOS Progress"; DECISIONS.md:13 BF-997 / BF-998 heading (top 
 | `applyDraft` has one production caller and one existing test caller | Grep `applyDraft` in `ui/src` | `SettingsTopBar.tsx`:13,80; `SettingsPanel.test.tsx:211` (opens through `openSettings`) | yes |
 | No `?raw` or `readFileSync` of the store; no Python or script reader | Grep `useSettingsStore[^'"]*\?raw\|store/useSettingsStore\.ts` in `ui/`; Grep `useSettingsStore` in `tests/` and `scripts/` | none; none | yes |
 | `openedAt` has no reader | Grep `openedAt` in `ui/src` | store `:56,:98,:138`; four test reset helpers | yes |
+| The store never reads the router's `restart_required` flag | Grep `restart_required` in `ui/src` (round 1, head `418cc977`) | `useSettingsStore.ts`:53 (type), :240 (the status a 200 always sets); `SettingsTopBar.tsx`:112; test fixtures | yes |
 
 ## Prior Art and Blind Spots
 
@@ -135,10 +154,13 @@ PROGRESS.md:1 "# ProbOS Progress"; DECISIONS.md:13 BF-997 / BF-998 heading (top 
   2. A field edited while a save is in flight is still cleared by that save's 200 (unchanged behaviour).
   3. The APPLY button is not disabled during a save. A second press does nothing (D5). Considered, deferred.
   4. BF-996's 409 `config_unreadable` takes the generic branch and spends the token like any status; covered by D1.
+  5. Observation, out of scope: a 200 always sets `applyStatus: 'restart_required'`, though for an all-hot-reload save the router answers `restart_required: false` and has already applied the change; the dialog's snapshot also keeps the old value until the next read. A separate issue.
 
 ## 6. Pairs
 
 ### 6.1 `ui/src/store/useSettingsStore.ts` (M1) -- run with `--utf8 U+2014` (P-6 SEARCH holds three U+2014, its REPLACE two, both in unchanged lines)
+
+*After review round 1: pair P-6 stands as M1 committed it; 6.5 (M3) adds one line to its refresh-failure branch.*
 
 **P-1**
 SEARCH:
@@ -381,6 +403,8 @@ REPLACE:
 ```
 
 ### 6.2 `ui/src/store/__tests__/useSettingsStore.bf999.test.tsx` new file (M1)
+
+*After review round 1: this block is the file as M1 committed it (12 cases); 6.6 (M3) amends it to 14 cases.*
 
 ```tsx
 // BF-999 (#1852): the HXI settings store fetches a fresh single-use CSRF token before a save
@@ -665,6 +689,8 @@ Case key for sections 5 and 7: T1 to T5 are the five single `it`s in order; T6, 
 
 ### 6.3 `PROGRESS.md` (M2)
 
+*After review round 1: this block replays M2 as committed; 6.8 (M3) replaces the paragraph.*
+
 **P-1**
 SEARCH:
 ```
@@ -678,6 +704,8 @@ REPLACE:
 ```
 
 ### 6.4 `DECISIONS.md` (M2; anchored on the top heading)
+
+*After review round 1: this block replays M2 as committed; its D1 line is superseded by 6.7 (M3).*
 
 **P-1**
 SEARCH:
@@ -700,9 +728,235 @@ REPLACE:
 ### BF-997 / BF-998 -- #1414 Batch B: the HXI event stream past 100 work items, dropped work-state frames, a refused notification read (2026-11-25, #1414)
 ```
 
+## Amendment after review round 1 (2026-11-26)
+
+Case key addendum: T13 and T14 are the two aged-start failed-read rows (503, throws), the last `it.each` in the file.
+
+### 6.5 `ui/src/store/useSettingsStore.ts` (M3; ASCII only, no `--utf8`)
+
+**P-1**
+SEARCH:
+```
+          if (typeof fresh === 'string') {
+            set({
+              applyStatus: 'rejected',
+```
+REPLACE:
+```
+          if (typeof fresh === 'string') {
+            // The token was spent or aged: keep it marked for replacement so the next press reads first.
+            set({
+              csrfFetchedAt: 0,
+              applyStatus: 'rejected',
+```
+
+### 6.6 `ui/src/store/__tests__/useSettingsStore.bf999.test.tsx` (M3; amends the committed file)
+
+**P-1**
+SEARCH:
+```
+// real SettingsPanel; fetch is a double that behaves like src/probos/routers/config.py: one
+// token per GET, every POST spends the token it carries before the body is read, a token older
+// than 300 s is refused, and a 403 is answered before the body is read.
+```
+REPLACE:
+```
+// real SettingsPanel; fetch is a double that behaves like src/probos/routers/config.py: one
+// token per GET, every POST spends the token it carries before the body is read, a token older
+// than 300 s is refused, a 403 is answered before the body is read, and a memory.max_episodes
+// that is not an integer is answered 422 with the router's error entry.
+```
+
+**P-2**
+SEARCH:
+```
+        { field_id: 'system.log_level', label: 'Log level', kind: 'enum', enum_values: ['INFO', 'DEBUG', 'BAD'], description: '', hot_reload: false },
+```
+REPLACE:
+```
+        { field_id: 'system.log_level', label: 'Log level', kind: 'enum', enum_values: ['INFO', 'DEBUG'], description: '', hot_reload: false },
+```
+
+**P-3**
+SEARCH:
+```
+  patches: unknown[]; // the patch each POST carried, in arrival order
+```
+REPLACE:
+```
+  patches: unknown[]; // the patch of each POST whose token was accepted, in arrival order
+```
+
+**P-4**
+SEARCH:
+```
+function installServer(): ServerDouble {
+```
+REPLACE:
+```
+// The router reads the body only after it accepts the token; undefined stands for its 400 invalid_json.
+function readPatch(body: RequestInit['body']) {
+  try {
+    return { patch: JSON.parse(String(body)).patch };
+  } catch {
+    return undefined;
+  }
+}
+
+function installServer(): ServerDouble {
+```
+
+**P-5**
+SEARCH:
+```
+    if (init?.method === 'POST') {
+      const token = (init.headers as Record<string, string>)['X-Probos-CSRF'];
+      const patch = JSON.parse(String(init.body)).patch;
+      srv.posts.push(token);
+      srv.patches.push(patch);
+      const wait = gate;
+      if (wait) await wait;
+      // _consume_csrf pops the token; an unknown or expired one is a 403 before the body is read.
+      const issuedAt = live.get(token);
+      live.delete(token);
+      if (srv.refuseEveryPost || issuedAt === undefined || Date.now() - issuedAt > TOKEN_LIFETIME_MS) {
+        return jsonResp({ error: 'invalid_csrf' }, 403);
+      }
+      const level = patch?.system?.log_level;
+      if (level === 'BAD') {
+        return jsonResp({
+          error: 'validation_failed',
+          errors: [{ loc: ['system', 'log_level'], msg: 'Input should be INFO or DEBUG', type: 'enum' }],
+        }, 422);
+      }
+      srv.saved.push(level);
+```
+REPLACE:
+```
+    if (init?.method === 'POST') {
+      const token = (init.headers as Record<string, string>)['X-Probos-CSRF'];
+      srv.posts.push(token);
+      const wait = gate;
+      if (wait) await wait;
+      // _consume_csrf pops the token; an unknown or expired one is a 403 before the body is read.
+      const issuedAt = live.get(token);
+      live.delete(token);
+      if (srv.refuseEveryPost || issuedAt === undefined || Date.now() - issuedAt > TOKEN_LIFETIME_MS) {
+        return jsonResp({ error: 'invalid_csrf' }, 403);
+      }
+      const read = readPatch(init.body);
+      if (!read) return jsonResp({ error: 'invalid_json' }, 400);
+      const patch = read.patch;
+      srv.patches.push(patch);
+      // SystemConfig refuses a memory.max_episodes it cannot parse as an integer ('not-an-int');
+      // it accepts '5000', 5000 and -1, and any string for system.name and system.log_level.
+      const episodes = patch?.memory?.max_episodes;
+      if (episodes !== undefined && !/^-?\d+$/.test(String(episodes))) {
+        return jsonResp({
+          error: 'validation_failed',
+          errors: [{
+            loc: ['memory', 'max_episodes'],
+            msg: 'Input should be a valid integer, unable to parse string as an integer',
+            type: 'int_parsing',
+          }],
+        }, 422);
+      }
+      const level = patch?.system?.log_level;
+      srv.saved.push(level);
+```
+
+**P-6**
+SEARCH:
+```
+    await save({ 'system.name': 'Vessel', 'system.log_level': 'BAD' });
+    expect(s().applyStatus).toBe('rejected');
+    expect(s().applyErrors).toHaveLength(1);
+    expect(s().draft).toEqual({ 'system.name': 'Vessel', 'system.log_level': 'BAD' });
+    await save({ 'system.log_level': 'DEBUG' });
+    expect(srv.posts).toEqual(['t1', 't2']);
+    expect(srv.patches[1]).toEqual({ system: { name: 'Vessel', log_level: 'DEBUG' } });
+```
+REPLACE:
+```
+    await save({ 'system.name': 'Vessel', 'memory.max_episodes': 'not-an-int' });
+    expect(s().applyStatus).toBe('rejected');
+    expect(s().applyErrors).toEqual([{
+      loc: ['memory', 'max_episodes'],
+      msg: 'Input should be a valid integer, unable to parse string as an integer',
+      type: 'int_parsing',
+    }]);
+    expect(s().draft).toEqual({ 'system.name': 'Vessel', 'memory.max_episodes': 'not-an-int' });
+    await save({ 'memory.max_episodes': '5000' });
+    expect(srv.posts).toEqual(['t1', 't2']);
+    expect(srv.patches[1]).toEqual({ system: { name: 'Vessel' }, memory: { max_episodes: '5000' } });
+```
+
+**P-7**
+SEARCH:
+```
+    expect(screen.getByTestId('settings-restart-banner')).toBeTruthy();
+  });
+});
+```
+REPLACE:
+```
+    expect(screen.getByTestId('settings-restart-banner')).toBeTruthy();
+  });
+
+  it.each([
+    { label: 'answers 503', mode: 'status' as const, reason: 'config GET failed: 503' },
+    { label: 'throws', mode: 'throw' as const, reason: 'config GET error: TypeError: network down' },
+  ])('an aged token whose refresh read $label sends no save, and the next press reads first after the clock steps back', async ({ mode, reason }) => {
+    let now = 1000000;
+    vi.spyOn(Date, 'now').mockImplementation(() => now);
+    const srv = installServer();
+    await s().openSettings(); // t1, never sent
+    now += 240000;
+    srv.failNextGet = mode;
+    await save({ 'system.log_level': 'DEBUG' });
+    expect(srv.posts).toEqual([]);
+    expect(srv.gets).toBe(2);
+    expect(s().applyStatus).toBe('rejected');
+    expect(s().applyMessage).toBe(`Could not get a save token (${reason}); nothing was saved. Press APPLY to try again.`);
+    expect(s().draft).toEqual({ 'system.log_level': 'DEBUG' });
+    // A wall-clock correction makes t1 look 10 s old to Date.now; the store must still read before it sends.
+    now = 1010000;
+    await s().applyDraft();
+    expect(srv.posts).toEqual(['t2']);
+    expect(srv.gets).toBe(3);
+    expect(srv.saved).toEqual(['DEBUG']);
+    expect(s().applyStatus).toBe('restart_required');
+  });
+});
+```
+
+### 6.7 `DECISIONS.md` (M3; the D1 line of the BF-999 entry; supersedes that line of 6.4)
+
+**P-1**
+SEARCH:
+```
+- *D1.* The token is refreshed lazily, at the start of a save, when it is spent or aged; the refresh replaces the snapshot and its fetch time only, keeping the draft and every view field. Rejected: a forced read after every answered save (it still needs the save-time age check, costs a read after every save, and brings an identical snapshot, because the router snapshots the live config a save does not change before restart).
+```
+REPLACE:
+```
+- *D1.* The token is refreshed lazily, at the start of a save, when it is spent or aged; the refresh replaces the snapshot and its fetch time only, keeping the draft and every view field, and a refresh read that fails marks the token spent, so the next save reads first whatever the clock shows. Rejected: a forced read after every answered save (it still needs the save-time age check and costs a read after every save). A save changes the live config only when every field it changes is hot-reload: the router then applies them to `runtime.config` after the write (BF-299, `src/probos/routers/config.py`) and the next `GET /api/config` returns them; a save that changes a restart-required field changes only the file on disk until restart.
+```
+
+### 6.8 `PROGRESS.md` (M3; the BF-999 paragraph; supersedes 6.3)
+
+**P-1**
+SEARCH:
+```
+**BF-999 (2026-11-26), #1852 -- the HXI settings store fetches a fresh CSRF token before each save, sends a save refused with 403 once more, and keeps the draft.** The router issues one single-use CSRF token per `GET /api/config`, lets it live 300 s and spends it on every `POST /api/config` before it reads the body. The store fetched one token per page load (`openSettings` and `loadSnapshot` skip the read once loaded, BF-304), so a second save, a save corrected after a 422, or a first save more than 300 s after the page's config read was answered 403 `invalid_csrf` until a reload, and the 403 path wiped the draft. `useSettingsStore` now records when its token was fetched (`csrfFetchedAt`), treats it as spent once a POST carries it, and before each save fetches a fresh snapshot and token when the last is spent or 240 s old. A 403 is answered before the router reads the body, so the store fetches a new token and sends the same patch once more; a second 403 ends with "Save token refused twice; nothing was saved. Press APPLY to try again." and the draft kept. A failed token read sends nothing, keeps the draft and says so, and the next press reads first. One save runs at a time, and a save no longer re-opens a dialog closed while it was in flight. `ui/src/store/__tests__/useSettingsStore.bf999.test.tsx` (12 cases) drives the real store and the real `SettingsPanel` against a fetch double that behaves like the router; 10 are red on the unrepaired store. The router is unchanged. Mutation census: 19 of 19 killed (rows S-M1 to S-M19), run once on the overlay of f7acb948. Contract `prompts/bf-999-1852-hxi-settings-csrf-refresh.md`.
+```
+REPLACE:
+```
+**BF-999 (2026-11-26), #1852 -- the HXI settings store fetches a fresh CSRF token before each save, sends a save refused with 403 once more, and keeps the draft.** The router issues one single-use CSRF token per `GET /api/config`, lets it live 300 s and spends it on every `POST /api/config` before it reads the body. The store fetched one token per page load (`openSettings` and `loadSnapshot` skip the read once loaded, BF-304), so a second save, a save corrected after a 422, or a first save more than 300 s after the page's config read was answered 403 `invalid_csrf` until a reload, and the 403 path wiped the draft. `useSettingsStore` now records when its token was fetched (`csrfFetchedAt`), treats it as spent once a POST carries it, and before each save fetches a fresh snapshot and token when the last is spent or 240 s old. A 403 is answered before the router reads the body, so the store fetches a new token and sends the same patch once more; a second 403 ends with "Save token refused twice; nothing was saved. Press APPLY to try again." and the draft kept. A failed token read sends nothing, keeps the draft and says so, and marks the token spent, so the next press reads first even when the token was only aged and the wall clock later steps back. One save runs at a time, and a save no longer re-opens a dialog closed while it was in flight. `ui/src/store/__tests__/useSettingsStore.bf999.test.tsx` (14 cases) drives the real store and the real `SettingsPanel` against a fetch double that behaves like the router (it spends the token before it reads the body, and answers 422 for a `memory.max_episodes` the router also refuses); 12 are red on the unrepaired store. The router is unchanged. Mutation census: 20 of 20 killed (rows S-M1 to S-M20), run on the overlay of f7acb948. Contract `prompts/bf-999-1852-hxi-settings-csrf-refresh.md`.
+```
+
 ## 7. Mutation census and generated-artifact commands
 
-Each mutant is applied to the M1 candidate's store. Runner: `npx vitest run src/store/__tests__/useSettingsStore.bf999.test.tsx src/components/settings/__tests__/SettingsPanel.test.tsx`. Single-line mutants are written `from -> to`; whole lines, with their indentation.
+Each mutant is applied to the M3 candidate's store; 6.5 leaves every S-M1 to S-M19 locator unchanged. Runner: `npx vitest run src/store/__tests__/useSettingsStore.bf999.test.tsx src/components/settings/__tests__/SettingsPanel.test.tsx`. Single-line mutants are written `from -> to`; whole lines, with their indentation.
 
 | Row | Mutant | Killer (vitest), first failing assertion |
 |---|---|---|
@@ -725,6 +979,7 @@ Each mutant is applied to the M1 candidate's store. Runner: `npx vitest run src/
 | S-M17 | `        if (resp.status === 200) {` -> that line plus `          await get().openSettings();` | T11 (`open` true) |
 | S-M18 | `          set({ snapshot: fresh, csrfFetchedAt: Date.now() });` -> `          set({ snapshot: fresh, csrfFetchedAt: Date.now(), draft: {}, draftCount: 0 });` | T5 (draft `{}`) |
 | S-M19 | the same line -> `          set({ csrfFetchedAt: Date.now() });` | T2 (posts `['t1','t1','t1']`) |
+| S-M20 | delete `              csrfFetchedAt: 0,` (14 spaces, the refresh-failure set; locator `exact`, or `nth` 2 of the stripped line, whose first hit is the initial state) | T13, T14 (second posts assertion: `['t1']`) |
 
 Multi-line mutant pairs:
 - S-M4 SEARCH `        loaded: true,` / `        csrfFetchedAt: Date.now(),` / `        selectedSectionId: snapshot.sections[0]?.section_id ?? 'system',` / `        applyStatus: 'idle',` -> the same without the second line.
@@ -762,12 +1017,12 @@ Guard: `SettingsPanel.test.tsx` "APPLY POSTs the patch with CSRF header and show
 ## 8. Diff Reviewer brief and #1852 landing comment
 
 **Consumer that must accept it:** the Settings dialog: `SettingsTopBar.tsx`:79-82 (APPLY calls `applyDraft`), `:112-141` (banner) and `:147-182` (status message), mounted by `SettingsPanel.tsx`. Contract it must honour: `routers/config.py:50-71, 247, 263-267`.
-- **R-1 Token contract.** The router is byte-unchanged. No POST carries a token the store knows an earlier POST carried: `csrfFetchedAt` is set to 0 before `fetch` is called. A token is used only while `Date.now() - csrfFetchedAt < 240000`.
+- **R-1 Token contract.** The router is byte-unchanged. No POST carries a token the store knows an earlier POST carried: `csrfFetchedAt` is set to 0 before `fetch` is called. A token is used only while `Date.now() - csrfFetchedAt < 240000`. A failed refresh read sets `csrfFetchedAt` to 0 (D8).
 - **R-2 Draft kept on refusal.** Only the 200 branch clears `draft`/`draftCount`. The draft is kept on a 403 (both), 422, 400, other statuses, a thrown POST and a failed token read. `applyDraft` contains no `openSettings()` call.
 - **R-3 No double POST.** `applying` is set before the first `await` and cleared in `finally`, which runs after every `return` inside `try`.
 - **R-4 Bounded.** At most two GETs and two POSTs per press. The resend happens only on a 403 at attempt 0. No recursion and no timer.
 - **R-5 What a refresh touches.** It sets `snapshot` and `csrfFetchedAt` only. `loadSnapshot` and `openSettings` change only by stamping `csrfFetchedAt` on success.
-- **R-6 Clock.** `Date.now()` is used for both the stamp and the check. A wall-clock jump against the router's monotonic clock is handled by the one resend. This property is untested.
+- **R-6 Clock.** `Date.now()` is used for both the stamp and the check. A wall-clock jump against the router's monotonic clock is handled by the one resend, which is untested for the clock case. T13 and T14 step `Date.now()` back after a failed refresh and require a read first (D8).
 - **R-7 Types and style.**
   - `csrfFetchedAt` is in `SettingsState` and in the initial state, and `npx tsc -b` is clean.
   - No new dependency and no new `any`; new text is ASCII.
@@ -776,8 +1031,9 @@ Guard: `SettingsPanel.test.tsx` "APPLY POSTs the patch with CSRF header and show
 - **R-8 No other readers.** No `?raw` reader, no Python test touched, and `tests/test_ad741_config_api.py` is unchanged. The settings vitest set and the full `npx vitest run` are green.
 - **R-9 Tests cross the seam.**
   - T12 clicks the real APPLY twice in one session.
-  - The double consumes before it reads the body and refuses at `> 300000` ms, as the router does.
+  - The double spends the token before it parses the body (a 403 parses nothing), refuses at `> 300000` ms by `Date.now()`, answers 400 `invalid_json` for a body it cannot parse, and answers 422 only for a `memory.max_episodes` that is not an integer, with the router's error entry (D10).
   - Every red case is red on `f7acb948` at its posts assertion (section 5).
+- **R-10 Round-1 delta.** The store change is the one `csrfFetchedAt: 0` line and its comment in the refresh-failure `set`. T1 to T12 keep their order. T13 and T14 are appended. No component, router or other test changes.
 
 **#1852 landing comment:**
 
@@ -792,9 +1048,9 @@ BF-999. The HXI settings store (ui/src/store/useSettingsStore.ts) now:
 - runs one save at a time, and no longer re-opens a dialog closed while a save was in flight.
 The router and its CSRF scheme are unchanged.
 
-Proof: ui/src/store/__tests__/useSettingsStore.bf999.test.tsx, 12 cases with the real store and the real SettingsPanel (two APPLY clicks in one page session) against a fetch double that behaves like src/probos/routers/config.py (a token per GET, spent by every POST before the body is read, refused after 300 s). On the unrepaired store 10 of 12 fail and the 2 guard cases pass; the two probe cases in this issue's body, which assert the defect, fail on the repair. Mutation census 19 of 19 killed.
+Proof: ui/src/store/__tests__/useSettingsStore.bf999.test.tsx, 14 cases with the real store and the real SettingsPanel (two APPLY clicks in one page session) against a fetch double that behaves like src/probos/routers/config.py (a token per GET, spent by every POST before the body is read, refused after 300 s, a 422 only for a value the router refuses). On the unrepaired store 12 of 14 fail and the 2 guard cases pass; the two probe cases in this issue's body, which assert the defect, fail on the repair. Mutation census 20 of 20 killed.
 
-Not covered: no browser run. Date.now() can disagree with the router's monotonic clock after a sleep or clock change; the single resend covers that case. A field edited while a save is in flight is still cleared by that save's 200 (unchanged). The APPLY button is not disabled during a save; a second press does nothing.
+Not covered: no browser run. Date.now() can disagree with the router's monotonic clock after a sleep or clock change; the single resend covers that case, and a failed token read marks the token spent so a clock step cannot revive it. A field edited while a save is in flight is still cleared by that save's 200 (unchanged). The APPLY button is not disabled during a save; a second press does nothing. A save of hot-reload fields takes effect at once, but the dialog still says "Restart required to take effect." (unchanged; a separate issue).
 ```
 
 ## 9. Orchestrator re-proof (2026-11-26)
@@ -810,3 +1066,17 @@ Measured on the oracle tree `oc1` (main `f7acb948`, tree `f12fe25c`, `npm ci` ru
 - Gate preflight on the staged oracle (`scripts/run_test_gate.py --preflight-only`): exit 0. Its seven `--check` scripts (config reference, config profiles, config facade, AD ledger, seam contracts, architecture principles, store registry), `compileall` and the prompt scan all pass.
 
 Orchestrator corrections C-1 to C-3 (prose only; no pair text changes). The preflight's prompt scan (`scripts/phantom-api-precheck.ps1`) first failed with 3 phantom symbols: it reads a file name with a line number inside one code span (the settings top bar, the agent profile panel) and the sidebar-integration test file named in the inline vitest command as `<Class>.<method>` symbols. It masks a code span only when the closing backtick follows the file name at once, and it skips fenced blocks that are not python. So the line numbers now follow a closed code span, and the M1 vitest command is a fenced `text` block. The scan is clean.
+
+### 9b Review round 1 repair re-proof (orchestrator, 2026-11-26)
+
+Measured on the oracle tree `oc1` (the M1 and M2 candidate, head `418cc977`, with the amendment pairs applied on top; `rvcbase` for the base). Every prediction of the amendment held.
+
+- Pairs: the 10 pairs of 6.5 to 6.8 apply, each SEARCH occurring once at its turn (the store keeps CRLF throughout: 294 lines; the added lines are the comment and `csrfFetchedAt: 0,` and nothing else).
+- A/B on the round-1 store (the committed `f7086568` store): the amended file has 14 cases, 2 failed (T13 and T14), 12 passed. Both fail at `expect(srv.posts).toEqual(['t2'])`, received `['t1']`.
+- A/B on the original base `f7acb948`: 12 failed, 2 passed (T1 and T6). T3 still fails first at its posts assertion (`['t1', 't1']`); T14 fails at `expect(srv.posts).toEqual([])`, received `['t1']`.
+- M3 candidate: the new file passes 14 of 14; the focused list gives 10 files, 80 passed; `npx tsc -b` prints nothing and exits 0 (the inferred return type of `readPatch` passes).
+- The F1 probe (it asserts the defect: an aged token whose refresh fails keeps its stamp) passed on the round-1 store and now fails at its first claim, `csrfFetchedAt` being 0 where it expects 1000000, after its premises held (no POST, two reads, status rejected).
+- Census (`mutants_bf999.py`, 21 cases on the unmutated candidate, all passing): rows S-M1 to S-M20 are all killed and no row survives. S-M20 is killed by exactly T13 and T14. Every killer the table names fails. Rows that fail more cases than they name: S-M2 (13), S-M3 (7), S-M5 (9), S-M6 (4), S-M7 (3), S-M8 (3), S-M10 (10), S-M11 (2), S-M13 (13), S-M14 (4), S-M15 (4) and S-M19 (11).
+- Trackers: 6.7 and 6.8 apply once each; `scripts/gen_ad_ledger.py --check` still reports the ledger current without regeneration (no heading changed).
+- Delta 5: the false sentence about the live config appears only in the replayed 6.4 block and in the SEARCH text of 6.7; the notes under the headings 6.1 to 6.4 (correction C-4) say what M3 supersedes. The prompt scan is clean on this file.
+- Real-router facts behind F2 and F3 (a TestClient over the unchanged router, measured on the head): `system.log_level` set to `BAD` is answered 200; `memory.max_episodes` set to `not-an-int` is answered 422 with the entry `{loc: [memory, max_episodes], type: int_parsing}`; `5000`, `'5000'` and `-1` are answered 200; a bad token with a malformed body is answered 403 and a good token with one 400; a token a 400 or a 422 carried is spent; a save of `cognitive.offline_stt_enabled` is answered 200 with `restart_required` false and the next read returns the new value.
