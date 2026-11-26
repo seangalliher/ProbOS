@@ -56,6 +56,8 @@ export interface SettingsState {
   openedAt: number;
   /** BF-999: Date.now() when snapshot.csrf_token was fetched; 0 when none was or a POST spent it. */
   csrfFetchedAt: number;
+  /** BF-1000: true after a 200 that did not answer restart_required false; a page reload clears it. */
+  restartPending: boolean;
 
   loadSnapshot: () => Promise<void>;
   openSettings: () => Promise<void>;
@@ -117,6 +119,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   applyMessage: '',
   openedAt: 0,
   csrfFetchedAt: 0,
+  restartPending: false,
 
   /**
    * BF-304: fetch /api/config without opening the Settings dialog.
@@ -237,8 +240,37 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
         });
         const body = await resp.json().catch(() => ({} as any));
         if (resp.status === 403 && attempt === 0) continue;
-        if (resp.status === 200) {
+        if (resp.status === 200 && body?.restart_required === false) {
+          // The router wrote the change into the running config, so show the live values.
+          const fresh = await _fetchSnapshot();
+          // Keep the banner when an earlier 200 on this page took the restart branch.
+          const pending = get().restartPending;
+          const status: SettingsState['applyStatus'] = pending ? 'restart_required' : 'success';
+          const applied = pending
+            ? 'Saved and applied. An earlier save asked for a restart.'
+            : 'Saved and applied. This change needs no restart.';
+          if (typeof fresh === 'string') {
+            set({
+              applyStatus: status,
+              applyMessage: `${applied} Could not reload the values (${fresh}).`,
+              applyErrors: [],
+              draft: {},
+              draftCount: 0,
+            });
+          } else {
+            set({
+              snapshot: fresh,
+              csrfFetchedAt: Date.now(),
+              applyStatus: status,
+              applyMessage: applied,
+              applyErrors: [],
+              draft: {},
+              draftCount: 0,
+            });
+          }
+        } else if (resp.status === 200) {
           set({
+            restartPending: true,
             applyStatus: 'restart_required',
             applyMessage: 'Restart required to take effect.',
             applyErrors: [],
