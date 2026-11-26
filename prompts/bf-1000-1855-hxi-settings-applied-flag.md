@@ -1,12 +1,12 @@
 # BF-1000: the HXI settings store reads the save's restart_required flag; a save the router applied at once shows "applied" and the live values
 
 **Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-26
-**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-26 (revision 1: the orchestrator's findings F1 to F6: a null-safe flag read, the consumer table, three stale-state mutants, the double's comment, wording and counts; revision 2: G1, section 10 lists all 21 hot-reload ids, and G2, the empty-save wording in sections 1 and 6.3; revision 3: review round 1, RV1-F1, an applied save keeps the banner of a restart an earlier save still needs, and RV1-F2, the `IntentSurface.tsx` row names the main-chat STT subscription; revision 4: the pending restart is a store bit `restartPending`, not derived from `applyStatus`, because revision 3 lost the banner when a DISCARD or a refused save came between the two saves or a DISCARD came during the reload, sequences S2 to S4 of section 1)
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-26 (revision 1: the orchestrator's findings F1 to F6: a null-safe flag read, the consumer table, three stale-state mutants, the double's comment, wording and counts; revision 2: G1, section 10 lists all 21 hot-reload ids, and G2, the empty-save wording in sections 1 and 6.3; revision 3: review round 1, RV1-F1, an applied save keeps the banner of a restart an earlier save still needs, and RV1-F2, the `IntentSurface.tsx` row names the main-chat STT subscription; revision 4: the pending restart is a store bit `restartPending`, not derived from `applyStatus`, because revision 3 lost the banner when a DISCARD or a refused save came between the two saves or a DISCARD came during the reload, sequences S2 to S4 of section 1; revision 5: review round 2, RV2-F1 to RV2-F5: the two applied messages state this save's answer and an earlier save's request, not whether a restart is owed now (D4), and the page-reload case is a recorded limit (section 11); the refused row of case 6 refuses the hot field; cases 4 and 5 save a third time, rows M25 and M26; section 10 lists the ten whole-state replacements; D2 and D3 are scoped to `applyDraft`'s own updates)
 **Corrected by:** the orchestrator, 2026-11-26: the words "in registry order" are deleted from the Absence Verified entry of section 10 (the list was printed sorted by id, which is not the declaration order of `section_registry.py`; the order was the orchestrator's wording in the revision-2 request, not the Architect's); section 8.3 names the occurrence of M6's line (2nd of 2, the line also occurs in the pre-save refresh); section 15 records the oracle results; two test additions that the orchestrator's reading of the bit's writers called for (an assertion at the end of case 1 that the second applied save shows `success`, and the fourth row of case 6, closing and reopening the dialog between the saves) with the counts they move (11 tests, M23 and M24, the base and revision 3 expectations of 8.1 and the killers of M13); the citations of the AD-1074c artifact test file in sections 7 and 10 are rewritten (a fenced block lists its path), because the phantom-symbol precheck reads the capitalised name `Artifact.ad1074c` in prose as a symbol and the gate preflight would fail on it.
 **Status:** ready to build. **Owning issue:** #1855 only. Commits say `Refs #1855.`
 **Base:** `d09c14f13f0251ae6704f7f05411fd3e665930c7` (= origin/main), branch `feat/bf1000-1855-hxi-settings-restart-flag-20261126`. **Number:** BF-1000 (section 10).
 **Line endings:** the working copies may be CRLF and the blocks below are LF; match after normalising. Every SEARCH starts at the beginning of a line and occurs once in its file at its turn. All new text is ASCII.
-**Estimated tests:** 11 new tests (6 cases, one a three-row and one a four-row `it.each`) in 1 new file (`ui/src/store/__tests__/useSettingsStore.bf1000.test.tsx`), 0 removed, 0 changed.
+**Estimated tests:** 11 new tests (6 cases, one a three-row and one a four-row `it.each`) in 1 new file (`ui/src/store/__tests__/useSettingsStore.bf1000.test.tsx`, 220 lines), 0 removed, 0 changed.
 **Scope:** `ui/src/store/useSettingsStore.ts`, the new test file, `PROGRESS.md`, `DECISIONS.md` and the regenerated ledger files. No Python file changes.
 
 ## 1. Problem (premise table)
@@ -20,20 +20,24 @@
 
 Effect: a save that changes at least one field, all of them hot-reload (for example `cognitive.offline_stt_enabled`, `section_registry.py`:127-137) is live at once, yet the dialog says to restart and the store's snapshot keeps the old value until the next GET.
 
-Constraint (review round 1 and the revision-3 probe): the base writes `'restart_required'` after each 200, so its banner reappears at each later 200 whatever came between. An earlier restart-required save leaves its change in the YAML and not in the running config; the repair must not say "No restart needed" while that is so. Measured on revision 3 (status-derived pending), with `A` answered `restart_required: true` and `B` answered `false`: S1 `A, B` and S5 `A, B, C` kept the banner, but S2 `A, DISCARD, B`, S3 `A, refused (422), B` and S4 `A, B` with a DISCARD during B's reload ended `success` with no banner; the base shows it in all three.
+Constraint (review round 1 and the revision-3 probe): the base writes `'restart_required'` after each 200, so its banner reappears at each later 200 whatever came between. An earlier restart-required save leaves its change in the YAML and not in the running config. Measured on revision 3 (status-derived pending), with `A` answered `restart_required: true` and `B` answered `false`: S1 `A, B` and S5 `A, B, C` kept the banner, but S2 `A, DISCARD, B`, S3 `A, refused (422), B` and S4 `A, B` with a DISCARD during B's reload ended `success` with no banner; the base shows it in all three.
+
+Constraint (review round 2, RV2-F1): the store knows the answers it received since the page loaded, not whether a restart is owed now. The router does not report that (section 13), a page reload clears the store's record, and a ProbOS restart does not. So the dialog's messages state this save's answer and, when there was one, an earlier save's request for a restart; they do not assert that a restart is or is not owed (D4).
 
 ## 2. Overview
 
 The store gains a public state bit `restartPending` (initial `false`). The restart branch of the 200 (today's branch) sets it to `true` with its existing `set`; no other code writes it. In the 200 branch, `body?.restart_required === false` (strict, null-safe) means applied: the store awaits `_fetchSnapshot()`, reads `get().restartPending` and makes ONE `set`: the status (`'restart_required'` when the bit is set, else `'success'`), the message, `applyErrors: []`, the cleared draft and, when the read returned a snapshot, `snapshot` and `csrfFetchedAt: Date.now()`. A failed read keeps the old snapshot and leaves `csrfFetchedAt` at 0 (set at :229), so the next press reads a token first. A 200 body that is not an object whose flag is the boolean false (flag true, missing, another value, unparsable or null) takes today's branch, which now also sets the bit.
 
-Result: while the bit is false, an applied save shows `success` and no banner; once the bit is true, a later 200 of either kind shows the banner, as the base does after each 200. DISCARD, a refused save, `openSettings` and `loadSnapshot` leave the bit as it was.
+Result: while the bit is false, an applied save shows `success`, "Saved and applied. This change needs no restart." and no banner; once the bit is true, a later 200 of either kind shows the banner, as the base does after each 200, and an applied one says "Saved and applied. An earlier save asked for a restart." DISCARD, a refused save, `openSettings` and `loadSnapshot` leave the bit as it was.
 
 Rejected, one line each:
 - Deriving the pending restart from `applyStatus` (revision 3): DISCARD (:199) and each failure branch overwrite the status, so S2, S3 and S4 (section 1) lost the banner the base shows.
 - Reading the pending status before the POST instead of after the reload: fixes S4 only; S2 and S3 still read `'idle'` or `'rejected'`.
 - Keeping revision 3 and recording S2 to S4 as limits: they are regressions against the base with ordinary reach.
 - A sticky bit that the banner also reads: it would keep the banner after a refused save or a DISCARD, where the base drops it until the next 200; a display change against the base, out of scope.
-- The router reporting a pending restart (YAML against running config): it would also cover a page reload and a second tab, but it changes the Python API; considered, deferred (section 13).
+- Revision 4's messages ("No restart needed.", "An earlier change still needs a restart."): they assert whether a restart is owed now, which the store does not know after a page reload or a ProbOS restart (RV2-F1).
+- The router reporting a pending restart (YAML against running config, or a process-memory flag): it would also cover a page reload, a second tab and a ProbOS restart, but it changes the Python API; considered, deferred (section 13).
+- Keeping the bit across page reloads (`sessionStorage`): a new storage contract, and it would outlive a ProbOS restart followed by a page reload, so the stale case of RV2-F1 grows.
 - A new status member (`'applied'`): `'success'` is already in the union (:53) and no component reads it (section 10).
 - Merging the sent patch into the old snapshot without a GET: the router coerces values (pydantic), so the live GET is the authority.
 - Calling `loadSnapshot()` for the refresh: it returns early once loaded (:132) and resets `selectedSectionId`, `applyStatus` and `applyMessage` (:146-149).
@@ -46,13 +50,13 @@ Rejected, one line each:
 | # | Decision | Reason |
 |---|---|---|
 | D1 | Applied when `body?.restart_required === false`, and not otherwise | A missing, malformed or null body keeps the safe (banner) behaviour; `body` is `{}` after a parse failure (:238) and `null` for a JSON `null` |
-| D2 | Await the refresh, then one `set` per outcome | On a successful read the field shows the draft value until the live value replaces it, with no frame of the old value and a cleared draft; on a failed read the old value returns with an explicit message (D4) |
-| D3 | The draft is cleared in that final `set`, after the refresh | Same as D2; the cost is a longer in-flight window (section 11) |
-| D4 | Messages: bit false, `Saved and applied. No restart needed.`; bit true, `Saved and applied. An earlier change still needs a restart.`; a failed read appends ` Could not reload the values (<reason>).` to either | The operator is told the save took effect, whether a restart is still owed, and why an old value is shown |
+| D2 | Await the refresh, then one `set` per outcome | In `applyDraft`'s own updates, on a successful read the field shows the draft value until the final `set` replaces it with the live value and clears the draft, with no intermediate frame of the old value; on a failed read the old value returns with an explicit message (D4). An operator's DISCARD during the reload (S4) is outside this: it clears the draft at once, so the field shows the old live value until the reload ends, as a DISCARD does at other times |
+| D3 | The draft is cleared in that final `set`, after the refresh | Same as D2, for `applyDraft`'s own updates; the cost is a longer in-flight window (section 11) |
+| D4 | Messages: bit false, `Saved and applied. This change needs no restart.`; bit true, `Saved and applied. An earlier save asked for a restart.`; a failed read appends ` Could not reload the values (<reason>).` to either | Each sentence states a fact the store holds: the router answered this save `restart_required: false` (it is live and needs no restart), and a 200 since the page loaded took the restart branch. Neither asserts that a restart is or is not owed now, which the store cannot know (section 1, RV2-F1); the failed-read suffix says why an old value is shown |
 | D5 | A successful refresh records `csrfFetchedAt: Date.now()` | The refreshed snapshot carries a live token, so the next save sends it without a further GET |
 | D6 | Both new `set`s clear `applyErrors` | `SettingsMain.tsx`:233-237 renders them as field errors; a stale error from an earlier refused save must not outlive an applied one |
 | D7 | No change to `SettingsTopBar.tsx`, the router or the BF-999 test file | The banner keys on `applyStatus === 'restart_required'` (`SettingsTopBar.tsx`:112) and nothing else |
-| D8 | The pending restart is the bit `restartPending`: `false` in the initial state, set to `true` in the restart branch's `set`, written by no other code, read by the applied branch after the reload | `applyStatus` is a display value that DISCARD and the failure branches overwrite (S2 to S4). The bit is public state like `csrfFetchedAt`, so `getInitialState()` resets it in tests; the page holds it until the page reloads. With it, the banner differs from the base in one case: an applied save while the bit is false (no 200 in this page session has taken the restart branch) |
+| D8 | The pending restart is the bit `restartPending`: `false` in the initial state, set to `true` in the restart branch's `set`, written by no other code, read by the applied branch after the reload | `applyStatus` is a display value that DISCARD and the failure branches overwrite (S2 to S4). The bit is public state like `csrfFetchedAt`, so `getInitialState()` resets it in tests; the page holds it until the page reloads. With it, the final status differs from the base in one case: an applied save while the bit is false (no 200 since the page loaded has taken the restart branch). The bit records history, not a current pending restart (D4, section 11) |
 
 ## 4. Milestones and commits
 
@@ -112,12 +116,12 @@ REPLACE:
         if (resp.status === 200 && body?.restart_required === false) {
           // The router wrote the change into the running config, so show the live values.
           const fresh = await _fetchSnapshot();
-          // Keep the banner while an earlier save's restart is still owed.
+          // Keep the banner when an earlier 200 on this page took the restart branch.
           const pending = get().restartPending;
           const status: SettingsState['applyStatus'] = pending ? 'restart_required' : 'success';
           const applied = pending
-            ? 'Saved and applied. An earlier change still needs a restart.'
-            : 'Saved and applied. No restart needed.';
+            ? 'Saved and applied. An earlier save asked for a restart.'
+            : 'Saved and applied. This change needs no restart.';
           if (typeof fresh === 'string') {
             set({
               applyStatus: status,
@@ -170,7 +174,8 @@ const STALE = [{ loc: ['cognitive', 'offline_stt_enabled'], msg: 'x', type: 'val
 const APPLIED = ok({ ok: true, restart_required: false, changed_fields: [FIELD] });
 const RESTART = ok({ ok: true, restart_required: true, changed_fields: [MODEL] });
 const REFUSED: Answer = { status: 422, body: { ok: false, errors: STALE } };
-const PENDING = 'Saved and applied. An earlier change still needs a restart.';
+const DONE = 'Saved and applied. This change needs no restart.';
+const PENDING = 'Saved and applied. An earlier save asked for a restart.';
 
 const s = () => useSettingsStore.getState();
 
@@ -248,7 +253,7 @@ describe('BF-1000 the settings store reads restart_required from a 200 (#1855)',
     act(() => { s().setDraftField(FIELD, true); });
     fireEvent.click(screen.getByTestId('settings-topbar-apply'));
     await waitFor(() =>
-      expect(screen.getByTestId('settings-status-message').textContent).toBe('Saved and applied. No restart needed.'),
+      expect(screen.getByTestId('settings-status-message').textContent).toBe(DONE),
     );
     expect(screen.queryByTestId('settings-restart-banner')).toBeNull();
     expect(s().applyStatus).toBe('success');
@@ -286,7 +291,7 @@ describe('BF-1000 the settings store reads restart_required from a 200 (#1855)',
     srv.failGet = 2;
     await save(true);
     expect(s().applyStatus).toBe('success');
-    expect(s().applyMessage).toBe('Saved and applied. No restart needed. Could not reload the values (config GET failed: 503).');
+    expect(s().applyMessage).toBe(`${DONE} Could not reload the values (config GET failed: 503).`);
     expect(s().applyErrors).toEqual([]);
     expect(s().snapshot?.config.cognitive.offline_stt_enabled).toBe(false);
     expect(s().draft).toEqual({});
@@ -298,7 +303,7 @@ describe('BF-1000 the settings store reads restart_required from a 200 (#1855)',
     expect(srv.gets).toBe(4);
   });
 
-  it('an applied save after a restart-required one keeps the restart banner, says so, and shows the live value', async () => {
+  it('applied saves after a restart-required one keep the restart banner, say so, and show the live value', async () => {
     const srv = installServer(RESTART, APPLIED);
     await act(async () => { await s().openSettings(); });
     render(<SettingsPanel />);
@@ -317,9 +322,16 @@ describe('BF-1000 the settings store reads restart_required from a 200 (#1855)',
     expect(s().draftCount).toBe(0);
     expect(srv.posts).toEqual(['t1', 't2']);
     expect(srv.gets).toBe(3);
+    await act(async () => { await save(false); });
+    expect(screen.getByTestId('settings-status-message').textContent).toBe(PENDING);
+    expect(screen.getByTestId('settings-restart-banner')).toBeTruthy();
+    expect(s().applyStatus).toBe('restart_required');
+    expect(s().snapshot?.config.cognitive.offline_stt_enabled).toBe(false);
+    expect(srv.posts).toEqual(['t1', 't2', 't3']);
+    expect(srv.gets).toBe(4);
   });
 
-  it('an applied save after a restart-required one whose reload fails keeps the restart status and says both', async () => {
+  it('an applied save after a restart-required one whose reload fails keeps the restart status and says both, and so does the next applied save', async () => {
     const srv = installServer(RESTART, APPLIED);
     await s().openSettings();
     s().setDraftField(MODEL, 'm2');
@@ -334,11 +346,17 @@ describe('BF-1000 the settings store reads restart_required from a 200 (#1855)',
     expect(s().draftCount).toBe(0);
     expect(srv.posts).toEqual(['t1', 't2']);
     expect(srv.gets).toBe(3);
+    await save(false);
+    expect(s().applyStatus).toBe('restart_required');
+    expect(s().applyMessage).toBe(PENDING);
+    expect(s().snapshot?.config.cognitive.offline_stt_enabled).toBe(false);
+    expect(srv.posts).toEqual(['t1', 't2', 't4']);
+    expect(srv.gets).toBe(5);
   });
 
   it.each([
     { label: 'a DISCARD between', answers: [RESTART, APPLIED], discardOnGet: 0, between: async () => { s().setDraftField(MODEL, 'm3'); s().discardDraft(); } },
-    { label: 'a refused save between', answers: [RESTART, REFUSED, APPLIED], discardOnGet: 0, between: async () => { s().setDraftField(MODEL, 'bad'); await s().applyDraft(); } },
+    { label: 'a refused save between', answers: [RESTART, REFUSED, APPLIED], discardOnGet: 0, between: async () => { s().setDraftField(FIELD, 'bad'); await s().applyDraft(); } },
     { label: 'a DISCARD during the reload', answers: [RESTART, APPLIED], discardOnGet: 3, between: async () => {} },
     { label: 'closing and reopening the dialog between', answers: [RESTART, APPLIED], discardOnGet: 0, between: async () => { s().closeSettings(); await s().openSettings(); } },
   ])('an applied save after a restart-required one and $label keeps the restart banner', async ({ answers, discardOnGet, between }) => {
@@ -360,6 +378,8 @@ describe('BF-1000 the settings store reads restart_required from a 200 (#1855)',
 });
 ```
 
+Notes for the reviewer (not part of the file): in case 4 the third POST takes the last answer (`APPLIED`) and needs no pre-save read (the reload of the second save recorded a fresh token), so it sends `t3` and reads once (`t4`). In case 5 the failed reload of the second save leaves `csrfFetchedAt` at 0, so the third save reads a token first (GET 4, `t4`, whose snapshot already shows the second save's `true`), posts `t4` and reloads (GET 5, `false`): the final `false` shows that the third reload happened. In the row `a refused save between`, the refused patch is the hot field set to `'bad'`; the 422 keeps the draft and `save(true)` overwrites that key, so the applied POST carries the hot field alone, as the real router requires for a `restart_required: false` answer (`config.py`:384-386).
+
 ### 6.3 `PROGRESS.md` (M2)
 
 **P4.** SEARCH:
@@ -370,7 +390,7 @@ REPLACE:
 ```markdown
 # ProbOS Progress
 
-**BF-1000 (2026-11-26), #1855 -- a settings save the router applied at once no longer says a restart is required, and the dialog shows the live values.** For a save that changes at least one field, all of them hot-reload, `POST /api/config` answers `restart_required: false` and has then already written them into the running config (BF-299); the HXI store ignored the flag, showed "Restart required to take effect." and the PROBOS RESTART REQUIRED banner after each 200, and kept its pre-save snapshot. `useSettingsStore.applyDraft` now treats a 200 whose flag is the boolean false as applied: it reloads the snapshot, then shows the live values with no field errors and, while no earlier save in this page session took the restart path, status `success` with "Saved and applied. No restart needed." A new store bit `restartPending`, set by each 200 that does not answer `restart_required: false` and kept until the page reloads, makes a later applied save keep the restart status and banner and say "Saved and applied. An earlier change still needs a restart.", also after a DISCARD or a refused save in between. When the reload fails it says so and keeps the old snapshot, and the next press reads a token first. A 200 with another flag value, a missing flag or a null body keeps the restart banner. New `ui/src/store/__tests__/useSettingsStore.bf1000.test.tsx` (11 tests). The router is unchanged. Contract `prompts/bf-1000-1855-hxi-settings-applied-flag.md`.
+**BF-1000 (2026-11-26), #1855 -- a settings save the router applied at once no longer says a restart is required, and the dialog shows the live values.** For a save that changes at least one field, all of them hot-reload, `POST /api/config` answers `restart_required: false` and has then already written them into the running config (BF-299); the HXI store ignored the flag, showed "Restart required to take effect." and the PROBOS RESTART REQUIRED banner after each 200, and kept its pre-save snapshot. `useSettingsStore.applyDraft` now treats a 200 whose flag is the boolean false as applied: it reloads the snapshot, then shows the live values with no field errors and says "Saved and applied. This change needs no restart." with status `success`. A new store bit `restartPending`, set by each 200 that does not answer `restart_required: false` and kept until the page reloads, makes a later applied save keep the restart status and banner and say "Saved and applied. An earlier save asked for a restart.", also after a DISCARD or a refused save in between. The messages state this save's answer and an earlier save's request, not whether a restart is owed now, which the router does not report: after a page reload an applied save shows no banner even if a save before the reload still awaits a restart (recorded limit; a router-reported pending restart is deferred). When the reload fails it says so and keeps the old snapshot, and the next press reads a token first. A 200 with another flag value, a missing flag or a null body keeps the restart banner. New `ui/src/store/__tests__/useSettingsStore.bf1000.test.tsx` (11 tests). The router is unchanged. Contract `prompts/bf-1000-1855-hxi-settings-applied-flag.md`.
 ```
 
 ### 6.4 `DECISIONS.md` (M2)
@@ -385,11 +405,12 @@ REPLACE:
 
 - *Scope.* `ui/src/store/useSettingsStore.ts` (`applyDraft`, a new state bit `restartPending`); test `ui/src/store/__tests__/useSettingsStore.bf1000.test.tsx`. Contract `prompts/bf-1000-1855-hxi-settings-applied-flag.md`. The router, `SettingsTopBar.tsx` and the banner are unchanged.
 - *D1.* A 200 means applied when `restart_required` is the boolean false; a missing or other value, or a null body, keeps the restart banner.
-- *D2.* After an applied save the store reads `GET /api/config` (the live config) and then sets the status, the message, the snapshot, empty field errors and the cleared draft in one update; the refreshed token is recorded as fresh. The read follows an applied save and no other, for display; BF-999 D1's rejection of a forced read after each save, for the token, stands.
+- *D2.* After an applied save the store reads `GET /api/config` (the live config) and then sets the status, the message, the snapshot, empty field errors and the cleared draft in one update of its own; the refreshed token is recorded as fresh. The read follows an applied save and no other, for display; BF-999 D1's rejection of a forced read after each save, for the token, stands.
 - *D3.* The existing `'success'` member of `applyStatus` carries the applied state; no new member.
-- *D4.* The pending restart is the bit `restartPending`, set by the 200 branch that keeps the restart banner (each 200 that does not answer `restart_required: false`) and written by no other code; an applied save while it is set keeps `'restart_required'` and the banner and says "Saved and applied. An earlier change still needs a restart." The status is not the record: DISCARD and the failure branches overwrite it, and a status-derived version lost the banner after a DISCARD or a refused save between the saves.
-- *Rejected.* Deriving the pending restart from `applyStatus` (see D4); merging the patch into the old snapshot (the router coerces values); reusing `loadSnapshot` (it returns early once loaded and resets the view); a read after a restart-required save (the running config did not change); a bit that the banner also reads (it would change the display after a refused save or DISCARD); the router reporting a pending restart (an API change; deferred).
-- *Known limits.* An edit typed between the APPLY press and the end of the reload is cleared with the draft, as one typed during the POST already was. A save with no changed field is answered `restart_required: true` by the router, shows the banner and sets the bit. The bit lives until the page reloads: a ProbOS restart without a page reload leaves it set, so later applied saves still show the banner, as each 200 did before. A refused save or DISCARD drops the banner until the next 200, as before.
+- *D4.* The pending restart is the bit `restartPending`, set by the 200 branch that keeps the restart banner (each 200 that does not answer `restart_required: false`) and written by no other code; an applied save while it is set keeps `'restart_required'` and the banner. The status is not the record: DISCARD and the failure branches overwrite it, and a status-derived version lost the banner after a DISCARD or a refused save between the saves.
+- *D5.* The messages are "Saved and applied. This change needs no restart." (bit false) and "Saved and applied. An earlier save asked for a restart." (bit true). They state what the store knows, this save's answer and an earlier save's request since the page loaded, and not whether a restart is owed now: the router does not report that, a page reload clears the bit and a ProbOS restart does not (review round 2 found the earlier wording, "No restart needed." and "An earlier change still needs a restart.", false in those cases).
+- *Rejected.* Deriving the pending restart from `applyStatus` (see D4); merging the patch into the old snapshot (the router coerces values); reusing `loadSnapshot` (it returns early once loaded and resets the view); a read after a restart-required save (the running config did not change); a bit that the banner also reads (it would change the display after a refused save or DISCARD); keeping the bit in `sessionStorage` (a new storage contract that would also outlive a ProbOS restart); the router reporting a pending restart (an API change; deferred).
+- *Known limits.* An edit typed between the APPLY press and the end of the reload is cleared with the draft, as one typed during the POST already was. A save with no changed field is answered `restart_required: true` by the router, shows the banner and sets the bit. After a page reload the bit is false, so an applied save shows `success` and no banner even when a save before the reload still awaits a restart; before this change that save showed the banner because each 200 did. A ProbOS restart without a page reload leaves the bit set, so later applied saves still show the banner and say an earlier save asked for a restart, as each 200 showed the banner before. A refused save or DISCARD drops the banner until the next 200, as before.
 - *Reversal.* Revert the commit; no API, persisted format or security control changes.
 
 ### BF-999 -- the HXI settings store fetches a fresh CSRF token before each save and keeps the draft on a refused save (2026-11-26, #1852)
@@ -413,7 +434,7 @@ An applied save changes fields in `hot_reload_paths` (`config.py`:378-386) and n
 | `CameraLiveIndicator.tsx`:77, `WakeWordTrainerPanel.tsx`:67 | hot-reload booleans | follow the live value |
 | `wakeWord.ts`:290-293 | `cognitive.custom_model_filename` (not a registered field) | unchanged |
 | `App.tsx`:98-108, `CompactApp.tsx`:131, `CameraLiveIndicator.tsx`:71, `ConnectPhoneCard.tsx`:54-55, `LiveToolProgress.tsx`:15, `ProfileChatTab.tsx`:1662, `useStore.ts`:2657-2658, `CapabilityRequestCard.tsx`:29 and :53 | fields that are not registered (section 10) | unchanged; whole-object selectors re-render once, as they already do on BF-999's pre-save refresh (`useSettingsStore.ts`:225) |
-| `SettingsPanel.test.tsx`:192-218, `useSettingsStore.bf999.test.tsx` (router double answers `restart_required: true` at :126), `LiveToolProgress.test.tsx`:165-169 and :35 (`setState` of the initial state spread, `true`), and the two tests that restore a saved full state (listed in section 10) | the restart branch, the token sequence, whole-state replacement | unchanged: a `true` flag takes the old branch (now also setting the bit) and reads nothing more; the replacements carry the new field because they start from a real state |
+| `SettingsPanel.test.tsx`:192-218, `useSettingsStore.bf999.test.tsx` (router double answers `restart_required: true` at :126), `LiveToolProgress.test.tsx`:165-169, and the ten whole-state replacements of the store in tests (listed in section 10) | the restart branch, the token sequence, whole-state replacement | unchanged: a `true` flag takes the old branch (now also setting the bit) and reads nothing more; the replacements carry the new field because each is `getInitialState()`, a spread of it, or a whole state read earlier from the store |
 
 ## 8. Gates (the orchestrator runs all of them)
 
@@ -421,7 +442,7 @@ An applied save changes fields in `hot_reload_paths` (`config.py`:378-386) and n
 
 - Every SEARCH in section 6 counted at its turn: 1 each; the new test file does not exist.
 - Run the new file on the base: cases 1, 3, 4, 5 and 6 (all four rows) fail; the three rows of case 2 pass by construction (the base shows the banner after each 200; they kill M2 and M10, section 8.3).
-- On revision 3 (store blob `1f8538d6`): the first three rows of case 6 fail (status `success`, no banner: S2, S3, S4); cases 1 to 5 and the row `closing and reopening the dialog between` pass; case 6 is the reason for revision 4. On the candidate as first built (no pending read), cases 4, 5 and 6 fail; cases 4 and 5 were the reason for revision 3.
+- Revision 3's and revision 4's stores spell the earlier messages, so against this file they fail each case that checks an applied message; they are not run as gates. The revision-3 derivation is carried by M13, and revision 4's results are in section 15.
 
 ### 8.2 Focused checks on the candidate (in `ui/`)
 
@@ -435,7 +456,7 @@ Expected: green; the BF-999 file and `SettingsPanel.test.tsx` pass unchanged.
 
 ### 8.3 Mutation rows (`useSettingsStore.ts`, one at a time, file restored byte for byte)
 
-Counts are of whole stripped lines in the candidate file (326 lines). `applyErrors: [],` occurs 6 times (:118, :151, :186, :256 the failed-reload `set`, :266 the success `set`, :276 the restart branch); `draftCount: 0,` 5 times (:111, :184, :258, :268, :278); `draft: {},` 5 times (:110, :183, :257, :267, :277); `csrfFetchedAt: Date.now(),` 3 times (:148, :181, :263); `if (typeof fresh === 'string') {` 2 times (:219 the pre-save refresh, :252 the reload branch); `applyStatus: status,` 2 times (:254 the failed-reload `set`, :264 the success `set`). The other lines named below occur once.
+Counts are of whole stripped lines in the candidate file (326 lines; revision 5 rewords three lines of P3, the second comment and the two message lines, and adds none, so the line numbers are revision 4's). `applyErrors: [],` occurs 6 times (:118, :151, :186, :256 the failed-reload `set`, :266 the success `set`, :276 the restart branch); `draftCount: 0,` 5 times (:111, :184, :258, :268, :278); `draft: {},` 5 times (:110, :183, :257, :267, :277); `csrfFetchedAt: Date.now(),` 3 times (:148, :181, :263); `if (typeof fresh === 'string') {` 2 times (:219 the pre-save refresh, :252 the reload branch); `applyStatus: status,` 2 times (:254 the failed-reload `set`, :264 the success `set`). The other lines named below occur once.
 
 | ID | Line (stripped) | Becomes | Killed by |
 |---|---|---|---|
@@ -443,7 +464,7 @@ Counts are of whole stripped lines in the candidate file (326 lines). `applyErro
 | M2 | same line | `if (resp.status === 200 && !body?.restart_required) {` | case 2, all three rows |
 | M3 | same line | `if (resp.status === 200) {` | case 2; the BF-999 file; `SettingsPanel.test.tsx`:192 |
 | M4 | `snapshot: fresh,` | empty line | cases 1, 4 and 6 (the live value) |
-| M5 | `csrfFetchedAt: Date.now(),` (3rd of 3) | empty line | case 1 (`['t1', 't2']`, 3 reads) |
+| M5 | `csrfFetchedAt: Date.now(),` (3rd of 3) | empty line | cases 1 (`['t1', 't2']`, 3 reads) and 4 (`['t1', 't2', 't3']`, 4 reads) |
 | M6 | `if (typeof fresh === 'string') {` (2nd of 2, the reload branch) | `if (false) {` | cases 3 and 5 |
 | M7 | `applyErrors: [],` (4th of 6, the failed-reload `set`) | empty line | case 3 |
 | M8 | `applyErrors: [],` (5th of 6, the success `set`) | empty line | case 1 |
@@ -454,17 +475,19 @@ Counts are of whole stripped lines in the candidate file (326 lines). `applyErro
 | M13 | same line | `const pending = get().applyStatus === 'restart_required';` (revision 3) | case 6, rows `a DISCARD between`, `a refused save between` and `a DISCARD during the reload` |
 | M14 | `const status: SettingsState['applyStatus'] = pending ? 'restart_required' : 'success';` | `const status: SettingsState['applyStatus'] = 'success';` | cases 4, 5 and 6 |
 | M15 | `applyStatus: status,` (1st of 2, the failed-reload `set`) | `applyStatus: 'success',` | case 5 |
-| M16 | `applyStatus: status,` (2nd of 2, the success `set`) | `applyStatus: 'success',` | cases 4 and 6 |
-| M17 | `applyMessage: applied,` | `applyMessage: 'Saved and applied. No restart needed.',` | cases 4 and 6 |
-| M18 | `? 'Saved and applied. An earlier change still needs a restart.'` | `? 'Saved and applied. No restart needed.'` | cases 4, 5 and 6 |
+| M16 | `applyStatus: status,` (2nd of 2, the success `set`) | `applyStatus: 'success',` | cases 4, 5 (third save) and 6 |
+| M17 | `applyMessage: applied,` | `applyMessage: 'Saved and applied. This change needs no restart.',` | cases 4, 5 (third save) and 6 |
+| M18 | `? 'Saved and applied. An earlier save asked for a restart.'` | `? 'Saved and applied. This change needs no restart.'` | cases 4, 5 and 6 |
 | M19 | `restartPending: true,` | empty line | cases 4, 5 and 6 |
 | M20 | `restartPending: false,` | `restartPending: true,` | cases 1 and 3 (`getInitialState()` then starts with the bit set) |
 | M21 | `set({ draft: {}, draftCount: 0, applyStatus: 'idle', applyErrors: [], applyMessage: '' }),` (`discardDraft`) | `set({ restartPending: false, draft: {}, draftCount: 0, applyStatus: 'idle', applyErrors: [], applyMessage: '' }),` | case 6, rows `a DISCARD between` and `a DISCARD during the reload` |
 | M22 | `applyErrors: body.errors ?? [],` (the 422 `set`) | `restartPending: false, applyErrors: body.errors ?? [],` | case 6, row `a refused save between` |
 | M23 | `set({ draft: {}, draftCount: 0 });` (`openSettings`, the already-loaded reset) | `set({ restartPending: false, draft: {}, draftCount: 0 });` | case 6, row `closing and reopening the dialog between` |
 | M24 | `snapshot: fresh,` | `restartPending: true, snapshot: fresh,` | case 1 (the second applied save shows `success`) |
+| M25 | `applyStatus: status,` (1st of 2, the failed-reload `set`) | `restartPending: false, applyStatus: status,` | case 5 (the third save: status `success`, message DONE) |
+| M26 | `applyStatus: status,` (2nd of 2, the success `set`) | `restartPending: false, applyStatus: status,` | case 4 (the third save: banner gone, status `success`, message DONE) |
 
-Case 2 passes on the base by construction; it is kept because it alone kills M2 and M10. M21 to M24 stand for "no other code writes the bit" (M24: not even the applied branch).
+Case 2 passes on the base by construction; it is kept because it alone kills M2 and M10. M21 to M26 stand for "no other code writes the bit" (M24 to M26: not even the applied branch). M25 and M26 are killed by one case each: a case kills such a row when an applied save follows the `set` the row changes while the bit was set, because the bit is read before that `set` writes it; case 5 has that order for the failed-reload `set` (saves 2 and 3) and case 4 for the success `set` (saves 2 and 3).
 
 ### 8.4 The batch gate
 
@@ -472,19 +495,20 @@ Case 2 passes on the base by construction; it is kept because it alone kills M2 
 
 ## 9. Diff Reviewer: properties to verify
 
-The change claims that a 200 answered `restart_required: false` shows the live config and status `success`, or keeps `restart_required` when a save earlier in this page session needed a restart, and that a 200 with another body behaves as before and also sets that record. The consumer that must accept it is the Settings dialog (`SettingsPanel` with `SettingsTopBar` and `SettingsStatusBar`) over the unchanged `src/probos/routers/config.py`.
+The change claims that a 200 answered `restart_required: false` shows the live config and status `success`, or keeps `restart_required` when a 200 earlier since the page loaded took the restart branch, and that a 200 with another body behaves as before and also sets that record. The consumer that must accept it is the Settings dialog (`SettingsPanel` with `SettingsTopBar` and `SettingsStatusBar`) over the unchanged `src/probos/routers/config.py`.
 
 1. A 200 whose body is a JSON value other than an object with `restart_required` the boolean false (including `null` and the `{}` of a parse failure) reaches the same `set` as the base plus `restartPending: true`, with no extra request.
 2. After an applied save, each outcome of the reload ends in exactly one `set`, which clears `applyErrors` and the draft; a failed reload leaves `snapshot` and `csrfFetchedAt` as they were before that `set`.
 3. The `applying` latch is still cleared in `finally` after the reload, and a press during the reload sends nothing.
 4. The other branches of `applyDraft` (403 resend, 422, 400, other status, thrown error) do not change.
-5. The new test file holds its own double, imports nothing from the BF-999 file, and its token and read counts follow from the double.
+5. The new test file holds its own double, imports nothing from the BF-999 file, and its token and read counts follow from the double; each applied answer of the double follows a patch of the hot field alone, as the router requires for `restart_required: false`.
 6. ASCII and LF in the new text; no file outside section 4 changes.
-7. `restartPending` is written by the initial state (`false`) and the restart branch's `set` (`true`) and by no other code, so DISCARD, a refused save, `openSettings` and `loadSnapshot` leave it as it was. After an applied save the final `set` writes `'restart_required'` when the bit is true (read after the reload, no await in between) and `'success'` when it is false, in both reload outcomes; the message says which (D4). Against the base, the banner differs only after an applied save while the bit is false.
+7. `restartPending` is written by the initial state (`false`) and the restart branch's `set` (`true`) and by no other code, so DISCARD, a refused save, `openSettings`, `loadSnapshot` and both final `set`s of the applied branch leave it as it was. After an applied save the final `set` writes `'restart_required'` when the bit is true (read after the reload, no await in between) and `'success'` when it is false, in both reload outcomes. Against the base, the status after a save's final `set` differs in one case: an applied save while the bit is false. During an applied save's reload the previous status stays on screen, where the base had already written `'restart_required'`.
+8. The two applied messages assert what the store knows (this save's answer; an earlier 200's restart branch since the page loaded) and not whether a restart is owed now (D4).
 
-## 10. Verified Against Codebase (2026-11-26, tree `d09c14f1`; candidate lines after the revision-4 6.1)
+## 10. Verified Against Codebase (2026-11-26, tree `d09c14f1`; candidate lines after the revision-5 6.1, the same as revision 4's)
 
-- `ui/src/store/useSettingsStore.ts` (base): `ConfigSnapshot.config: Record<string, any>` :24; `export interface SettingsState` :41; status union :53; `openedAt: number;` :56; BF-999 comment :57 and `csrfFetchedAt: number;` :58 (P1); `_fetchSnapshot` :93-101 (returns a snapshot or a string, catches every error); `draft: {},` :108; `draftCount: 0,` :109; `applyErrors: [],` :116; `openedAt: 0,` :118 and `csrfFetchedAt: 0,` :119 (P2; the other `csrfFetchedAt: 0,` is :219 in the token-failure `set`, so P2 anchors on the pair); `loadSnapshot` early return :132, view reset :146-149; `csrfFetchedAt: Date.now(),` :145 and :178; `applyErrors: [],` :148 and :183; `openSettings` once loaded writes `open`, `openedAt`, `draft` and `draftCount` and no status (:160-164); `discardDraft` :198-199; pre-save refresh :225; spend :229; `body` :238; 200 branch :240-247 (P3). Candidate: interface field :60, initial `restartPending: false,` :122, `discardDraft` :202, applied branch :243-270 (`const pending = get().restartPending;` :247), restart branch :271-279 (`restartPending: true,` :273).
+- `ui/src/store/useSettingsStore.ts` (base): `ConfigSnapshot.config: Record<string, any>` :24; `export interface SettingsState` :41; status union :53; `openedAt: number;` :56; BF-999 comment :57 and `csrfFetchedAt: number;` :58 (P1); `_fetchSnapshot` :93-101 (returns a snapshot or a string, catches every error); `draft: {},` :108; `draftCount: 0,` :109; `applyErrors: [],` :116; `openedAt: 0,` :118 and `csrfFetchedAt: 0,` :119 (P2; the other `csrfFetchedAt: 0,` is :219 in the token-failure `set`, so P2 anchors on the pair); `loadSnapshot` early return :132, view reset :146-149; `csrfFetchedAt: Date.now(),` :145 and :178; `applyErrors: [],` :148 and :183; `openSettings` once loaded writes `open`, `openedAt`, `draft` and `draftCount` and no status (:160-164); `discardDraft` :198-199; pre-save refresh :225; spend :229; `body` :238; 200 branch :240-247 (P3). Candidate: interface field :60, initial `restartPending: false,` :122, `setDraftField` :196-199 (stores the value whatever it is, no comparison with the snapshot, so a `false` draft over a `false` snapshot is still sent), `discardDraft` :202, the token check :216-217 (a read only when `csrfFetchedAt` is 0 or aged), applied branch :243-270 (`const pending = get().restartPending;` :247), restart branch :271-279 (`restartPending: true,` :273).
 - `src/probos/routers/config.py`: `get_config` :231-234 returns `runtime.config.model_dump`; `hot_reload_paths` :378-383; `restart_required` :384-386; runtime mutation :387-395; answer :433.
 - `src/probos/settings/section_registry.py`:95 `cognitive.llm_model_fast` (no `hot_reload`, the restart field of cases 4 to 6); :127 `cognitive.offline_stt_enabled`, `hot_reload=True` :137; :289 `wake_word.wake_word_trainer_enabled`, :298.
 - `SettingsTopBar.tsx`:64 and :81 APPLY `disabled={!dirty}`; :112 banner, :140 text, :154 `inSync`, :177 `settings-status-message`. `SettingsMain.tsx`:233-237 `errorsByField` from `applyErrors`. `IntentSurface.tsx`:112-114 `sttEnabled`; :284 the wake-word effect's deps `[wakeWordEnabled, agentsMap]`; :286 "AD-705a / BF-309: offline STT subscription for the MAIN CHAT"; :298 `if (!sttEnabled || !wakeWordEnabled) return;`; :318 deps `[sttEnabled, wakeWordEnabled]`; :975 `{sttEnabled && sttTranscribing && (`. `SettingsPanel.test.tsx`:199 answers `restart_required: true`. `useSettingsStore.bf999.test.tsx`:126 the same.
@@ -493,12 +517,23 @@ The change claims that a 200 answered `restart_required: false` shows the live c
 ### Absence Verified (2026-11-26)
 
 - CLAIM: no component reads `applyStatus === 'success'`. RUN: Grep `applyStatus|'success'` over `ui/src` excluding tests. FOUND: the store's writers, `SettingsTopBar.tsx`:16, :112, :150, :154; the other `'success'` hits are unrelated unions (`types.ts`:970, `threadApi.ts`, `transformersStt.ts`). HOLDS.
-- CLAIM (D8, property 7): `restartPending` exists nowhere before this change, and after it the writers are the initial state and the restart branch and the reader is the applied branch. RUN (revision 4): Grep `restartPending|SettingsState\b` over `ui` excluding `node_modules`. FOUND on the base: no `restartPending`; `SettingsState` at `useSettingsStore.ts`:41 and :103 only, so the new required field breaks no other object literal of that type. In the candidate the field's three code lines are P1 to P3: :60 (type), :122 (`false`), :273 (`true`), and the read :247; no file outside the store names it. HOLDS. Whole-state `setState(..., true)` in tests: Grep `useSettingsStore\.setState\(...true` over `ui/src` found three files, listed below with their lines; the first two restore a state read earlier from the store and the third spreads `getInitialState()`, so each carries the field.
+- CLAIM (D8, property 7): `restartPending` exists nowhere before this change, and after it the writers are the initial state and the restart branch and the reader is the applied branch. RUN (revision 4): Grep `restartPending|SettingsState\b` over `ui` excluding `node_modules`. FOUND on the base: no `restartPending`; `SettingsState` at `useSettingsStore.ts`:41 and :103 only, so the new required field breaks no other object literal of that type. In the candidate the field's three code lines are P1 to P3: :60 (type), :122 (`false`), :273 (`true`), and the read :247; no file outside the store names it. HOLDS.
+- CLAIM (RV2-F4): each whole-state replacement of the store in tests carries the new field. RUN: the orchestrator's balanced-parenthesis scan over `ui/src` (44 `useSettingsStore.setState` call sites); the Architect's Grep `\}, true\);|\), true\);|State, true\);|Settings, true\);` over `ui/src` (revision 5), whose `useSettingsStore` hits are the same ten (the multi-line one closes at :76; its other hits are `useStore` and `TodosList.tsx` calls). FOUND: 10 in 6 files. Six are pure resets, `setState(useSettingsStore.getInitialState(), true)`, listed in the first block (the new file's two at their revision-5 lines). Four are other replacements, listed in the second block: the first two restore a whole state read earlier from the store, the last two spread `getInitialState()` (the shells file across :73-76). HOLDS: `getInitialState()` and a state read from the store both hold `restartPending`.
+
+```text
+ui/src/__tests__/liveToolProgress.shells.test.tsx:102
+ui/src/components/profile/__tests__/LiveToolProgress.test.tsx:43
+ui/src/store/__tests__/useSettingsStore.bf1000.test.tsx:82
+ui/src/store/__tests__/useSettingsStore.bf1000.test.tsx:87
+ui/src/store/__tests__/useSettingsStore.bf999.test.tsx:154
+ui/src/store/__tests__/useSettingsStore.bf999.test.tsx:160
+```
 
 ```text
 ui/src/__tests__/Artifact.ad1074c.test.tsx:378
 ui/src/__tests__/IntentSurface.audioRender.test.tsx:102
 ui/src/components/profile/__tests__/LiveToolProgress.test.tsx:35
+ui/src/__tests__/liveToolProgress.shells.test.tsx:73
 ```
 
 - CLAIM: outside the store nothing writes `applyStatus`. RUN: Grep `applyStatus` over `ui/src` excluding `__tests__`; Grep `useSettingsStore\.setState` over `ui/src` excluding `__tests__`. FOUND: store writers only (initial state, `loadSnapshot` and `openSettings` on a first load, `discardDraft`, the token-failure `set`, the final `set`s of `applyDraft`'s branches, the catch); readers `SettingsTopBar.tsx`:16, :112, :150, :154; `setState` outside tests: no file. HOLDS. DISCARD and each failure branch overwrite the status, which is why D8 does not use it as the record.
@@ -515,38 +550,42 @@ ui/src/components/profile/__tests__/LiveToolProgress.test.tsx:35
 - The BF-999 token rules and test file.
 - Limit: an edit typed between the APPLY press and the end of the reload is cleared with the draft; the POST window already had this.
 - Limit: after a failed reload the dialog shows the old value with an explicit message until the next read.
-- Limit: `restartPending` is page-session state; in the app a page reload clears it, and no store action writes it back to `false`. A ProbOS restart without a page reload leaves it set, so later applied saves still show the banner and the pending message (the base showed the banner after each 200). A second tab does not know of it. A save the router answers `restart_required: true` with no changed field also sets it.
+- Limit (RV2-F1 a): `restartPending` is page-session state and a page reload clears it. After a reload, an applied save shows `success`, "Saved and applied. This change needs no restart." and no banner even when a save before the reload still awaits a restart; the message speaks of this save. The base showed the banner after that save because it showed it after each 200, including the applied saves this issue is about; after a reload and before any save, neither shows it. A second tab does not know of the bit either. A router-reported pending restart would cover these (section 13).
+- Limit (RV2-F1 b): no store action writes the bit back to `false`. A ProbOS restart without a page reload, or a save the router answers `restart_required: true` with no changed field, leaves it set, so later applied saves show the banner and say "Saved and applied. An earlier save asked for a restart.", which stays true of that earlier save; the base showed the banner after each 200.
 - Limit: a refused save or DISCARD after a restart-required save drops the banner, as on the base; while the bit is set, the next 200 of either kind shows it again, as the base's next 200 did.
 
 ## 12. Issue text (#1855, on merge)
 
 ```
-Repaired as BF-1000 (contract prompts/bf-1000-1855-hxi-settings-applied-flag.md). useSettingsStore.applyDraft now reads restart_required from a 200: when it is the boolean false, the store reloads GET /api/config (the live config) and shows the live values with no field errors; while no earlier save in this page session took the restart path it shows "Saved and applied. No restart needed." with status success and no restart banner. A new store bit, restartPending, is set by each 200 that does not answer restart_required false and kept until the page reloads; while it is set, an applied save keeps the restart status and banner and says "Saved and applied. An earlier change still needs a restart.", also after a DISCARD or a refused save in between or a DISCARD during the reload (review found a status-derived first version lost the banner in those sequences). A failed reload says so, keeps the old snapshot, and the next press reads a token first. A 200 with another flag value, a missing flag or a null body keeps the restart banner and message. The router and the banner component are unchanged. Limit: the bit outlives a ProbOS restart until the page reloads, so the banner can persist as it did before. Tests: ui/src/store/__tests__/useSettingsStore.bf1000.test.tsx (11 tests; cases 1 and 3 to 6 fail on the unrepaired store, the three rows of case 2 kill the loose-flag and null-body mutants).
+Repaired as BF-1000 (contract prompts/bf-1000-1855-hxi-settings-applied-flag.md). useSettingsStore.applyDraft now reads restart_required from a 200: when it is the boolean false, the store reloads GET /api/config (the live config) and shows the live values with no field errors and "Saved and applied. This change needs no restart." with status success and no restart banner. A new store bit, restartPending, is set by each 200 that does not answer restart_required false and kept until the page reloads; while it is set, an applied save keeps the restart status and banner and says "Saved and applied. An earlier save asked for a restart.", also after a DISCARD or a refused save in between or a DISCARD during the reload (review found a status-derived first version lost the banner in those sequences). The messages state this save's answer and an earlier save's request, not whether a restart is owed now, which the router does not report (review round 2 found the earlier wording false after a page reload or a ProbOS restart). A failed reload says so, keeps the old snapshot, and the next press reads a token first. A 200 with another flag value, a missing flag or a null body keeps the restart banner and message. The router and the banner component are unchanged. Limits: after a page reload an applied save shows no banner even if a save before the reload still awaits a restart; the bit outlives a ProbOS restart until the page reloads, so the banner can persist as it did before. A router-reported pending restart is deferred. Tests: ui/src/store/__tests__/useSettingsStore.bf1000.test.tsx (11 tests; cases 1 and 3 to 6 fail on the unrepaired store, the three rows of case 2 kill the loose-flag and null-body mutants).
 ```
 
 ## 13. Prior art and blind spots
 
 - Internal: BF-299 (the router's hot-reload apply), BF-304 (`loadSnapshot`), BF-999 (token refresh; its D1 rejected a forced read after every save for the token, which this does not revisit).
 - External search skipped: ProbOS-specific store plumbing with no outside analogue; no row of `docs/research/reference-projects.md` was examined.
-- Blind spots: the router reports a field applied when `runtime.config` changed, even if a downstream push failed (`config.py`:419-425 logs it); the store cannot see that. The router does not report a pending restart, so the store keeps its own page-session record (D8). A server-side flag (YAML against running config) would cover page reloads, other tabs and a ProbOS restart: considered, deferred, an API change. The snapshot's `uptime_seconds` could reveal a ProbOS restart and clear the bit: considered, deferred (a heuristic, and the base's banner already persists in that case).
+- Blind spots: the router reports a field applied when `runtime.config` changed, even if a downstream push failed (`config.py`:419-425 logs it); the store cannot see that. The router does not report a pending restart, so the store keeps its own page-session record (D8) and its messages claim no more than that record (D4).
+- Considered, deferred (RV2-F1): the router reporting a pending restart in its GET and POST answers. The smaller design is a process-memory flag the router sets when it writes a change that is not hot-reload and that a process start clears; it would cover the page-reload, second-tab, ProbOS-restart and empty-save cases of section 11. It is a Python API change with its own tests; the orchestrator records it as a checklist item of the wave follow-up issue #1820, because the discovery budget of this burn-down allows no new issue. Comparing the YAML with the running config is the heavier version (defaults and coercion make the comparison inexact).
+- Considered, deferred: the snapshot's `uptime_seconds` could reveal a ProbOS restart and clear the bit (a heuristic; the follow-up above supersedes it).
 
 ## 14. Acceptance criteria
 
-1. Cases 1 and 3 to 6 fail on the base, case 6 fails on revision 3, and the 11 tests pass on the candidate; M1 to M24 are killed as section 8.3 says.
+1. Cases 1 and 3 to 6 fail on the base, and the 11 tests pass on the candidate; M1 to M26 are killed as section 8.3 says.
 2. The focused checks of 8.2 pass; the BF-999 file and `SettingsPanel.test.tsx` pass unchanged.
 3. `git diff --check` is clean, the new text is ASCII, and no file outside section 4 changes.
 4. The Diff Reviewer approves against section 9.
 5. One receipted broad gate on the committed head is green.
 6. Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.
 
-## 15. Results on the oracle tree (the orchestrator, 2026-11-26; revision 4 with the corrections of the header)
+## 15. Results on the oracle tree (the orchestrator, 2026-11-26; revision 5)
 
 The oracle is a detached tree at `d09c14f1` with the six operations of section 6 (pairs P1 to P5 and the new file) applied by `contract_tools.py apply`. The base store blob is `5ee13d2e`.
 
-- **Blobs after the operations:** the store `0de8b0fbbadc8422d51cc4b6c45c8cc09951970f` (326 lines), the new test file `7e07f33a7fca8f9e5c4d71060f47d9a4a19e221d` (206), `PROGRESS.md` `6f32d70cc5fe395d80739bc39d83f2c780636841` (1830), `DECISIONS.md` `5ee303c80dff2852e8625345d602759c32f57790` (13655).
-- **The new file against three stores (section 8.1):** the base store: 11 tests, 3 passed (the three rows of case 2), 8 failed (cases 1, 3, 4, 5 and the four rows of case 6). Revision 3's store (`1f8538d6`): 8 passed, 3 failed (the first three rows of case 6). The first-built store (`d9353bf5`): 5 passed (cases 1 to 3), 6 failed (cases 4, 5 and the four rows of case 6).
-- **Sequences through the real store, status after the last save** (the orchestrator's probe: A is a save answered `restart_required` true, B and C are saves answered false, the refused save of S3 is a 422, S0 is B alone; results for the base, revision 3 and the candidate in that order): S0: `restart_required`, `success`, `success`. S1 A then B: `restart_required` in all three. S2 A, DISCARD, B; S3 A, refused, B; S4 A, B with a DISCARD during the reload (the base has no reload): `restart_required`, `success`, `restart_required`. S5 A, B, C: `restart_required` in all three.
+- **Blobs after the operations:** the store `984a013cd928e545abd3eae305606c26082b5e41` (326 lines), the new test file `ddd5a73e0d514455d67682bcbc55f4981a4e339f` (220), `PROGRESS.md` `d0f253411c30268162030c6aa84b394916a622b3` (1830), `DECISIONS.md` `17a3fa90cbb6d9f94916f7c56300e66a6691be67` (13656).
+- **The new file against the base store (section 8.1):** 11 tests, 3 passed (the three rows of case 2), 8 failed (cases 1, 3, 4, 5 and the four rows of case 6).
+- **Sequences through the real store** (the orchestrator's probe: A is a save answered `restart_required` true, B and C are saves answered false, the refused save of S3 is a 422, S4 holds B's reload and presses DISCARD during it): S0, B alone, ends `success` with no banner and "Saved and applied. This change needs no restart."; S1 A then B, S2 A, DISCARD, B, S3 A, refused, B, S4 A, B with a DISCARD during the reload, and S5 A, B, C each end `restart_required` with the banner and "Saved and applied. An earlier save asked for a restart." The same probe on the base store showed `restart_required` and "Restart required to take effect." for all six.
 - **Candidate:** `npx tsc -b` exit 0; the vitest command of 8.2 (10 files) 172 tests passed, 0 failed (the new file 11, the BF-999 file 14).
-- **Mutation rows:** the selector is the new file, the BF-999 file and `SettingsPanel.test.tsx`; unmutated, its 32 cases all passed. M1 to M24 and ten rows of the orchestrator (X1 to X10) were each KILLED, and every case a row names failed; no row survived. X1 deletes `draftCount: 0,` of the success `set`; X2 and X3 delete `draft: {},` of the failed-reload `set` and of the success `set`; X4 and X5 turn `applyStatus: status,` into `'idle'` in each of those two; X6 empties the plain applied message and X7 replaces the failed-reload message by the status message alone; X8 drops the `await` of the reload; X9 and X10 change the status and empty the message of the restart branch.
-- **Ledger:** `gen_ad_ledger.py` without `--online` rewrote `docs/development/open-ads-report.md` and `docs/development/ad-ledger-snapshot.json`; `--check` printed "AD/BF ledger is current"; `git diff --check` was clean.
+- **Mutation rows:** the selector is the new file, the BF-999 file and `SettingsPanel.test.tsx`; unmutated, its 32 cases all passed. M1 to M26 and ten rows of the orchestrator (X1 to X10) were each KILLED, and every case a row names failed; no row survived. X1 deletes `draftCount: 0,` of the success `set`; X2 and X3 delete `draft: {},` of the failed-reload `set` and of the success `set`; X4 and X5 turn `applyStatus: status,` into `'idle'` in each of those two; X6 empties the plain applied message and X7 replaces the failed-reload message by the status message alone; X8 drops the `await` of the reload; X9 and X10 change the status and empty the message of the restart branch. M25 is killed by case 5 alone and M26 by case 4 alone.
+- **Review round 2, RV2-F3 (reproduced before revision 5):** on revision 4's candidate (store `0de8b0fb`) M25 and M26 passed all 32 cases (unmutated 32 passed, M25 32 passed, M26 32 passed), because no case saved a third time after a restart-then-applied pair; the third saves of cases 4 and 5 in this revision kill them.
+- **Checks:** `git diff --check` was clean on the oracle. The ledger pair is not part of the oracle: M2 regenerates `docs/development/open-ads-report.md` and `docs/development/ad-ledger-snapshot.json` in the build tree with `gen_ad_ledger.py` (no `--online`), and its `--check` is run there.
 - **Added by the orchestrator after reading every writer of the bit** (by inspection, before the campaign: no case of the text as drafted would fail if the applied branch set the bit or if `openSettings` reset it): the last assertion of case 1 and the fourth row of case 6; M24 and M23 record them and are killed by them.
