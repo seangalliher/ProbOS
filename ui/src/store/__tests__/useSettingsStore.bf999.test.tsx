@@ -68,7 +68,7 @@ interface ServerDouble {
 // 422 validation_failed carrying it. pydantic parses integers laxly (it accepts '+5000',
 // ' 5000 ', '5000.0', '1_000' and true), so no rule here stands for the router: a body that
 // passed the token check and is missing from the table is recorded in the case's ledger and the
-// double throws, and afterEach fails the case on it. A refused POST never reaches the table. A
+// double throws, and afterEach fails the case on it. A
 // POST reads its body only after the hold and the token check, so afterEach also fails a case
 // whose ledger still counts a POST outstanding.
 const INT_PARSING = {
