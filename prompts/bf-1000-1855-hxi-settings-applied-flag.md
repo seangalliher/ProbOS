@@ -2,7 +2,7 @@
 
 **Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-26
 **Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-26 (revision 1: the orchestrator's findings F1 to F6: a null-safe flag read, the consumer table, three stale-state mutants, the double's comment, wording and counts; revision 2: G1, section 10 lists all 21 hot-reload ids, and G2, the empty-save wording in sections 1 and 6.3)
-**Corrected by:** the orchestrator, 2026-11-26: the words "in registry order" are deleted from the Absence Verified entry of section 10 (the list was printed sorted by id, which is not the declaration order of `section_registry.py`; the order was the orchestrator's wording in the revision-2 request, not the Architect's).
+**Corrected by:** the orchestrator, 2026-11-26: the words "in registry order" are deleted from the Absence Verified entry of section 10 (the list was printed sorted by id, which is not the declaration order of `section_registry.py`; the order was the orchestrator's wording in the revision-2 request, not the Architect's); section 8.3 names the occurrence of M6's line (2nd of 2, the line also occurs in the pre-save refresh); section 15 records the oracle results.
 **Status:** ready to build. **Owning issue:** #1855 only. Commits say `Refs #1855.`
 **Base:** `d09c14f13f0251ae6704f7f05411fd3e665930c7` (= origin/main), branch `feat/bf1000-1855-hxi-settings-restart-flag-20261126`. **Number:** BF-1000 (section 10).
 **Line endings:** the working copies may be CRLF and the blocks below are LF; match after normalising. Every SEARCH starts at the beginning of a line and occurs once in its file at its turn. All new text is ASCII.
@@ -319,7 +319,7 @@ Expected: all green; the BF-999 file and `SettingsPanel.test.tsx` pass unchanged
 
 ### 8.3 Mutation rows (`useSettingsStore.ts`, one at a time, file restored byte for byte)
 
-Counts are of whole stripped lines in the candidate file. `applyErrors: [],` occurs 6 times (:116, :148, :183, then the failed-reload `set`, the success `set`, the restart branch); `draftCount: 0,` 5 times (:109, :181, then the failed-reload `set`, the success `set`, the restart branch); `csrfFetchedAt: Date.now(),` 3 times (:145, :178, then the success `set`).
+Counts are of whole stripped lines in the candidate file. `applyErrors: [],` occurs 6 times (:116, :148, :183, then the failed-reload `set`, the success `set`, the restart branch); `draftCount: 0,` 5 times (:109, :181, then the failed-reload `set`, the success `set`, the restart branch); `csrfFetchedAt: Date.now(),` 3 times (:145, :178, then the success `set`); `if (typeof fresh === 'string') {` 2 times (:216, the pre-save refresh, then the reload branch).
 
 | ID | Line (stripped) | Becomes | Killed by |
 |---|---|---|---|
@@ -328,7 +328,7 @@ Counts are of whole stripped lines in the candidate file. `applyErrors: [],` occ
 | M3 | same line | `if (resp.status === 200) {` | case 2; the BF-999 file; `SettingsPanel.test.tsx`:192 |
 | M4 | `snapshot: fresh,` | empty line | case 1 (the live value) |
 | M5 | `csrfFetchedAt: Date.now(),` (3rd of 3) | empty line | case 1 (`['t1', 't2']`, 3 reads) |
-| M6 | `if (typeof fresh === 'string') {` | `if (false) {` | case 3 |
+| M6 | `if (typeof fresh === 'string') {` (2nd of 2, the reload branch) | `if (false) {` | case 3 |
 | M7 | `applyErrors: [],` (4th of 6, the failed-reload `set`) | empty line | case 3 |
 | M8 | `applyErrors: [],` (5th of 6, the success `set`) | empty line | case 1 |
 | M9 | `draftCount: 0,` (3rd of 5, the failed-reload `set`) | empty line | case 3 |
@@ -395,3 +395,13 @@ Repaired as BF-1000 (contract prompts/bf-1000-1855-hxi-settings-applied-flag.md)
 4. The Diff Reviewer approves against section 9.
 5. One receipted broad gate on the committed head is green.
 6. Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.
+
+## 15. Results on the oracle tree (the orchestrator, 2026-11-26)
+
+The oracle is a detached tree at `d09c14f1` with the four operations of section 6 applied by `contract_tools.py apply`. The base store blob is `5ee13d2e`.
+
+- **Blobs after the operations:** the store `d9353bf5e5b36609ca796187de6322979168312a` (316 lines), the new test file `029a470b6fa24c4c6b8c18823a361867163656fb` (135), `PROGRESS.md` `975f4df50ba7ebc68cc7169fd4c5065af7eae7b4` (1830), `DECISIONS.md` `4cc422dae8226282304b3681952b3a452cde8269` (13654).
+- **Base run (section 8.1):** the new file on the base store, 5 tests: 3 passed (the three rows of case 2), 2 failed (cases 1 and 3).
+- **Candidate:** `npx tsc -b` exit 0; the vitest command of 8.2 (10 files) 166 tests passed, 0 failed (the new file 5, the BF-999 file 14).
+- **Mutation rows:** the selector is the new file, the BF-999 file and `SettingsPanel.test.tsx`; unmutated, its 26 cases all passed. M1 to M10 and ten rows of the orchestrator (X1 to X10) were each KILLED, and every case a row names failed; no row survived. X1 deletes `draftCount: 0,` of the success `set`; X2 and X3 delete `draft: {},` of the failed-reload `set` and of the success `set`; X4 and X5 turn `applyStatus: 'success',` into `'idle'` in each of those two; X6 empties the applied message and X7 replaces the failed-reload message by the plain one; X8 drops the `await` of the reload; X9 and X10 change the status and empty the message of the restart branch.
+- **Ledger:** `gen_ad_ledger.py` without `--online` rewrote `docs/development/open-ads-report.md` and `docs/development/ad-ledger-snapshot.json`; `--check` printed "AD/BF ledger is current"; `git diff --check` was clean.
