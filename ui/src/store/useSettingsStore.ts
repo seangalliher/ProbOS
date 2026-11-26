@@ -54,6 +54,8 @@ export interface SettingsState {
   applyErrors: ApplyError[];
   applyMessage: string;
   openedAt: number;
+  /** BF-999: Date.now() when snapshot.csrf_token was fetched; 0 when none was or a POST spent it. */
+  csrfFetchedAt: number;
 
   loadSnapshot: () => Promise<void>;
   openSettings: () => Promise<void>;
@@ -80,6 +82,24 @@ function _setNestedPath(target: Record<string, any>, path: string, value: any): 
   cursor[parts[parts.length - 1]] = value;
 }
 
+// BF-999 (#1852): GET /api/config issues a single-use CSRF token that lives 300 s, and every
+// POST /api/config spends it before reading the body (src/probos/routers/config.py). A save
+// fetches a fresh token first when the last one was spent or is older than this margin.
+const CSRF_REFRESH_AFTER_MS = 240000;
+
+// BF-999: one save at a time; a press while a save is in flight sends nothing.
+let applying = false;
+
+async function _fetchSnapshot(): Promise<ConfigSnapshot | string> {
+  try {
+    const resp = await fetch('/api/config');
+    if (!resp.ok) return `config GET failed: ${resp.status}`;
+    return (await resp.json()) as ConfigSnapshot;
+  } catch (err) {
+    return `config GET error: ${String(err)}`;
+  }
+}
+
 export const useSettingsStore = create<SettingsState>((set, get) => ({
   open: false,
   loading: false,
@@ -96,6 +116,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   applyErrors: [],
   applyMessage: '',
   openedAt: 0,
+  csrfFetchedAt: 0,
 
   /**
    * BF-304: fetch /api/config without opening the Settings dialog.
@@ -121,6 +142,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
         snapshot,
         loading: false,
         loaded: true,
+        csrfFetchedAt: Date.now(),
         selectedSectionId: snapshot.sections[0]?.section_id ?? 'system',
         applyStatus: 'idle',
         applyErrors: [],
@@ -153,6 +175,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
         snapshot,
         loading: false,
         loaded: true,
+        csrfFetchedAt: Date.now(),
         selectedSectionId: snapshot.sections[0]?.section_id ?? 'system',
         draft: {},
         draftCount: 0,
@@ -176,59 +199,78 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     set({ draft: {}, draftCount: 0, applyStatus: 'idle', applyErrors: [], applyMessage: '' }),
 
   applyDraft: async () => {
-    const { draft, snapshot } = get();
-    if (!snapshot) return;
-    // Reshape the flat dot-keyed draft into a nested patch dict.
-    const patch: Record<string, any> = {};
-    for (const [path, value] of Object.entries(draft)) {
-      _setNestedPath(patch, path, value);
-    }
+    if (applying || !get().snapshot) return;
+    applying = true;
     try {
-      const resp = await fetch('/api/config', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Probos-CSRF': snapshot.csrf_token,
-        },
-        body: JSON.stringify({ patch }),
-      });
-      const body = await resp.json().catch(() => ({} as any));
-      if (resp.status === 200) {
-        // Refresh snapshot to get a fresh CSRF token; THEN set the
-        // restart-required status so it survives the re-open call.
-        await get().openSettings();
-        set({
-          applyStatus: 'restart_required',
-          applyMessage: 'Restart required to take effect.',
-          applyErrors: [],
-          draft: {},
-          draftCount: 0,
+      // Reshape the flat dot-keyed draft into a nested patch dict.
+      const patch: Record<string, any> = {};
+      for (const [path, value] of Object.entries(get().draft)) {
+        _setNestedPath(patch, path, value);
+      }
+      // BF-999: the router answers 403 before it reads the body, so a refused save had no
+      // effect; fetch a new token and send the same patch once more. Any other answer ends it.
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const fetchedAt = get().csrfFetchedAt;
+        if (!fetchedAt || Date.now() - fetchedAt >= CSRF_REFRESH_AFTER_MS) {
+          const fresh = await _fetchSnapshot();
+          if (typeof fresh === 'string') {
+            set({
+              applyStatus: 'rejected',
+              applyMessage: `Could not get a save token (${fresh}); nothing was saved. Press APPLY to try again.`,
+            });
+            return;
+          }
+          set({ snapshot: fresh, csrfFetchedAt: Date.now() });
+        }
+        const token = get().snapshot?.csrf_token ?? '';
+        // Every POST the router answers spends the token, whatever the status.
+        set({ csrfFetchedAt: 0 });
+        const resp = await fetch('/api/config', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Probos-CSRF': token,
+          },
+          body: JSON.stringify({ patch }),
         });
-      } else if (resp.status === 422) {
-        set({
-          applyStatus: 'rejected',
-          applyErrors: body.errors ?? [],
-          applyMessage: 'Validation failed — see field errors below.',
-        });
-      } else if (resp.status === 400 && body.error === 'secret_field_readonly') {
-        set({
-          applyStatus: 'rejected',
-          applyMessage: 'Secret fields are read-only here — edit system.yaml directly.',
-        });
-      } else if (resp.status === 403) {
-        set({
-          applyStatus: 'rejected',
-          applyMessage: 'CSRF token expired — re-opening Settings.',
-        });
-        await get().openSettings();
-      } else {
-        set({
-          applyStatus: 'rejected',
-          applyMessage: `APPLY failed (${resp.status}): ${body.error ?? 'unknown'}`,
-        });
+        const body = await resp.json().catch(() => ({} as any));
+        if (resp.status === 403 && attempt === 0) continue;
+        if (resp.status === 200) {
+          set({
+            applyStatus: 'restart_required',
+            applyMessage: 'Restart required to take effect.',
+            applyErrors: [],
+            draft: {},
+            draftCount: 0,
+          });
+        } else if (resp.status === 422) {
+          set({
+            applyStatus: 'rejected',
+            applyErrors: body.errors ?? [],
+            applyMessage: 'Validation failed — see field errors below.',
+          });
+        } else if (resp.status === 400 && body.error === 'secret_field_readonly') {
+          set({
+            applyStatus: 'rejected',
+            applyMessage: 'Secret fields are read-only here — edit system.yaml directly.',
+          });
+        } else if (resp.status === 403) {
+          set({
+            applyStatus: 'rejected',
+            applyMessage: 'Save token refused twice; nothing was saved. Press APPLY to try again.',
+          });
+        } else {
+          set({
+            applyStatus: 'rejected',
+            applyMessage: `APPLY failed (${resp.status}): ${body.error ?? 'unknown'}`,
+          });
+        }
+        return;
       }
     } catch (err) {
       set({ applyStatus: 'rejected', applyMessage: `APPLY error: ${String(err)}` });
+    } finally {
+      applying = false;
     }
   },
 
