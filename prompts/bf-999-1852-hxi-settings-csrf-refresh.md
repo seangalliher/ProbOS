@@ -7,7 +7,8 @@
 **Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-26 (review round 4 amendment at the round-four brake: section 6.12, M6)
 **Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-26 (review round 5 amendment at the round-five brake: section 6.13, M7)
 **Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-26 (review round 6 amendment at the round-six brake: section 6.15, M8)
-**Status:** M1 `f7086568`, M2 `418cc977`, M3 `fa73f33a`, M4 `579c8c14`, M5 `736bf5c9`, M6 `9c553946` and M7 `079ad5c6` built; the round-6 amendment builds as M8. **Base:** main `f7acb948` (tree `f12fe25c`). **Issue:** #1852 (PR says `Refs #1852`). **Path:** `prompts/bf-999-1852-hxi-settings-csrf-refresh.md`. **Estimated tests:** 1 new vitest file (14 cases after M3; 12 at M1); no existing test changes. **No AD.** BF-999 allocated by the orchestrator (four-source enumeration, 02:32Z); the ledger on main reads latest BF-998, next BF-999 (`docs/development/open-ads-report.md:32`).
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-26 (review round 7 amendment under R-18: section 6.16, M9)
+**Status:** M1 `f7086568`, M2 `418cc977`, M3 `fa73f33a`, M4 `579c8c14`, M5 `736bf5c9`, M6 `9c553946`, M7 `079ad5c6` and M8 `ba7240f1` built; the round-7 amendment builds as M9. **Base:** main `f7acb948` (tree `f12fe25c`). **Issue:** #1852 (PR says `Refs #1852`). **Path:** `prompts/bf-999-1852-hxi-settings-csrf-refresh.md`. **Estimated tests:** 1 new vitest file (14 cases after M3; 12 at M1); no existing test changes. **No AD.** BF-999 allocated by the orchestrator (four-source enumeration, 02:32Z); the ledger on main reads latest BF-998, next BF-999 (`docs/development/open-ads-report.md:32`).
 
 ## 1. Problem
 
@@ -75,7 +76,7 @@
     - (3) Refuse only `'not-an-int'`. It flips the mismatch: `'abc'`, `'1e3'`, `5.5` and `null` get 200, where the router answers 422.
     - (4) A regex or parser imitating pydantic. It is an unmeasured model that drifts with pydantic.
   - Branches no case reaches: only the tripwire and the outstanding-POST check, by design. It is the check that no case relies on an unmeasured answer. No case exercises it, because such a case would test the double, not the store, and would have to drain `unmeasured`; 9c fires it once. The 403, 422 and 200 answers are each reached by a case. The age refusal is reached under census row S-M6 (T8 sends `t1` at 301 s).
-  - Claims: every sentence in the test file that says what the router does is read in `config.py` at a cited line or measured in 9c. Labelled as not router answers: the fixed snapshot, the fixed 200 body (the store reads only a 200's status, `useSettingsStore.ts`:240-247), the hold, `failNextGet` and `refuseEveryPost`. The double ages tokens on the test's `Date.now()`, the router on `time.monotonic()` (`config.py`:55-59). The cases move only the test's clock, and no unmutated case POSTs a token older than 300 s on it.
+  - Claims: every sentence in the test file that says what the router does is read in `config.py` at a cited line or measured in 9c. The double ages tokens on the test's `Date.now()`, the router on `time.monotonic()` (`config.py`:55-59). The cases move only the test's clock, and no unmutated case POSTs a token older than 300 s on it.
   - Measurement (re-proof, recorded in 9c; the table's rows are predictions until then):
     - Post each of the four bodies with a fresh token through a TestClient over the unchanged router on a temporary config, and record status and body. Expected: the two log-level bodies and the `'5000'` body answer 200. The `'not-an-int'` body answers 422 with exactly one entry, `{loc: ['memory','max_episodes'], msg: 'Input should be a valid integer, unable to parse string as an integer', type: 'int_parsing'}`. Any difference is a hard stop.
     - Tripwire probe, not committed: in a scratch copy, change T3's `'5000'` to `'+5000'`. T3 must fail and its `afterEach` must name the body. Then restore.
@@ -93,6 +94,7 @@
 | M6 | the new test file (section 6.12) | `Settings store test double: give each case its own ledger of outstanding and unmeasured saves (#1852)` |
 | M7 | the new test file (section 6.13) and `PROGRESS.md` (section 6.14) | `Settings store test double: state its guarantees by the code path a POST takes (#1852)` |
 | M8 | the new test file (section 6.15) | `Settings store test double: delete a comment sentence that a validation refusal contradicts (#1852)` |
+| M9 | the new test file (section 6.16) | `Settings store test double: delete the header comment of the test file (#1852)` |
 
 Subjects are ASCII and contain no AD- or BF- token. They contain no "close", "fix" or "resolve" substring.
 
@@ -122,6 +124,7 @@ npx vitest run src/store/__tests__/useSettingsStore.bf999.test.tsx src/component
 - **M6:** the M3 gates with the same counts (predicted), plus the ledger probes O-1 to O-4 of 6.12 (recorded in 9e).
 - **M7:** the M3 gates with the same counts (predicted), plus the comment-only proof and the probes of 6.13 (recorded in 9f).
 - **M8:** the M3 gates with the same counts (predicted), plus the comment-only proof of 6.15 (recorded in 9g).
+- **M9:** the M3 gates with the same counts (predicted), plus the comment-only proof of 6.16 (recorded in 9h).
 - **UI batch gates once on the candidate** (`run_test_gate.py` runs neither): `npx tsc -b`, then `npx vitest run` (0 failed).
 - **Broad gate** once after M2: `scripts/run_test_gate.py --label 1852-bf999 --receipt logs/gates/1852-bf999.receipt.json`.
 
@@ -1468,6 +1471,8 @@ Pairs on `ui/src/store/__tests__/useSettingsStore.bf999.test.tsx` as committed a
 
 *Note (round 6 amendment): the F7-b text below stands as committed at M7. Its sentence "A refused POST never reaches the table." is false for a POST whose body the table maps to an error entry (F9): the double looks it up (test file line 130 at `079ad5c6`) and answers 422 from that entry (line 137), as for T3's first save. 6.15 deletes the sentence, and its row is removed from the code-path table.*
 
+*Note (round 7 amendment): 6.16 deletes the header comment that F7-a writes. The F7-a text and the table's rows on header sentences stand as the record of M7.*
+
 **F7-a** (header, lines 7-12)
 SEARCH:
 ```
@@ -1593,6 +1598,46 @@ REPLACE:
 
 A sentence of this contract that this amendment writes or leaves false or ungrammatical is deleted in the contract before the gate, with no further round. Everything else is recorded in the landing comment's "Not covered" or in the #1820 wave item, including any other sentence of the test file, `PROGRESS.md`, `DECISIONS.md` or this contract, whichever milestone wrote it. If round 7 has only record-class findings or contract deletions, the item goes to the gate. If round 7 has a repair-class finding confined to the test file's comments, M9 deletes the whole comment block that holds the sentence (the header's sentences after its first, the `MEASURED` comment or the ledger comment), and round 8 checks only the first and third bullets above; it repairs no sentence.
 
+## Amendment after review round 7 (2026-11-26)
+
+F12 (P3, injected-only; not a regression; written at M1 and M3): the header said the double issues one token per GET, but a GET that `failNextGet` fails is counted and issues none (test file lines 145-153 at `ba7240f1`). F13 (P3; a regression of 9g, written with M8): 9g's parenthetical named an edit number that this contract never defines. F14 (P3; not a regression; recorded): the inline comment at test file line 139 says the store reads only the status of a 200, but the store awaits `resp.json()` for every POST response before it checks the status (`useSettingsStore.ts`: 238). Under R-18, F12 is repair-class and confined to the test file's comments, so M9 deletes the whole header comment (lines 1-14), its first sentence included. That sentence says the store sends a save refused with 403 once more, which it does not when the token read after the 403 fails (`useSettingsStore.ts`: 239, then 214-223). This supersedes the parenthetical of R-18 that names the header's sentences after its first; R-18's rule to delete the whole block that holds the sentence stands. With the header gone, the fixed snapshot and the hold are no longer labelled as not router answers, so this amendment deletes the sentences of D11 and R-9 that say they are, and the parenthetical of the landing text that restates F12. 9g loses its parenthetical (F13). No sentence is narrowed or added in the test file, and no code changes. The text quoted in 6.9 to 6.15, the code-path table of 6.13 and the claims and notes of 6.12 and 6.13 stand as the record of what M1 to M8 built.
+
+### 6.16 `ui/src/store/__tests__/useSettingsStore.bf999.test.tsx` (M9; F12; comment lines only; on the file as committed at `ba7240f1`, LF, ASCII)
+
+The pair deletes the header comment, lines 1-14, and changes no other byte. Afterwards the file's first line is its `vitest` import.
+
+**F12-a** (header, lines 1-14)
+SEARCH:
+```
+// BF-999 (#1852): the HXI settings store fetches a fresh single-use CSRF token before a save
+// whenever the last one was spent by a POST or is 240 s old, sends a save the router refused
+// with 403 once more, and keeps the draft on every refused save. Real useSettingsStore and the
+// real SettingsPanel; fetch is a double that follows the order of src/probos/routers/config.py:
+// one token per GET; every POST spends the token it carries and, before the body is read,
+// answers 403 for an unknown token or one older than 300 s (the router ages tokens on
+// time.monotonic, the double on the test's Date.now). A POST the token check accepts (a live
+// token, and refuseEveryPost unset) is looked up in MEASURED, the router's answers to the exact
+// bodies the cases send: a listed body gets its measured answer; any other body is recorded in
+// its case's ledger and the double throws. A case fails when a POST to a double it installed
+// passed the token check and carried any other body, or is still outstanding when the case ends
+// (held or unsettled, so its body has not been read). Each case records both in its own ledger.
+// A POST the token check refuses gets a 403; its body is neither read nor recorded. The fixed
+// snapshot, the 200 body, the hold and the injected faults are not router answers.
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+```
+REPLACE:
+```
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+```
+
+**Census.** Not rerun: the store blob is `5ee13d2e` and no non-comment token of the test file changes. If the token comparison differs, rerun every row.
+
+**R-20 Round-8 stop rule.** Round 8 checks only:
+- the test file's non-comment tokens are identical to `079ad5c6`, and M9's change to the file removes lines 1-14 and adds none;
+- any `tsc`, vitest or gate failure, any P1 or P2, and anything in the store or in production behaviour.
+
+Round 8 does not judge whether a sentence is true or grammatical, in the test file, this contract, `PROGRESS.md`, `DECISIONS.md` or the landing text, whichever milestone wrote it. Such a finding is recorded in the landing comment's "Not covered" or in the #1820 wave item, and nothing is repaired. A sentence that this amendment writes and that is false is deleted from the contract before the gate, with no further round. If round 8 has only recorded findings, the item goes to the gate. A finding under either bullet needs a new brake decision.
+
 ## 7. Mutation census and generated-artifact commands
 
 Each mutant is applied to the M3 candidate's store; 6.5 leaves every S-M1 to S-M19 locator unchanged. Runner: `npx vitest run src/store/__tests__/useSettingsStore.bf999.test.tsx src/components/settings/__tests__/SettingsPanel.test.tsx`. Single-line mutants are written `from -> to`; whole lines, with their indentation.
@@ -1670,7 +1715,7 @@ Guard: `SettingsPanel.test.tsx` "APPLY POSTs the patch with CSRF header and show
 - **R-8 No other readers.** No `?raw` reader, no Python test touched, and `tests/test_ad741_config_api.py` is unchanged. The settings vitest set and the full `npx vitest run` are green.
 - **R-9 Tests cross the seam.**
   - T12 clicks the real APPLY twice in one session.
-  - The double spends the token before it reads the body (a 403 reads nothing) and refuses an unknown token, or one older than `300000` ms by `Date.now()` (`config.py`:55-71, read). A POST that passes the token check (a live token, `refuseEveryPost` unset) is answered only from `MEASURED`, the router's measured answers to the four bodies the cases send (D11, 9c); a POST the check refuses gets a 403 and its body is neither read nor recorded (M7, F7). Any other body of a POST that passed the check is recorded, refused with a thrown error, and fails the case in `afterEach`; so does a POST that entered the case's double and is still outstanding when the case ends (M5, F5); both are recorded in that case's own ledger (M6, F6). The snapshot, the 200 body, the hold and the injected faults are labelled as not router answers.
+  - The double spends the token before it reads the body (a 403 reads nothing) and refuses an unknown token, or one older than `300000` ms by `Date.now()` (`config.py`:55-71, read). A POST that passes the token check (a live token, `refuseEveryPost` unset) is answered only from `MEASURED`, the router's measured answers to the four bodies the cases send (D11, 9c); a POST the check refuses gets a 403 and its body is neither read nor recorded (M7, F7). Any other body of a POST that passed the check is recorded, refused with a thrown error, and fails the case in `afterEach`; so does a POST that entered the case's double and is still outstanding when the case ends (M5, F5); both are recorded in that case's own ledger (M6, F6).
   - Every red case is red on `f7acb948` at its posts assertion (section 5).
 - **R-10 Round-1 delta.** The store change is the one `csrfFetchedAt: 0` line and its comment in the refresh-failure `set`. T1 to T12 keep their order. T13 and T14 are appended. No component, router or other test changes.
 - **R-11 Round-2 delta.** Only the test file (6.9) and the BF-999 paragraph of `PROGRESS.md` (6.10) change. T1 to T14, the store, `DECISIONS.md`, every component and every other test are byte-unchanged.
@@ -1678,6 +1723,7 @@ Guard: `SettingsPanel.test.tsx` "APPLY POSTs the patch with CSRF header and show
 - **R-13 Round-4 delta.** Only the test file (6.12) changes: `Ledger`, `ledger`, `mine`, the three substitutions in the POST branch, the `beforeEach` reset, the two `afterEach` expects and three comments. The other statements of the POST branch, T1 to T14, `MEASURED`, the store, `PROGRESS.md`, `DECISIONS.md` and every other file are byte-unchanged. No module-level binding is reassigned except `ledger` (by `beforeEach`), and the double writes no module-level object except the ledger it captured, through `mine`, and hands the store `INT_PARSING` itself and the nested objects of `SNAPSHOT` by reference (F8, recorded in 6.13). C-1 (as narrowed by 6.13) to C-4 of 6.12 are each true for any case of the file on the unmodified store. Findings are classified by R-14.
 - **R-15 Round-5 delta (M7).** Only comment lines of the test file (6.13), the BF-999 paragraph of `PROGRESS.md` (E-57) and this contract change; the test file's non-comment lines are identical to `9c553946`. The store, `DECISIONS.md` and every other file are byte-unchanged. Findings are classified by R-16.
 - **R-17 Round-6 delta (M8).** One comment line of the test file (6.15) and this contract change; the test file's non-comment tokens are identical to `079ad5c6`. The store, `PROGRESS.md`, `DECISIONS.md` and every other file are byte-unchanged. Findings are classified by R-18.
+- **R-19 Round-7 delta (M9).** The header comment of the test file (lines 1-14 at `ba7240f1`) is deleted, and this contract changes; the test file's non-comment tokens are identical to `079ad5c6`. The store, `PROGRESS.md`, `DECISIONS.md` and every other file are byte-unchanged. Findings are classified by R-20.
 
 **#1852 landing comment:**
 
@@ -1692,7 +1738,7 @@ BF-999. The HXI settings store (ui/src/store/useSettingsStore.ts) now:
 - runs one save at a time, and no longer re-opens a dialog closed while a save was in flight.
 The router and its CSRF scheme are unchanged.
 
-Proof: ui/src/store/__tests__/useSettingsStore.bf999.test.tsx, 14 cases with the real store and the real SettingsPanel (two APPLY clicks in one page session) against a fetch double that follows the order of src/probos/routers/config.py (a token per GET, spent by every POST before the body is read, refused after 300 s) and answers each save whose token it accepts only from the router's answers measured for the four bodies the cases send; any other body of such a save fails the case. On the unrepaired store 12 of 14 fail and the 2 guard cases pass; the two probe cases in this issue's body, which assert the defect, fail on the repair. Mutation census 20 of 20 killed.
+Proof: ui/src/store/__tests__/useSettingsStore.bf999.test.tsx, 14 cases with the real store and the real SettingsPanel (two APPLY clicks in one page session) against a fetch double that follows the order of src/probos/routers/config.py and answers each save whose token it accepts only from the router's answers measured for the four bodies the cases send; any other body of such a save fails the case. On the unrepaired store 12 of 14 fail and the 2 guard cases pass; the two probe cases in this issue's body, which assert the defect, fail on the repair. Mutation census 20 of 20 killed.
 
 Not covered: no browser run. Date.now() can disagree with the router's monotonic clock after a sleep or clock change; the single resend covers that case, and a failed token read marks the token spent so a clock step cannot revive it. A field edited while a save is in flight is still cleared by that save's 200 (unchanged). The APPLY button is not disabled during a save; a second press does nothing. A save of hot-reload fields takes effect at once, but the dialog still says "Restart required to take effect." (unchanged; a separate issue). The test double keeps its records per case but does not isolate the store: a save that an earlier, failing case left held still reaches the shared store if released later, which can only turn a later case red. The double also hands its constant error entry and snapshot objects to the store by reference, so a case that changes them in place can turn a later case red (recorded for #1820).
 ```
@@ -1789,7 +1835,19 @@ Measured on the oracle tree `oc1` (the M7 candidate, head `079ad5c6`: store `5ee
 - Pair: the pair of 6.15 applies, its SEARCH occurring once (the test file is LF in the tree). The amended test file has the blob `16ec5f2c` (352 lines).
 - Comment-only proof: `tokens_equal.mjs` parses the committed `079ad5c6` test file and the amended one with the TypeScript compiler (TSX): the two token sequences are identical (3095 tokens). `git diff -U0` shows +1 -1, the one line that held the deleted sentence, both `//` lines.
 - Amended file: 14 of 14 pass; `npx tsc -b` prints nothing and exits 0; A/B on the original base `f7acb948`: 12 failed, 2 passed (T1 and T6); probes F7 and F8 (`probe_f7.py`, scratch files removed afterwards) give the same results as in 9f.
-- Searches over the contract: `never reaches the table` is absent from the test file and occurs three times in the contract (the E-64 note, the F7-b record in 6.13 and the 6.15 SEARCH); `only reads|is not recorded|never recorded|nothing is pushed|refuses is neither` finds nothing; `only from measured router answers` finds two lines, the M4 commit subject (a historical record) and the amendment paragraph that quotes D11's old headline in the past tense (the answer predicted one).
+- Searches over the contract: `never reaches the table` is absent from the test file and occurs three times in the contract; `only reads|is not recorded|never recorded|nothing is pushed|refuses is neither` finds nothing; `only from measured router answers` finds two lines, the M4 commit subject (a historical record) and the amendment paragraph that quotes D11's old headline in the past tense (the answer predicted one).
 - First-hand checks of the F10 and F11 claims before building: the case that calls `srv.restart()` (test file line 226) sends its first POST with a token the double no longer knows and gets the 403 without any lookup (ordinary reach); a refused POST is counted in `mine.outstanding` from line 117 until its `finally` and its token is pushed to `srv.posts` at line 120, so "not recorded" and "nothing is pushed" were false; the double also reads `TOKEN_LIFETIME_MS` and calls `jsonResp`, so "only reads three objects" was false. My own audit at the brake found F9's sentence only; the Architect's audit found the five contract clauses, because my check against the branch map had not tested the words "never", "only" and "recorded" against the ledger's own vocabulary.
 - `PROGRESS.md`, `DECISIONS.md`, the store and the generated ledger are untouched, so `scripts/gen_ad_ledger.py --check` still reports the ledger current. The census is not rerun (store blob `5ee13d2e`, no non-comment token changed). The prompt scan is clean on this file.
 - Corrections: C-19 the 6.15 section carries the contract's pair label (F9-a) and the pair texts in place of the answer's placeholders. Left as the answer says (record-class): the label E-51 in "Claims after M7" is not defined elsewhere in the contract.
+
+### 9h Review round 7 repair re-proof (orchestrator, 2026-11-26)
+
+Measured on the oracle tree `oc1` (the M8 candidate, head `ba7240f1`: store `5ee13d2e`, test file `16ec5f2c`, `PROGRESS.md` `0bf28dc4`, `DECISIONS.md` `fae55d23`, all equal to the committed blobs) with the pair of 6.16 applied on top. Every prediction of the amendment held, except one count noted below.
+
+- Pair: the pair of 6.16 applies, its SEARCH occurring once (the test file is LF in the tree). The amended test file has the blob `263d0045` (338 lines, 352 before); its first line is the `vitest` import.
+- Comment-only proof: `tokens_equal.mjs` parses the committed `079ad5c6` and `ba7240f1` test files and the amended one with the TypeScript compiler (TSX): the three token sequences are identical (3095 tokens). The diff against `ba7240f1` is +0 -14, every removed line a `//` comment line.
+- Amended file: 14 of 14 pass; `npx tsc -b` prints nothing and exits 0; A/B on the original base `f7acb948`: 12 failed, 2 passed (T1 and T6); probes F7 and F8 (`probe_f7.py`, scratch files removed afterwards) give the same results as in 9f and 9g.
+- Searches over the contract, run on the text before this note was added: the sentences of D11 and R-9 that call the snapshot, the 200 body and the hold "not router answers" are gone, and the only line left that speaks of such labels is the round-7 amendment paragraph, which says they are no longer there (the answer had predicted no line at all); the parenthetical of 9g that cited an undefined edit number is gone, and no edit number of the Architect's answers occurs in this contract; the parenthetical of the landing text that restated the false header sentence is gone.
+- First-hand checks before building: the store continues its loop on a 403 at the first attempt (`useSettingsStore.ts` line 239); the stamp is then 0 (line 229), so the loop reads a new token first (lines 214-215), and a failed read sets `rejected` and returns without sending a POST (lines 216-223): the header's first sentence ("sends a save the router refused with 403 once more") was false on that path, which is why the whole header goes. No script or test reads the header of a test file: the one scan of `*.test.tsx` files (`wave-close-precheck.ps1`, line 178) reads only `vi.mock` blocks (checked with a positive control, which found that line), and nothing names this file. The `describe` title still names BF-999 and #1852.
+- `PROGRESS.md`, `DECISIONS.md`, the store and the generated ledger are untouched, so `scripts/gen_ad_ledger.py --check` still reports the ledger current. The census is not rerun (store blob `5ee13d2e`, no non-comment token changed). The prompt scan is clean on this file.
+- Corrections: the 6.16 section carries its pair texts in place of the answer's placeholder.
