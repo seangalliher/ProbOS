@@ -5,7 +5,8 @@
 **Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-26 (review round 2 amendment: D11, sections 6.9 and 6.10, M4)
 **Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-26 (review round 3 amendment at the round-three brake: section 6.11, M5)
 **Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-26 (review round 4 amendment at the round-four brake: section 6.12, M6)
-**Status:** M1 `f7086568`, M2 `418cc977`, M3 `fa73f33a`, M4 `579c8c14` and M5 `736bf5c9` built; the round-4 amendment builds as M6. **Base:** main `f7acb948` (tree `f12fe25c`). **Issue:** #1852 (PR says `Refs #1852`). **Path:** `prompts/bf-999-1852-hxi-settings-csrf-refresh.md`. **Estimated tests:** 1 new vitest file (14 cases after M3; 12 at M1); no existing test changes. **No AD.** BF-999 allocated by the orchestrator (four-source enumeration, 02:32Z); the ledger on main reads latest BF-998, next BF-999 (`docs/development/open-ads-report.md:32`).
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-26 (review round 5 amendment at the round-five brake: section 6.13, M7)
+**Status:** M1 `f7086568`, M2 `418cc977`, M3 `fa73f33a`, M4 `579c8c14`, M5 `736bf5c9` and M6 `9c553946` built; the round-5 amendment builds as M7. **Base:** main `f7acb948` (tree `f12fe25c`). **Issue:** #1852 (PR says `Refs #1852`). **Path:** `prompts/bf-999-1852-hxi-settings-csrf-refresh.md`. **Estimated tests:** 1 new vitest file (14 cases after M3; 12 at M1); no existing test changes. **No AD.** BF-999 allocated by the orchestrator (four-source enumeration, 02:32Z); the ledger on main reads latest BF-998, next BF-999 (`docs/development/open-ads-report.md:32`).
 
 ## 1. Problem
 
@@ -67,7 +68,7 @@
   - The new cases check behaviour on the wire (posts and gets). They do not pin the field.
 - **D11 The double answers a POST only from measured router answers (F4).**
   - Why: D10(b)'s M3 rule answered 422 for `'+5000'`, `' 5000 '`, `'5000.0'`, `'1_000'` and `true`; the router answers each of them 200 (orchestrator probe, a TestClient over the unchanged router, head `fa73f33a`). pydantic's lax integer parsing accepts more forms than any rule here can list. The same was true of the "any string" acceptance for the other fields.
-  - Chosen: `MEASURED`, a table keyed by the exact body the store sends for each case's patch (four bodies), each mapped to the router's measured answer: 200, or 422 `validation_failed` with one error entry. A live-token POST whose body is not in the table is recorded in `unmeasured` and refused with a thrown error, which the store reports as an APPLY error, and `afterEach` fails the case on any recorded body. M5 (F5): a POST reads its body only after the optional hold, so a POST still outstanding when a case ends has not reached the table. The double counts POSTs entered and not yet answered (`outstanding`, decremented in a `finally`), and `afterEach` also fails the case when that count is not 0. M6 (F6): the count and `unmeasured` live in a per-case ledger that `beforeEach` replaces and `installServer()` captures, so a POST an earlier case left outstanding settles into that case's ledger (6.12). `readPatch` and the 400 `invalid_json` branch are removed. No case and no store path sends a non-JSON body, and the branch also answered `invalid_json` to a JSON `null` body, which the router answers 400 `patch_required` (`config.py`:271-273, read).
+  - Chosen: `MEASURED`, a table keyed by the exact body the store sends for each case's patch (four bodies), each mapped to the router's measured answer: 200, or 422 `validation_failed` with one error entry. A POST that passes the token check (a live token, `refuseEveryPost` unset) and whose body is not in the table is recorded in `unmeasured` and refused with a thrown error, which the store reports as an APPLY error, and `afterEach` fails the case on any recorded body. M5 (F5): a POST reads its body only after the optional hold, so a POST still outstanding when a case ends has not reached the table. The double counts POSTs entered and not yet answered (`outstanding`, decremented in a `finally`), and `afterEach` also fails the case when that count is not 0. M6 (F6): the count and `unmeasured` live in a per-case ledger that `beforeEach` replaces and `installServer()` captures, so a POST an earlier case left outstanding settles into that case's ledger (6.12). `readPatch` and the 400 `invalid_json` branch are removed. No case and no store path sends a non-JSON body, and the branch also answered `invalid_json` to a JSON `null` body, which the router answers 400 `patch_required` (`config.py`:271-273, read).
   - Ranked alternatives (rejected):
     - (2) The same table for `memory.max_episodes` only. It leaves the "any string" rule for `system.name` and `system.log_level`.
     - (3) Refuse only `'not-an-int'`. It flips the mismatch: `'abc'`, `'1e3'`, `5.5` and `null` get 200, where the router answers 422.
@@ -89,6 +90,7 @@
 | M4 | the new test file, `PROGRESS.md` (sections 6.9 and 6.10) | `the HXI settings save tests answer each save only from measured router answers (#1852)` |
 | M5 | the new test file (section 6.11) | `Settings store test double: fail a case that ends with a save still outstanding (#1852)` |
 | M6 | the new test file (section 6.12) | `Settings store test double: give each case its own ledger of outstanding and unmeasured saves (#1852)` |
+| M7 | the new test file (section 6.13) and `PROGRESS.md` (section 6.14) | `Settings store test double: state its guarantees by the code path a POST takes (#1852)` |
 
 Subjects are ASCII and contain no AD- or BF- token. They contain no "close", "fix" or "resolve" substring.
 
@@ -116,6 +118,7 @@ npx vitest run src/store/__tests__/useSettingsStore.bf999.test.tsx src/component
 - **M4:** the M3 gates with the same counts (predicted), plus the 9c measurements and the tripwire probe of D11.
 - **M5:** the M3 gates with the same counts (predicted), plus the outstanding-POST probes of D11 (section 9d).
 - **M6:** the M3 gates with the same counts (predicted), plus the ledger probes O-1 to O-4 of 6.12 (recorded in 9e).
+- **M7:** the M3 gates with the same counts (predicted), plus the comment-only proof and the probes of 6.13 (recorded in 9f).
 - **UI batch gates once on the candidate** (`run_test_gate.py` runs neither): `npx tsc -b`, then `npx vitest run` (0 failed).
 - **Broad gate** once after M2: `scripts/run_test_gate.py --label 1852-bf999 --receipt logs/gates/1852-bf999.receipt.json`.
 
@@ -1301,6 +1304,8 @@ F6 (P3, injected-only, a double fault; the regression is M5's claim, not the cod
 
 ### 6.12 `ui/src/store/__tests__/useSettingsStore.bf999.test.tsx` (M6; F6; on the file as committed at `736bf5c9`, LF, ASCII)
 
+*Note (round 5 amendment): 6.13 narrows the guarantee sentences quoted in this section (the header, the `MEASURED` comment, C-1); the text here stands as committed at M6.*
+
 **F6-a** (header)
 SEARCH:
 ```
@@ -1418,7 +1423,7 @@ REPLACE:
 ```
 
 **Claims after M6, and why each is true.** The precondition is that the file's cases run one at a time: the file has no `.concurrent`, and no `vite*.config.*` sets `sequence.concurrent`.
-- C-1, "a POST to a double it installed carried a live token and any other body" fails the case. `mine.unmeasured.push` runs before the throw, and the POST stays counted in `mine.outstanding` from entry until its `finally`. So at the case's `afterEach` either the body is in the ledger or the POST is still counted.
+- C-1, "a POST to a double it installed carried a live token and any other body" fails the case. Narrowed at M7 (6.13, F7): this holds for a POST that passed the token check (a live token, `refuseEveryPost` unset); a POST the check refuses gets a 403 before `MEASURED` is consulted and is not recorded. `mine.unmeasured.push` runs before the throw, and the POST stays counted in `mine.outstanding` from entry until its `finally`. So at the case's `afterEach` either the body is in the ledger or the POST is still counted.
 - C-2, "still outstanding when the case ends" fails the case. The increment comes before any `await`; the only decrement is that POST's own `finally`, on its own `mine`. `afterEach` has no `await`, so it sees one consistent state.
 - C-3, "each case records both in its own ledger". `ledger` is written only at its declaration and in `beforeEach`. `installServer()` captures it into the closure constant `mine`, and every write to a ledger's fields goes through `mine`.
 - C-4, "settles into that case's ledger, never a later one". This follows from C-3, whenever the release fires: inside the case, after it, through fake timers, or never.
@@ -1449,6 +1454,109 @@ Repair only:
 - any P1 or P2.
 
 If round 5 has only record-class findings, the item lands. A repair-class finding confined to the double is repaired by narrowing that sentence in a comment only, with no new guard code.
+
+## Amendment after review round 5 (2026-11-26)
+
+F7 (P3, injected-only; the regression is the claim, not the code). The test double answers a POST with a 403 for `refuseEveryPost`, an unknown token or an expired one before it reads the body or looks it up in `MEASURED`, so a POST that the token check refuses is never recorded, whatever its body. The test file's header (since M4, restated at M6), C-1, D11, R-9 and the landing text say that any other body fails the case, which is false for such a POST. The Architect's decision at the round-five brake is to continue with F7 only: M7 restates each guarantee by the code path, in comments only, and the contract and `PROGRESS.md` sentences follow. F8 (the double hands the store its error entry and snapshot objects by reference) is recorded, not repaired, and R-13's sentence about module-level state is corrected.
+
+### 6.13 `ui/src/store/__tests__/useSettingsStore.bf999.test.tsx` (M7; F7; comment lines only; on the file as committed at `9c553946`, LF, ASCII)
+
+Pairs on `ui/src/store/__tests__/useSettingsStore.bf999.test.tsx` as committed at `9c553946`. Comment lines only; no other byte changes.
+
+**F7-a** (header, lines 7-12)
+SEARCH:
+```
+// time.monotonic, the double on the test's Date.now). A POST with a live token is answered from
+// MEASURED, the router's answers to the exact bodies the cases send. A case fails when a POST to
+// a double it installed carried a live token and any other body, or is still outstanding when the
+// case ends (held or unsettled, so its body has not been read). Each case records both in its own
+// ledger. The fixed snapshot, the 200 body, the hold and the injected faults are not router
+// answers.
+```
+REPLACE:
+```
+// time.monotonic, the double on the test's Date.now). A POST the token check accepts (a live
+// token, and refuseEveryPost unset) is looked up in MEASURED, the router's answers to the exact
+// bodies the cases send: a listed body gets its measured answer; any other body is recorded in
+// its case's ledger and the double throws. A case fails when a POST to a double it installed
+// passed the token check and carried any other body, or is still outstanding when the case ends
+// (held or unsettled, so its body has not been read). Each case records both in its own ledger.
+// A POST the token check refuses gets a 403; its body is neither read nor recorded. The fixed
+// snapshot, the 200 body, the hold and the injected faults are not router answers.
+```
+
+**F7-b** (`MEASURED` comment, lines 67-70)
+SEARCH:
+```
+// ' 5000 ', '5000.0', '1_000' and true), so no rule here stands for the router: a body missing
+// from the table is recorded in the case's ledger and refused, and afterEach fails the case on
+// it. A POST reads its body only after the hold, so afterEach also fails a case whose ledger
+// still counts a POST outstanding.
+```
+REPLACE:
+```
+// ' 5000 ', '5000.0', '1_000' and true), so no rule here stands for the router: a body that
+// passed the token check and is missing from the table is recorded in the case's ledger and the
+// double throws, and afterEach fails the case on it. A refused POST never reaches the table. A
+// POST reads its body only after the hold and the token check, so afterEach also fails a case
+// whose ledger still counts a POST outstanding.
+```
+
+**F7-c** (ledger comment, lines 82-84)
+SEARCH:
+```
+// A case's record of its doubles: POSTs entered and not yet answered or thrown, and bodies with
+// no measured answer. beforeEach gives each case a new ledger and installServer() captures it,
+// so a POST an earlier case left outstanding settles into that case's ledger, never a later one.
+```
+REPLACE:
+```
+// A case's record of its doubles: POSTs entered and not yet answered or thrown, and bodies that
+// passed the token check with no measured answer. beforeEach gives each case a new ledger and
+// installServer() captures it, so a POST an earlier case left outstanding settles into that
+// case's ledger, never a later one.
+```
+If a new line is wider than the widest existing comment line, rewrap the words without changing them.
+
+**Each narrowed sentence checked against the double's code paths (line numbers at `9c553946`).**
+| sentence | code path | holds |
+|---|---|---|
+| "the token check accepts (a live token, and refuseEveryPost unset)" | line 122: refused when `srv.refuseEveryPost`, `issuedAt === undefined`, or older than `TOKEN_LIFETIME_MS`; live means issued (line 148), not yet popped (line 121), and no more than 300000 ms old | yes |
+| "is looked up in MEASURED ... a listed body gets its measured answer" | lines 125-126; 422 with the entry at line 133; `'ok'` gives a 200 with a fixed body (line 136), which the last sentence labels | yes |
+| "any other body is recorded in its case's ledger and the double throws" | line 128 `mine.unmeasured.push`, then the throw at line 129; `mine = ledger` at install (line 92) | yes, for a double installed inside a case (R-14 (3) otherwise) |
+| "A case fails when a POST ... passed the token check and carried any other body" | the push comes before the throw; `afterEach` line 172 checks `unmeasured` is `[]` | yes (cases run one at a time, the 6.12 precondition) |
+| "or is still outstanding when the case ends" | increment at line 113 before any await; decrement in `finally` at line 138; `afterEach` line 171 | yes; also holds under `refuseEveryPost`, because the increment comes before line 122 |
+| "Each case records both in its own ledger" | `beforeEach` line 165; capture at line 92 (C-3) | yes |
+| "A POST the token check refuses gets a 403; its body is neither read nor recorded" | line 123 returns before line 125 reads `init.body`; nothing is pushed | yes; this is F7's planted case, which `probe_f7.py` shows passing |
+| "A refused POST never reaches the table" | line 123 returns before line 126 | yes |
+| "reads its body only after the hold and the token check" | line 118, then line 122, then line 125 | yes |
+| "bodies that passed the token check with no measured answer" | line 128 is reachable only past line 122 | yes |
+
+**Claims after M7.** C-1 as narrowed (E-51), C-2, C-3 and C-4 of 6.12, each for a single case on the unmodified store, under 6.12's precondition. The quoted header and comment text inside sections 6.9 to 6.12 is the record of what M1 to M6 built. 6.13 supersedes it and does not edit it.
+
+**Not claimed (F8, recorded for the #1820 wave).** The store keeps the 422 entry by reference (`useSettingsStore.ts`: 251, unchanged from the base). The double hands the store the module-level `INT_PARSING` object, inside a new `errors` array (line 133), and the nested objects of `SNAPSHOT`, through a one-level spread (line 149). A case that changes them in place can turn a later, unchanged case red.
+
+**Census.** Not rerun: the store blob is unchanged, every row S-M1 to S-M20 mutates the store, and no non-comment byte of the test file changes. If the comment-stripped comparison differs, rerun every row.
+
+**R-16 Round-6 stop rule.** Round 6 may repair only these:
+- a non-comment byte of the test file that differs from `9c553946`;
+- a sentence that 6.13 or E-48 to E-57 writes or changes, if it is false as written for a single case on the unmodified store. The repair is to delete that sentence, not to narrow it again;
+- any `tsc`, vitest or gate failure;
+- any P1 or P2;
+- anything in the store or in production behaviour.
+
+Everything else is recorded in the landing comment's "Not covered" or in the #1820 wave item. That includes any sentence the delta did not change, the historical text quoted in 6.9 to 6.12, and every class in R-14 (1) to (4). If round 6 has only record-class findings, the item goes to the gate. A deletion repair still needs a new brake decision before any round 7.
+### 6.14 `PROGRESS.md` (M7; E-57; on the file as committed at `9c553946`, LF)
+
+**E-57** (the BF-999 paragraph, line 3)
+SEARCH:
+```
+answers each save only from the router's measured answers to the four bodies the cases send (any other body fails the case)
+```
+REPLACE:
+```
+answers each save whose token it accepts only from the router's measured answers to the four bodies the cases send (any other body of such a save fails the case)
+```
 
 ## 7. Mutation census and generated-artifact commands
 
@@ -1527,12 +1635,13 @@ Guard: `SettingsPanel.test.tsx` "APPLY POSTs the patch with CSRF header and show
 - **R-8 No other readers.** No `?raw` reader, no Python test touched, and `tests/test_ad741_config_api.py` is unchanged. The settings vitest set and the full `npx vitest run` are green.
 - **R-9 Tests cross the seam.**
   - T12 clicks the real APPLY twice in one session.
-  - The double spends the token before it reads the body (a 403 reads nothing) and refuses an unknown token, or one older than `300000` ms by `Date.now()` (`config.py`:55-71, read). A live-token POST is answered only from `MEASURED`, the router's measured answers to the four bodies the cases send (D11, 9c). Any other body is recorded, refused with a thrown error, and fails the case in `afterEach`; so does a POST that entered the case's double and is still outstanding when the case ends (M5, F5); both are recorded in that case's own ledger (M6, F6). The snapshot, the 200 body, the hold and the injected faults are labelled as not router answers.
+  - The double spends the token before it reads the body (a 403 reads nothing) and refuses an unknown token, or one older than `300000` ms by `Date.now()` (`config.py`:55-71, read). A POST that passes the token check (a live token, `refuseEveryPost` unset) is answered only from `MEASURED`, the router's measured answers to the four bodies the cases send (D11, 9c); a POST the check refuses gets a 403 and its body is neither read nor recorded (M7, F7). Any other body of a POST that passed the check is recorded, refused with a thrown error, and fails the case in `afterEach`; so does a POST that entered the case's double and is still outstanding when the case ends (M5, F5); both are recorded in that case's own ledger (M6, F6). The snapshot, the 200 body, the hold and the injected faults are labelled as not router answers.
   - Every red case is red on `f7acb948` at its posts assertion (section 5).
 - **R-10 Round-1 delta.** The store change is the one `csrfFetchedAt: 0` line and its comment in the refresh-failure `set`. T1 to T12 keep their order. T13 and T14 are appended. No component, router or other test changes.
 - **R-11 Round-2 delta.** Only the test file (6.9) and the BF-999 paragraph of `PROGRESS.md` (6.10) change. T1 to T14, the store, `DECISIONS.md`, every component and every other test are byte-unchanged.
 - **R-12 Round-3 delta.** Only the test file (6.11) changes: the counter, its reset, the try/finally around the unchanged POST statements, the `afterEach` assertion and three comments. T1 to T14, `MEASURED`, the store, `PROGRESS.md`, `DECISIONS.md` and every other file are byte-unchanged.
-- **R-13 Round-4 delta.** Only the test file (6.12) changes: `Ledger`, `ledger`, `mine`, the three substitutions in the POST branch, the `beforeEach` reset, the two `afterEach` expects and three comments. The other statements of the POST branch, T1 to T14, `MEASURED`, the store, `PROGRESS.md`, `DECISIONS.md` and every other file are byte-unchanged. The double keeps no module-level mutable state except `ledger`. C-1 to C-4 of 6.12 are each true for any case of the file on the unmodified store. Findings are classified by R-14.
+- **R-13 Round-4 delta.** Only the test file (6.12) changes: `Ledger`, `ledger`, `mine`, the three substitutions in the POST branch, the `beforeEach` reset, the two `afterEach` expects and three comments. The other statements of the POST branch, T1 to T14, `MEASURED`, the store, `PROGRESS.md`, `DECISIONS.md` and every other file are byte-unchanged. No module-level binding is reassigned except `ledger` (by `beforeEach`), and the double writes no module-level object except the ledger it captured, through `mine`; it only reads `SNAPSHOT`, `INT_PARSING` and `MEASURED`, and hands the store `INT_PARSING` itself and the nested objects of `SNAPSHOT` by reference (F8, recorded in 6.13). C-1 (as narrowed by 6.13) to C-4 of 6.12 are each true for any case of the file on the unmodified store. Findings are classified by R-14.
+- **R-15 Round-5 delta (M7).** Only comment lines of the test file (6.13), the BF-999 paragraph of `PROGRESS.md` (E-57) and this contract change; the test file's non-comment lines are identical to `9c553946`. The store, `DECISIONS.md` and every other file are byte-unchanged. Findings are classified by R-16.
 
 **#1852 landing comment:**
 
@@ -1547,9 +1656,9 @@ BF-999. The HXI settings store (ui/src/store/useSettingsStore.ts) now:
 - runs one save at a time, and no longer re-opens a dialog closed while a save was in flight.
 The router and its CSRF scheme are unchanged.
 
-Proof: ui/src/store/__tests__/useSettingsStore.bf999.test.tsx, 14 cases with the real store and the real SettingsPanel (two APPLY clicks in one page session) against a fetch double that follows the order of src/probos/routers/config.py (a token per GET, spent by every POST before the body is read, refused after 300 s) and answers each save only from the router's answers measured for the four bodies the cases send; any other body fails the case. On the unrepaired store 12 of 14 fail and the 2 guard cases pass; the two probe cases in this issue's body, which assert the defect, fail on the repair. Mutation census 20 of 20 killed.
+Proof: ui/src/store/__tests__/useSettingsStore.bf999.test.tsx, 14 cases with the real store and the real SettingsPanel (two APPLY clicks in one page session) against a fetch double that follows the order of src/probos/routers/config.py (a token per GET, spent by every POST before the body is read, refused after 300 s) and answers each save whose token it accepts only from the router's answers measured for the four bodies the cases send; any other body of such a save fails the case. On the unrepaired store 12 of 14 fail and the 2 guard cases pass; the two probe cases in this issue's body, which assert the defect, fail on the repair. Mutation census 20 of 20 killed.
 
-Not covered: no browser run. Date.now() can disagree with the router's monotonic clock after a sleep or clock change; the single resend covers that case, and a failed token read marks the token spent so a clock step cannot revive it. A field edited while a save is in flight is still cleared by that save's 200 (unchanged). The APPLY button is not disabled during a save; a second press does nothing. A save of hot-reload fields takes effect at once, but the dialog still says "Restart required to take effect." (unchanged; a separate issue). The test double keeps its records per case but does not isolate the store: a save that an earlier, failing case left held still reaches the shared store if released later, which can only turn a later case red.
+Not covered: no browser run. Date.now() can disagree with the router's monotonic clock after a sleep or clock change; the single resend covers that case, and a failed token read marks the token spent so a clock step cannot revive it. A field edited while a save is in flight is still cleared by that save's 200 (unchanged). The APPLY button is not disabled during a save; a second press does nothing. A save of hot-reload fields takes effect at once, but the dialog still says "Restart required to take effect." (unchanged; a separate issue). The test double keeps its records per case but does not isolate the store: a save that an earlier, failing case left held still reaches the shared store if released later, which can only turn a later case red. The double also hands its constant error entry and snapshot objects to the store by reference, so a case that changes them in place can turn a later case red (recorded for #1820).
 ```
 
 ## 9. Orchestrator re-proof (2026-11-26)
@@ -1623,3 +1732,16 @@ Measured on the oracle tree `oc1` (the M5 candidate, head `736bf5c9`: store `5ee
 - Census (`mutants_bf999.py`, re-run on the final file though the amendment said none was needed): 21 cases unmutated, all passing; rows S-M1 to S-M20 are all killed and the verdict and failing set of every row equal the M5 campaign's, so moving the counters into a ledger adds no kill and loses none.
 - `PROGRESS.md`, `DECISIONS.md` and the store are untouched by M6, so `scripts/gen_ad_ledger.py --check` still reports the ledger current. The prompt scan is clean on this file.
 - Corrections: C-9 the status line keeps the comma after M3 (the answer's SEARCH starts at "and M4" and would have dropped it, because the v4 text has no comma there); C-10 a note under the 6.11 heading that 6.12 moves its module-level state into a ledger. The M6 gate line and R-13 are placed after the whole M5 and R-12 lines, as the answer says (C-5 style).
+
+### 9f Review round 5 repair re-proof (orchestrator, 2026-11-26)
+
+Measured on the oracle tree `oc1` (the M6 candidate, head `9c553946`: store `5ee13d2e`, test file `dbfa680e`, `PROGRESS.md` `9a897c07`, `DECISIONS.md` `fae55d23`, all equal to the committed blobs) with the three pairs of 6.13 and the pair of 6.14 applied on top. Every prediction of the amendment held.
+
+- Pairs: the three pairs of 6.13 and the pair of 6.14 apply, each SEARCH occurring once at its turn (the test file is LF in the tree, `PROGRESS.md` is CRLF). The amended test file has the blob `40f6b459` (352 lines) and `PROGRESS.md` the blob `0bf28dc4`.
+- Comment-only proof: `tokens_equal.mjs` parses the committed `9c553946` test file and the amended one with the TypeScript compiler (TSX) and compares every leaf token: the two sequences are identical (3095 tokens). Every added or removed line of `git diff -U0` (+17 -13, 30 lines) matches `^[-+]\s*//`. The widest new comment line is 96 characters and the widest existing one 109, so no line is rewrapped. The tool's own self-test passes: a comment-only edit keeps the sequence; a code edit, and an edit inside a string that holds `//`, change it; a syntax error exits 2.
+- Amended file: 14 of 14 pass; `npx tsc -b` prints nothing and exits 0; A/B on the original base `f7acb948`: 12 failed, 2 passed (T1 and T6).
+- Probe F7 (`probe_f7.py`, scratch files removed afterwards): a case that sends the body `{"patch":{"memory":{"max_episodes":"+5000"}}}` with `refuseEveryPost` set (two POSTs `['t1','t2']`, status `rejected`) passes, which is what 6.13 now says (a POST the token check refuses is neither read nor recorded); the control, the same save without `refuseEveryPost`, fails in `afterEach` on the unmeasured list. The result on the M6 file is the same.
+- Probe F8 (the same script): a case that changes the error entry the store kept (`applyErrors[0].msg`) makes the next, unchanged case fail; the control pair passes. Recorded in 6.13, not repaired.
+- No over-broad sentence left: `rg -n "carried a live token and any other body|A live-token POST|no module-level mutable"` finds no hit in the amended test file, `PROGRESS.md` or `DECISIONS.md`; in the contract it finds only the M6 pair text in 6.12, the quoted opening of C-1 (followed by its narrowing) and the old header text that 6.13 replaces. A wider search (`any other body`, `fails the case`, `answers each save`) finds the other sentences in D11, R-9, 6.14 and the landing text, each now narrowed or true as written.
+- `scripts/gen_ad_ledger.py --check` still reports the ledger current after the `PROGRESS.md` edit, so the ledger pair does not change. The census is not rerun: the store blob is `5ee13d2e` and no non-comment token of the test file changed. The prompt scan is clean on this file.
+- Corrections: C-11 E-49 keeps a comma after M4 (the answer's replacement would drop it); C-12 the 6.13 heading carries its path and the pairs use the contract's own labels F7-a to F7-c; C-13 the M7 row of the milestones table and the M7 gate line; C-14 R-13 names exactly what the double hands the store (`INT_PARSING` itself, the nested objects of `SNAPSHOT`); C-15 the landing text says "constant" where the answer uses another word, which the release-word scan of a posted comment flags; C-16 a note under the 6.12 heading; C-17 the M7 subject takes the branch's house style (the answer's subject has a `test(ui):` prefix that no commit on main uses); C-18 the code-path table's ellipses are written as three dots.
