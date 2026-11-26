@@ -1,10 +1,12 @@
 // BF-999 (#1852): the HXI settings store fetches a fresh single-use CSRF token before a save
 // whenever the last one was spent by a POST or is 240 s old, sends a save the router refused
 // with 403 once more, and keeps the draft on every refused save. Real useSettingsStore and the
-// real SettingsPanel; fetch is a double that behaves like src/probos/routers/config.py: one
-// token per GET, every POST spends the token it carries before the body is read, a token older
-// than 300 s is refused, a 403 is answered before the body is read, and a memory.max_episodes
-// that is not an integer is answered 422 with the router's error entry.
+// real SettingsPanel; fetch is a double that follows the order of src/probos/routers/config.py:
+// one token per GET; every POST spends the token it carries and, before the body is read,
+// answers 403 for an unknown token or one older than 300 s (the router ages tokens on
+// time.monotonic, the double on the test's Date.now). A POST with a live token is answered from
+// MEASURED, the router's answers to the exact bodies the cases send; any other body fails the
+// case. The fixed snapshot, the 200 body, the hold and the injected faults are not router answers.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 
@@ -48,22 +50,31 @@ function jsonResp(body: unknown, status = 200): Response {
 interface ServerDouble {
   gets: number; // every GET /api/config, answered or not
   posts: string[]; // the token each POST carried, in arrival order
-  patches: unknown[]; // the patch of each POST whose token was accepted, in arrival order
+  patches: unknown[]; // the patch of each POST answered 200 or 422, in arrival order
   saved: string[]; // system.log_level of each save answered 200
-  failNextGet: 'none' | 'status' | 'throw';
-  refuseEveryPost: boolean;
+  failNextGet: 'none' | 'status' | 'throw'; // injected fault for the next GET, not a router answer
+  refuseEveryPost: boolean; // injected: refuse live tokens too (the router refuses unknown or expired)
   restart: () => void; // the server forgets every token it issued
   hold: () => () => void; // POSTs wait until the returned release() is called
 }
 
-// The router reads the body only after it accepts the token; undefined stands for its 400 invalid_json.
-function readPatch(body: RequestInit['body']) {
-  try {
-    return { patch: JSON.parse(String(body)).patch };
-  } catch {
-    return undefined;
-  }
-}
+// The router's answer to each body a case POSTs with a live token, measured with a TestClient
+// over the unchanged src/probos/routers/config.py (contract D11): 'ok' is a 200, an entry is a
+// 422 validation_failed carrying it. pydantic parses integers laxly (it accepts '+5000',
+// ' 5000 ', '5000.0', '1_000' and true), so no rule here stands for the router: a body missing
+// from the table is recorded and refused, and afterEach fails the case on it.
+const INT_PARSING = {
+  loc: ['memory', 'max_episodes'],
+  msg: 'Input should be a valid integer, unable to parse string as an integer',
+  type: 'int_parsing',
+};
+const MEASURED = new Map<string, 'ok' | typeof INT_PARSING>([
+  ['{"patch":{"system":{"log_level":"DEBUG"}}}', 'ok'],
+  ['{"patch":{"system":{"log_level":"INFO"}}}', 'ok'],
+  ['{"patch":{"system":{"name":"Vessel"},"memory":{"max_episodes":"not-an-int"}}}', INT_PARSING],
+  ['{"patch":{"system":{"name":"Vessel"},"memory":{"max_episodes":"5000"}}}', 'ok'],
+]);
+const unmeasured: string[] = [];
 
 function installServer(): ServerDouble {
   let issued = 0;
@@ -96,25 +107,17 @@ function installServer(): ServerDouble {
       if (srv.refuseEveryPost || issuedAt === undefined || Date.now() - issuedAt > TOKEN_LIFETIME_MS) {
         return jsonResp({ error: 'invalid_csrf' }, 403);
       }
-      const read = readPatch(init.body);
-      if (!read) return jsonResp({ error: 'invalid_json' }, 400);
-      const patch = read.patch;
-      srv.patches.push(patch);
-      // SystemConfig refuses a memory.max_episodes it cannot parse as an integer ('not-an-int');
-      // it accepts '5000', 5000 and -1, and any string for system.name and system.log_level.
-      const episodes = patch?.memory?.max_episodes;
-      if (episodes !== undefined && !/^-?\d+$/.test(String(episodes))) {
-        return jsonResp({
-          error: 'validation_failed',
-          errors: [{
-            loc: ['memory', 'max_episodes'],
-            msg: 'Input should be a valid integer, unable to parse string as an integer',
-            type: 'int_parsing',
-          }],
-        }, 422);
+      const sent = String(init.body);
+      const answer = MEASURED.get(sent);
+      if (answer === undefined) {
+        unmeasured.push(sent);
+        throw new Error(`fetch double: no measured router answer for ${sent}`);
       }
-      const level = patch?.system?.log_level;
-      srv.saved.push(level);
+      const patch = JSON.parse(sent).patch;
+      srv.patches.push(patch);
+      if (answer !== 'ok') return jsonResp({ error: 'validation_failed', errors: [answer] }, 422);
+      srv.saved.push(patch.system?.log_level);
+      // The store reads only the status of a 200, so this body is fixed, not the router's per-save answer.
       return jsonResp({ ok: true, restart_required: true, changed_fields: ['system.log_level'] });
     }
     srv.gets += 1;
@@ -141,11 +144,13 @@ describe('BF-999 the settings store holds a live CSRF token for every save (#185
   beforeEach(() => {
     vi.restoreAllMocks();
     useSettingsStore.setState(useSettingsStore.getInitialState(), true);
+    unmeasured.length = 0;
   });
   afterEach(() => {
     cleanup();
     vi.restoreAllMocks();
     useSettingsStore.setState(useSettingsStore.getInitialState(), true);
+    expect(unmeasured, 'POST bodies the double has no measured router answer for').toEqual([]);
   });
 
   it('the first save sends the token the page mount read was issued', async () => {
