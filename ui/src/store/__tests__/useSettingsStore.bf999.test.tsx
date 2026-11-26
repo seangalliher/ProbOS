@@ -6,7 +6,9 @@
 // answers 403 for an unknown token or one older than 300 s (the router ages tokens on
 // time.monotonic, the double on the test's Date.now). A POST with a live token is answered from
 // MEASURED, the router's answers to the exact bodies the cases send; any other body fails the
-// case. The fixed snapshot, the 200 body, the hold and the injected faults are not router answers.
+// case, and so does a POST still outstanding when the case ends (held or unsettled, so its body
+// has not been read). The fixed snapshot, the 200 body, the hold and the injected faults are not
+// router answers.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 
@@ -62,7 +64,8 @@ interface ServerDouble {
 // over the unchanged src/probos/routers/config.py (contract D11): 'ok' is a 200, an entry is a
 // 422 validation_failed carrying it. pydantic parses integers laxly (it accepts '+5000',
 // ' 5000 ', '5000.0', '1_000' and true), so no rule here stands for the router: a body missing
-// from the table is recorded and refused, and afterEach fails the case on it.
+// from the table is recorded and refused, and afterEach fails the case on it. A POST reads its
+// body only after the hold, so afterEach also fails a case that ends with a POST outstanding.
 const INT_PARSING = {
   loc: ['memory', 'max_episodes'],
   msg: 'Input should be a valid integer, unable to parse string as an integer',
@@ -75,6 +78,7 @@ const MEASURED = new Map<string, 'ok' | typeof INT_PARSING>([
   ['{"patch":{"system":{"name":"Vessel"},"memory":{"max_episodes":"5000"}}}', 'ok'],
 ]);
 const unmeasured: string[] = [];
+let outstanding = 0; // double POSTs entered and not yet answered or thrown
 
 function installServer(): ServerDouble {
   let issued = 0;
@@ -97,28 +101,33 @@ function installServer(): ServerDouble {
   vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
     if (String(input) !== '/api/config') throw new Error(`unexpected request ${String(input)}`);
     if (init?.method === 'POST') {
-      const token = (init.headers as Record<string, string>)['X-Probos-CSRF'];
-      srv.posts.push(token);
-      const wait = gate;
-      if (wait) await wait;
-      // _consume_csrf pops the token; an unknown or expired one is a 403 before the body is read.
-      const issuedAt = live.get(token);
-      live.delete(token);
-      if (srv.refuseEveryPost || issuedAt === undefined || Date.now() - issuedAt > TOKEN_LIFETIME_MS) {
-        return jsonResp({ error: 'invalid_csrf' }, 403);
+      outstanding += 1;
+      try {
+        const token = (init.headers as Record<string, string>)['X-Probos-CSRF'];
+        srv.posts.push(token);
+        const wait = gate;
+        if (wait) await wait;
+        // _consume_csrf pops the token; an unknown or expired one is a 403 before the body is read.
+        const issuedAt = live.get(token);
+        live.delete(token);
+        if (srv.refuseEveryPost || issuedAt === undefined || Date.now() - issuedAt > TOKEN_LIFETIME_MS) {
+          return jsonResp({ error: 'invalid_csrf' }, 403);
+        }
+        const sent = String(init.body);
+        const answer = MEASURED.get(sent);
+        if (answer === undefined) {
+          unmeasured.push(sent);
+          throw new Error(`fetch double: no measured router answer for ${sent}`);
+        }
+        const patch = JSON.parse(sent).patch;
+        srv.patches.push(patch);
+        if (answer !== 'ok') return jsonResp({ error: 'validation_failed', errors: [answer] }, 422);
+        srv.saved.push(patch.system?.log_level);
+        // The store reads only the status of a 200, so this body is fixed, not the router's per-save answer.
+        return jsonResp({ ok: true, restart_required: true, changed_fields: ['system.log_level'] });
+      } finally {
+        outstanding -= 1;
       }
-      const sent = String(init.body);
-      const answer = MEASURED.get(sent);
-      if (answer === undefined) {
-        unmeasured.push(sent);
-        throw new Error(`fetch double: no measured router answer for ${sent}`);
-      }
-      const patch = JSON.parse(sent).patch;
-      srv.patches.push(patch);
-      if (answer !== 'ok') return jsonResp({ error: 'validation_failed', errors: [answer] }, 422);
-      srv.saved.push(patch.system?.log_level);
-      // The store reads only the status of a 200, so this body is fixed, not the router's per-save answer.
-      return jsonResp({ ok: true, restart_required: true, changed_fields: ['system.log_level'] });
     }
     srv.gets += 1;
     const failure = srv.failNextGet;
@@ -145,11 +154,13 @@ describe('BF-999 the settings store holds a live CSRF token for every save (#185
     vi.restoreAllMocks();
     useSettingsStore.setState(useSettingsStore.getInitialState(), true);
     unmeasured.length = 0;
+    outstanding = 0;
   });
   afterEach(() => {
     cleanup();
     vi.restoreAllMocks();
     useSettingsStore.setState(useSettingsStore.getInitialState(), true);
+    expect(outstanding, 'double POSTs still outstanding when the case ended').toBe(0);
     expect(unmeasured, 'POST bodies the double has no measured router answer for').toEqual([]);
   });
 
