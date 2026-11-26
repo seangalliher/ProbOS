@@ -2,6 +2,7 @@
 
 **Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-25
 **Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-25 (review round 1 repairs, section 6b; the Python file grows to 18 cases).
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-25 (review round 2 repair, section 6c; wording only, D11).
 **Status:** ready to build. **Base:** `fc57a8b2` (Batch A's merge, tree `a96ffd10`). The pairs were drafted against `8447d6ef` and re-proved on the post-A tree (see 'Re-proof on the post-Batch-A base'); 6.8 and 6.9 are anchored on Batch A's text. **Issue:** #1414 items 8, 11, 12, 14. **Suggested path:** `prompts/bf-997-998-1414-batch-b-hxi-live-state.md`. **Estimated tests:** 1 new Python file (5 cases), 1 new vitest file (1 case), 1 Playwright spec gains one stubbed read, one assertion and a re-pinned list of denied reads, 1 existing pin updated with its reason inline.
 
 ## 1. Problem
@@ -46,6 +47,7 @@ D1 to D7 as stated above this contract; they are recorded in `DECISIONS.md` (6.9
 | M4 | trackers and generated artifacts | `PROGRESS.md`, `DECISIONS.md`, `docs/development/ad-ledger-snapshot.json` and `docs/development/open-ads-report.md` (generated) | `trackers and generated artifacts for #1414 Batch B` |
 | M5 | B1 review repair | `src/probos/ws_event_stream.py`, `src/probos/routers/workforce.py`, `tests/test_ad1133_live_crew_session_refresh.py` (a comment), `tests/test_bf997_ws_snapshot_and_work_state_resync.py` (13 cases added), `PROGRESS.md` line 3, `DECISIONS.md` D1, D2 and Reversal | `the HXI event stream asks for a resync on a dropped assignment or claim, and its drop classifier compares no foreign key (#1414 B1 review)` |
 | M6 | B2 review repair | `ui/src/components/bridge/BridgeNotifications.tsx` (a comment), `ui/src/components/bridge/__tests__/BridgeNotifications.issue1414.test.tsx` (its header), `PROGRESS.md` line 5 | `the comment and test header for a refused notification read describe the one-shot focus step (#1414 B2 review)` |
+| M7 | B1 review repair (round 2, wording) | `src/probos/routers/workforce.py` (a comment), `tests/test_ad1133_live_crew_session_refresh.py` (a comment), `PROGRESS.md` line 3, `DECISIONS.md` D1 | `the comments and trackers describe how the HXI recovers rows a partial snapshot omits (#1414 B1 review)` |
 
 **Overlap with Batch A** (A's file list as given in the brief):
 
@@ -815,7 +817,7 @@ If 6.9 runs against `8447d6ef` instead, anchor on `### Acclimation S1 -- the AD-
 - *D9 (B1-R1-F2).* The classifier reads the raw data the wire refused. It looks up no key in a dict until the module helper `_has_exact_str_keys` has passed for that dict: `data` at the top of `_resyncs_on_drop`, before the correlated-tool check, and the `work_item` record before its lookup. A frame that fails takes the silent drop, a correlated tool event included. On `fc57a8b2` such a tool event raised out of `hub.ingress`. Rejected:
   - guarding only the new branches, because the tool-event raise would remain;
   - an allow-list of built-in scalar keys, because no producer emits a non-`str` key.
-- *D10 (B1-R1-F3, B2-R1-F1).* Wording only. For B1: snapshot rows are upserted without removing any, every work-item bucket is marked stale, and a surface that shows a bucket re-reads it by REST up to that bucket's cap. For B2: the room tries focus once, finds no band and returns, and a band mounted later is never focused.
+- *D10 (B1-R1-F3, B2-R1-F1).* Wording only. For B1: superseded by D11 (section 6c), which corrects this clause's account of the HXI's reads. For B2: the room tries focus once, finds no band and returns, and a band mounted later is never focused.
 
 **Builder may / may not:** as in section 5. In addition, the Builder may not:
 - change `_WORK_ITEM_EVENTS`;
@@ -1357,6 +1359,106 @@ Measured by the orchestrator on oracle trees at `850a1a35` (the Architect read a
 - **Mutation census of record** (`bf997_998_rows.py`, run once on the repaired tree, each row restored byte for byte): B1 17 of 17 killed (B1-M1 to B1-M9 and B1-M11 to B1-M18; each killed by its named case, B1-M4 also takes the new rows that cross the ingress site; B1-M10 is a review property), B2 5 of 5, B3 3 of 3, the unmutated baseline of the Python and vitest files clean. The baseline's Playwright pair failed its first test once, in the freshly installed tree (the cold-cache first-run failure recorded for #1820, reproduced on the base tree); on the warm tree both passed (2 passed), and the B3 rows ran after it.
 - **Read, not run.** The wording of 6.11, 6.12, 6.14 to 6.18 against `workItemReconciliation.ts:430-433, 65-68, 114` and `ProfileChatTab.tsx:1006-1036`; the B2 late-band behaviour rests on the round-1 reviewer's probe and on that read.
 
+## 6c. Review round 2: repair (B1-R2-F1)
+
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-25. Candidate before repair: `aab7be40` (tree `f742190e`). The pairs 6.19 to 6.22 apply in order to that tree; each SEARCH is whole lines and occurs once at its turn.
+
+**Decision.**
+- *D11 (B1-R2-F1).* Wording only. Every statement of how the HXI recovers rows a partial snapshot omits is this sentence (a comment may wrap it): "The HXI upserts snapshot rows and removes no record a snapshot omits; a snapshot marks its work-item cache stale, and while a surface shows work items the HXI re-reads them by REST, so an omitted row can arrive by a list read or by the read by ID a later live frame for it starts." It states no cap or limit; those live in `WORK_ITEM_BUCKET_CAPS` and `workItemReadUrl`. Anchors in `ui/src/store/workItemReconciliation.ts` at `aab7be40`: `applySnapshotRows` `:376-377`; `observeItemEpoch` `:370-373` (called at `useStore.ts:3251`) -> `repair` `:430-438` -> `markStale` `:455-466` (cache meta stale on every call; only populated scopes marked); `acquireInterest` `:295-300`; `workItemReadUrl` `:114` (cap + 1) and the list apply `:640-650`; `frameChanged` `:312-329` with `isLive` `:418-419`. Rejected:
+  - restating the reads with numbers, because it copies HXI constants into four documents and is how D10 went wrong;
+  - dropping the HXI clause, because D1's rejection of a truncation flag rests on the repair the HXI runs.
+
+**Supersedes.** D11 replaces D10's B1 clause (corrected in place in 6b) and the HXI wording in the REPLACE blocks of 6.1, 6.3, 6.8, 6.9, 6.11, 6.12, 6.14 P-1 and 6.15 P-1. Those pairs record what M1, M4 and M5 committed and stay as they are.
+
+**Builder may / may not:** as in 6b. In addition, M7 changes only the four files below; in the two `.py` files only `#` comment lines change.
+
+**Focused gates (M7).**
+- the M1 four-file pytest list (expected: 173 passed);
+- `scripts/check_architecture_principles.py --check`;
+- `scripts/gen_ad_ledger.py --check`. The headings do not change; if it reports drift anyway, regenerate the ledger pair inside M7.
+
+**A/B.** None: no test tells the wording apart. The evidence is `probe_hxi_consumer.mjs`, which reads `ui/src`; M7 does not touch `ui/src`.
+
+**Drift (not asserted).** `test_ad1133` lines after the edited comment shift by +2 (including the B1-3 and B1-5 citations in section 8); the `:223` docstring citation in `workforce.py` drifts by one more line.
+
+### 6.19 `src/probos/routers/workforce.py` (M7)
+
+**P-1**
+SEARCH:
+```
+    # HXI upserts snapshot rows without removing any and marks every bucket stale, so
+    # a partial list removes nothing; a surface that shows a bucket re-reads it by
+    # REST, up to that bucket's cap.
+```
+REPLACE:
+```
+    # HXI upserts snapshot rows and removes no record a snapshot omits; a snapshot
+    # marks its work-item cache stale, and while a surface shows work items the HXI
+    # re-reads them by REST, so an omitted row can arrive by a list read or by the
+    # read by ID a later live frame for it starts.
+```
+
+### 6.20 `tests/test_ad1133_live_crew_session_refresh.py` (M7)
+
+**P-1**
+SEARCH:
+```
+    # store's order (newest first here); the HXI marks its buckets stale and a
+    # surface that shows a bucket re-reads it by REST, up to that bucket's cap.
+    # Every other snapshot overflow still ends the socket with 1013
+```
+REPLACE:
+```
+    # store's order (newest first here). The HXI upserts snapshot rows and removes
+    # no record a snapshot omits; a snapshot marks its work-item cache stale, and
+    # while a surface shows work items the HXI re-reads them by REST, so an omitted
+    # row can arrive by a list read or by the read by ID a later live frame for it
+    # starts. Every other snapshot overflow still ends the socket with 1013
+```
+
+### 6.21 `PROGRESS.md` (M7)
+
+**P-1** (the whole of `PROGRESS.md` line 3 as M5 committed it; built by the orchestrator from the real line)
+SEARCH:
+```
+**BF-997 (2026-11-25), #1414 -- the HXI event stream keeps the socket past 100 work items, and a work-state frame it cannot send asks clients for a resync.** With more than 100 board-visible work items, `build_ws_workforce_snapshot` raised `ws_workforce_source_overflow`. `serve` then ended the socket with 1013 "snapshot unavailable", and since the HXI resets its backoff on every open, each tab reconnected about once a second and received no live event of any kind. The snapshot now carries the first 100 rows in the store's order (priority, then newest) and adds no field: `tests/test_bf997_ws_snapshot_and_work_state_resync.py::test_a_snapshot_past_the_cap_carries_the_first_100_rows_and_the_socket_stays_live` runs a real `WorkItemStore` with 101 rows through the real hub, and the socket then delivers a later event. The HXI upserts snapshot rows without removing any (`ui/src/store/__tests__/workItemReconciliation.test.ts`, "upserts snapshot rows without removing records the snapshot omits") and marks every work-item bucket stale on each snapshot; a surface that shows a bucket re-reads it by REST, up to that bucket's cap (20 rows for done and cancelled, 100 for each other status). A partial snapshot therefore removes nothing, and a row past the cap reaches the HXI only when a bucket read includes it. `tests/test_ad1133_live_crew_session_refresh.py::test_ws_workforce_snapshot_ordinary_overflow_is_stable` now expects those 100 rows, with the reason inline. Every other snapshot failure still ends the socket with 1013 (`test_snapshot_source_overflow_closes_1013_without_partial_frame`). At both drop sites, a frame that fails the 256 KiB wire bound now requests the existing resync marker when it is one of the five work-item events the HXI invalidates on (`work_item_created`, `work_item_updated`, `work_item_status_changed`, `work_item_assigned`, `work_item_claimed`) and names its `work_item.id`, or a crew-session projection that names its parent. `test_a_dropped_work_item_frame_requests_the_resync_marker` and `test_a_dropped_assignment_requests_the_resync_marker_through_the_real_store` prove this through the real store, `test_a_dropped_work_item_frame_of_each_invalidating_type_requests_the_resync_marker` covers each of the five in its producer's shape, and `test_a_dropped_crew_session_projection_requests_the_resync_marker` covers the projector's publish callback. `_WORK_ITEM_EVENTS` and the ingress shape check are unchanged (`test_an_assignment_frame_naming_no_row_is_still_delivered`). A dropped frame that names no row, or belongs to another family, stays silent (`test_a_drop_that_names_no_work_row_keeps_the_silent_drop`). The classifier reads the raw data the wire refused, so it looks up no key in a dict until every key of that dict is an exact `str`; a frame that fails that check, a correlated tool event included, takes the silent drop, where before a key object hashing like a looked-up name could raise out of `hub.ingress` (`test_a_refused_frame_with_a_foreign_key_object_keeps_the_silent_drop`). The hub class keeps its 492-line span. Mutation census: 17 of 17 killed (rows B1-M1 to B1-M9 and B1-M11 to B1-M18, run once on the overlay of fc57a8b2; B1-M10 is a review property). Contract `prompts/bf-997-998-1414-batch-b-hxi-live-state.md`.
+```
+REPLACE:
+```
+**BF-997 (2026-11-25), #1414 -- the HXI event stream keeps the socket past 100 work items, and a work-state frame it cannot send asks clients for a resync.** With more than 100 board-visible work items, `build_ws_workforce_snapshot` raised `ws_workforce_source_overflow`. `serve` then ended the socket with 1013 "snapshot unavailable", and since the HXI resets its backoff on every open, each tab reconnected about once a second and received no live event of any kind. The snapshot now carries the first 100 rows in the store's order (priority, then newest) and adds no field: `tests/test_bf997_ws_snapshot_and_work_state_resync.py::test_a_snapshot_past_the_cap_carries_the_first_100_rows_and_the_socket_stays_live` runs a real `WorkItemStore` with 101 rows through the real hub, and the socket then delivers a later event. The HXI upserts snapshot rows and removes no record a snapshot omits (`ui/src/store/__tests__/workItemReconciliation.test.ts`, "upserts snapshot rows without removing records the snapshot omits"); a snapshot marks its work-item cache stale, and while a surface shows work items the HXI re-reads them by REST, so an omitted row can arrive by a list read or by the read by ID a later live frame for it starts. `tests/test_ad1133_live_crew_session_refresh.py::test_ws_workforce_snapshot_ordinary_overflow_is_stable` now expects those 100 rows, with the reason inline. Every other snapshot failure still ends the socket with 1013 (`test_snapshot_source_overflow_closes_1013_without_partial_frame`). At both drop sites, a frame that fails the 256 KiB wire bound now requests the existing resync marker when it is one of the five work-item events the HXI invalidates on (`work_item_created`, `work_item_updated`, `work_item_status_changed`, `work_item_assigned`, `work_item_claimed`) and names its `work_item.id`, or a crew-session projection that names its parent. `test_a_dropped_work_item_frame_requests_the_resync_marker` and `test_a_dropped_assignment_requests_the_resync_marker_through_the_real_store` prove this through the real store, `test_a_dropped_work_item_frame_of_each_invalidating_type_requests_the_resync_marker` covers each of the five in its producer's shape, and `test_a_dropped_crew_session_projection_requests_the_resync_marker` covers the projector's publish callback. `_WORK_ITEM_EVENTS` and the ingress shape check are unchanged (`test_an_assignment_frame_naming_no_row_is_still_delivered`). A dropped frame that names no row, or belongs to another family, stays silent (`test_a_drop_that_names_no_work_row_keeps_the_silent_drop`). The classifier reads the raw data the wire refused, so it looks up no key in a dict until every key of that dict is an exact `str`; a frame that fails that check, a correlated tool event included, takes the silent drop, where before a key object hashing like a looked-up name could raise out of `hub.ingress` (`test_a_refused_frame_with_a_foreign_key_object_keeps_the_silent_drop`). The hub class keeps its 492-line span. Mutation census: 17 of 17 killed (rows B1-M1 to B1-M9 and B1-M11 to B1-M18, run once on the overlay of fc57a8b2; B1-M10 is a review property). Contract `prompts/bf-997-998-1414-batch-b-hxi-live-state.md`.
+```
+
+### 6.22 `DECISIONS.md` (M7)
+
+**P-1** (line 16)
+SEARCH:
+```
+- *D1.* Past the 100-row cap, the WebSocket snapshot carries the first 100 rows in the store's order and adds no field. The HXI upserts snapshot rows without removing any and marks every work-item bucket stale on each snapshot; a surface that shows a bucket re-reads it by REST, up to that bucket's cap. So a partial list removes nothing, and a row past the cap reaches the HXI when a bucket read includes it. This supersedes AD-1133's workforce clauses (`prompts/archive/ad-1133-live-crew-session-thread-refresh.md:256` as it applies to the workforce source, and `:272-274`). Every other snapshot overflow still ends the socket with 1013. Rejected: a truncation flag (it duplicates the repair the HXI already runs) and a status filter or a larger cap (it still has a cliff).
+```
+REPLACE:
+```
+- *D1.* Past the 100-row cap, the WebSocket snapshot carries the first 100 rows in the store's order and adds no field. The HXI upserts snapshot rows and removes no record a snapshot omits; a snapshot marks its work-item cache stale, and while a surface shows work items the HXI re-reads them by REST, so an omitted row can arrive by a list read or by the read by ID a later live frame for it starts. This supersedes AD-1133's workforce clauses (`prompts/archive/ad-1133-live-crew-session-thread-refresh.md:256` as it applies to the workforce source, and `:272-274`). Every other snapshot overflow still ends the socket with 1013. Rejected: a truncation flag (it duplicates the repair the HXI already runs) and a status filter or a larger cap (it still has a cliff).
+```
+
+### 6c Verified Against Codebase (2026-11-25, tree at `aab7be40`)
+- `workItemReconciliation.ts`: `:114`, `:131-137`, `:295-300`, `:305-309`, `:312-329`, `:370-377`, `:418-427`, `:430-438`, `:455-466`, `:640-651`, `:673-681`.
+- `useStore.ts:3251`, `:3410`, `:3916`, `:3922`, `:4220-4223`; `workItemReconciliation.test.ts:1388`.
+- `PROGRESS.md` line 3 is 3,287 bytes with its terminator, the same as the 6.14 P-1 REPLACE line, and contains the old substring once.
+
+### 6c Absence Verified (2026-11-25)
+- CLAIM: no other file the batch touched makes the old claim. RUN: Grep `up to that bucket's cap|re-reads it by REST|bucket read includes|marks every|re-reads every bucket|marks its buckets`, repository-wide except `prompts/archive`; Grep `bucket|re-read|by REST|up to` in `ws_event_stream.py`, the BF-997 test, both B2 files and the e2e spec; Grep `bucket|re-reads` in the two generated docs. FOUND: the four sites above, the contract, `ws_event_stream.py:110` (a generic, true statement), and unrelated "marks every field" text. HOLDS: yes.
+
+### 6c Re-proof (orchestrator, 2026-11-25)
+
+Oracle `obr4` (detached at `aab7be40`, tree `f742190e`). The pairs of 6.19 to 6.22 were applied with `contract_tools.py apply --only S6.19.1,S6.20.1,S6.21.1,S6.22.1` from this contract.
+
+- **Pairs.** Each SEARCH occurs once at its turn. `workforce.py`: 205 -> 300 characters. `test_ad1133`: 226 -> 407. `PROGRESS.md` line 3: 3,285 -> 3,200 (the SEARCH is the real line 3 of `aab7be40`, equal to the REPLACE block of 6.14 P-1; the REPLACE differs from it in the one substring the Architect named). `DECISIONS.md` line 16: 775 -> 766 (the SEARCH is the real line, byte for byte). All four files keep their CRLF working-copy line endings. The diff is 4 files, 11 insertions and 8 deletions.
+- **Comments only.** `token_stream_same.py` (tokenize, with COMMENT and NL tokens dropped): `workforce.py` has 7 changed lines and `test_ad1133` has 8, all comment lines, and the token streams before and after are equal. The added lines are ASCII. No `ui/` file is touched.
+- **Focused.** The M5 list (the four-file Python list): 173 passed (63 s). `tests/test_ad1324_srp_layout.py` and `tests/test_ad1184_ad_ledger.py`: 41 passed. `tests/test_workforce.py -k list_ws_visible_work_items`: 8 passed. The seven `--check` runs (`gen_ad_ledger.py`, `check_architecture_principles.py`, `check_config_facade.py`, `gen_config_reference.py`, `check_config_profiles.py`, `check_seam_contracts.py`, `check_store_registry.py`) pass. The `WSEventStreamHub` span is 492 by AST.
+- **The old claims.** `git grep` of the oracle tree for "up to that bucket's cap", "re-reads it by REST", "bucket read includes", "marks every bucket", "marks every work-item bucket", "re-reads every bucket", "marks its buckets" and "up to its cap" finds, outside this contract, only `ui/src/store/workItemReconciliation.ts:64` ("the refresh reads each status bucket up to its cap") and `ui/src/store/__tests__/workItemReconciliation.test.ts:1534` ("a resync re-reads every bucket without x"). Both are the reconciler's own text, which this batch does not touch and which describes the reconciler's own refresh. "marks every" also matches `PROGRESS.md:547` and `DECISIONS.md:3776` (federation parameters and config fields; unrelated). In this contract the statements outside the historical pair texts are corrected by C-10, C-12 and C-13.
+- **D11's clauses, measured.** The reviewer's probe `probe_hxi_consumer.mjs` (reading the real `ui/src` code) was rerun by the orchestrator (0.2 s). With a surface interested, one snapshot gives nine bucket reads (`limit=101` for draft, open, scheduled, in_progress, review, blocked and failed; `limit=21` for done and cancelled) and then one read by ID. With no surface interested, `restReads` is 0, `staleScopeCount` is 0 of 9 (none is populated) and the cache meta is stale. With nine populated buckets and no interest, `staleScopeCount` is 9 and `restReads` is 0. A bucket read applies cap + 1 rows (`openApplied` 101, `doneApplied` 21, both truncated). A later live frame for an omitted row reads it by ID (`/api/work-items/open-0`, the target is present).
+- **C-15 (orchestrator).** The landing template's raw-envelope anchors (`ws_event_stream.py:400, :445, :451, :458`) were wrong when drafted. At `aab7be40`, and at the M7 head (`ws_event_stream.py` is unchanged by M7), they are `:422, :430, :467, :473, :480`; the template now says so.
+
 ## 7. Mutation census and generated-artifact commands
 
 | Row | Mutant | Killer (runner) |
@@ -1443,8 +1545,14 @@ UI gates the batch must keep green: `npx tsc -b` (it reads `BridgeNotifications.
 - B1-R3: a guarded frame returns False. Nothing raises out of `hub.ingress` or `_publish_projector` for a foreign key.
 - B1-R4: span 492, the baseline unchanged, `test_ad1324_srp_layout` green.
 - B1-R5: the new cases cross the real hub, and one drives the real `assign_work_item`.
-- B1-R6: every corrected sentence says only "upsert without removal; every bucket marked stale; a surface that shows a bucket re-reads it up to its cap".
+- B1-R6: every sentence on the HXI's recovery is D11's sentence (section 6c), with no HXI cap, limit or row count.
 - Consumer: the same as B1, plus `invalidateWorkItemFrame`.
+
+**B1 repair delta (M7).**
+- B1-R7: wording only. M7 changes exactly `routers/workforce.py`, `tests/test_ad1133_live_crew_session_refresh.py`, `PROGRESS.md` line 3 and `DECISIONS.md` line 16. In both `.py` files every changed line is a `#` comment (the token streams, comments excluded, are identical before and after). The bold heading of `PROGRESS.md` line 3 and the `DECISIONS.md` heading are byte-identical; `scripts/gen_ad_ledger.py --check` reports current. ASCII only.
+- B1-R8: each of the four sites states D11's sentence (a comment may wrap it). Outside `prompts/`, no file the batch touched contains "up to that bucket's cap", "bucket read includes", "marks every bucket", "marks every work-item bucket", "marks its buckets" or "re-reads every bucket".
+- B1-R9: each clause of D11 holds against `workItemReconciliation.ts` (unchanged): `applySnapshotRows` upserts without removal; `observeItemEpoch` -> `repair` -> `markStale` sets the cache meta stale on every call and marks only populated scopes; `repair` reads only while an interest is held, and `acquireInterest` reads when the buckets are not fresh; a list read asks for cap + 1 and applies what it accepts; `frameChanged` reads by ID only while the cache is live (hence "can"). Expected `probe_hxi_consumer.mjs` output, unchanged by M7: `SNAPSHOT_NO_INTEREST` restReads 0 and cacheMeta "stale"; `POPULATED_BUCKETS_NO_INTEREST` staleScopeCount 9 and restReads 0; `BUCKET_READ_CAPS` openApplied 101 and doneApplied 21; `BY_ID_REACHES_SNAPSHOT_OMISSION` targetPresent true.
+- Consumer: readers of the comments and the trackers; no code consumer changes.
 
 **B2. Consumers:** the `NotificationCard` source view, and `ProfileChatTab.tsx:1006-1036` (unchanged).
 - B2-1: the refusal happens only when `hydrateCrewSession` returns false and a fresh `useStore.getState()` holds no session for `session.task_id`. With a cached session the path is as before.
@@ -1468,13 +1576,13 @@ UI gates the batch must keep green: `npx tsc -b` (it reads `BridgeNotifications.
 ```
 Batch B (HXI live state) is merged in <PR #...> (<sha>), gated by <receipt path, receipt sha>.
 
-- [x] Item 11 (the WS snapshot drops the socket with 1013 above 100 rows): BF-997. Past the cap the snapshot carries the first 100 rows in the store's order; the HXI upserts them without removing any and marks every bucket stale, and a surface that shows a bucket re-reads it by REST up to that bucket's cap. Proof: tests/test_bf997_ws_snapshot_and_work_state_resync.py, a real WorkItemStore with 101 rows through the real hub. Every other snapshot overflow still ends the socket with 1013.
+- [x] Item 11 (the WS snapshot drops the socket with 1013 above 100 rows): BF-997. Past the cap the snapshot carries the first 100 rows in the store's order. The HXI upserts snapshot rows and removes no record a snapshot omits; a snapshot marks its work-item cache stale, and while a surface shows work items the HXI re-reads them by REST, so an omitted row can arrive by a list read or by the read by ID a later live frame for it starts. Proof: tests/test_bf997_ws_snapshot_and_work_state_resync.py, a real WorkItemStore with 101 rows through the real hub. Every other snapshot overflow still ends the socket with 1013.
 - [x] Item 12 (dropped work-item frames never request a resync): BF-997. At both drop sites, a dropped frame of any of the five work-item events the HXI invalidates on (created, updated, status_changed, assigned, claimed) naming its row, or a dropped crew-session projection naming its parent, now requests the existing resync marker. Drops naming no row stay silent, as does a refused frame whose data carries a non-string key (before this, such a tool event could raise out of the hub).
 - [x] Item 14 (notification focus handoff skipped after a fenced hydrate): BF-998. With no session cached, the card opens nothing, clears the request and offers a retry; with a session cached it opens as before. Proof: ui/src/components/bridge/__tests__/BridgeNotifications.issue1414.test.tsx, real store and real fence.
 - [x] Item 8 (issue1369 Playwright suite red): the suite answers the owned-steps read the task rail makes, and the baseline's exact denied list is re-pinned to the reads the app now makes (4b7dfb3b, b4378fb4, 5c362508). 33 of 71 failed on the base; 71 passed after. Test-only, no BF. Running e2e suites in CI is out of scope; nothing filed.
 
 Mutation census: B1 17/17 (B1-M10 is a review property), B2 5/5, B3 3/3 killed.
-Residuals for #1820 (latent): a single row over the 64K-character string bound, or a snapshot over 1 MiB, still ends the socket with 1013; the HXI resets its reconnect backoff on every open. The hub reads the raw event envelope (ws_event_stream.py:400, :445, :451, :458) before any key check; the runtime builds that envelope itself (injected-only).
+Residuals for #1820 (latent): a single row over the 64K-character string bound, or a snapshot over 1 MiB, still ends the socket with 1013; the HXI resets its reconnect backoff on every open. The hub reads the raw event envelope (ws_event_stream.py:422, :430, :467, :473, :480) before any key check; the runtime builds that envelope itself (injected-only).
 Not ticked here: items 1, 9, 10 and 13 (item 1 shipped earlier; Batch C; the item 10 consolidation; item 13 as a limit).
 ```
 
