@@ -1,17 +1,3 @@
-// BF-999 (#1852): the HXI settings store fetches a fresh single-use CSRF token before a save
-// whenever the last one was spent by a POST or is 240 s old, sends a save the router refused
-// with 403 once more, and keeps the draft on every refused save. Real useSettingsStore and the
-// real SettingsPanel; fetch is a double that follows the order of src/probos/routers/config.py:
-// one token per GET; every POST spends the token it carries and, before the body is read,
-// answers 403 for an unknown token or one older than 300 s (the router ages tokens on
-// time.monotonic, the double on the test's Date.now). A POST the token check accepts (a live
-// token, and refuseEveryPost unset) is looked up in MEASURED, the router's answers to the exact
-// bodies the cases send: a listed body gets its measured answer; any other body is recorded in
-// its case's ledger and the double throws. A case fails when a POST to a double it installed
-// passed the token check and carried any other body, or is still outstanding when the case ends
-// (held or unsettled, so its body has not been read). Each case records both in its own ledger.
-// A POST the token check refuses gets a 403; its body is neither read nor recorded. The fixed
-// snapshot, the 200 body, the hold and the injected faults are not router answers.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 
