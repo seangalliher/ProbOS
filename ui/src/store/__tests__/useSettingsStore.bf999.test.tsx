@@ -3,7 +3,8 @@
 // with 403 once more, and keeps the draft on every refused save. Real useSettingsStore and the
 // real SettingsPanel; fetch is a double that behaves like src/probos/routers/config.py: one
 // token per GET, every POST spends the token it carries before the body is read, a token older
-// than 300 s is refused, and a 403 is answered before the body is read.
+// than 300 s is refused, a 403 is answered before the body is read, and a memory.max_episodes
+// that is not an integer is answered 422 with the router's error entry.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 
@@ -24,7 +25,7 @@ const SNAPSHOT = {
       description: 'Process identity and global log level.',
       fields: [
         { field_id: 'system.name', label: 'Process name', kind: 'text', enum_values: [], description: '', hot_reload: false },
-        { field_id: 'system.log_level', label: 'Log level', kind: 'enum', enum_values: ['INFO', 'DEBUG', 'BAD'], description: '', hot_reload: false },
+        { field_id: 'system.log_level', label: 'Log level', kind: 'enum', enum_values: ['INFO', 'DEBUG'], description: '', hot_reload: false },
       ],
     },
   ],
@@ -47,12 +48,21 @@ function jsonResp(body: unknown, status = 200): Response {
 interface ServerDouble {
   gets: number; // every GET /api/config, answered or not
   posts: string[]; // the token each POST carried, in arrival order
-  patches: unknown[]; // the patch each POST carried, in arrival order
+  patches: unknown[]; // the patch of each POST whose token was accepted, in arrival order
   saved: string[]; // system.log_level of each save answered 200
   failNextGet: 'none' | 'status' | 'throw';
   refuseEveryPost: boolean;
   restart: () => void; // the server forgets every token it issued
   hold: () => () => void; // POSTs wait until the returned release() is called
+}
+
+// The router reads the body only after it accepts the token; undefined stands for its 400 invalid_json.
+function readPatch(body: RequestInit['body']) {
+  try {
+    return { patch: JSON.parse(String(body)).patch };
+  } catch {
+    return undefined;
+  }
 }
 
 function installServer(): ServerDouble {
@@ -77,9 +87,7 @@ function installServer(): ServerDouble {
     if (String(input) !== '/api/config') throw new Error(`unexpected request ${String(input)}`);
     if (init?.method === 'POST') {
       const token = (init.headers as Record<string, string>)['X-Probos-CSRF'];
-      const patch = JSON.parse(String(init.body)).patch;
       srv.posts.push(token);
-      srv.patches.push(patch);
       const wait = gate;
       if (wait) await wait;
       // _consume_csrf pops the token; an unknown or expired one is a 403 before the body is read.
@@ -88,13 +96,24 @@ function installServer(): ServerDouble {
       if (srv.refuseEveryPost || issuedAt === undefined || Date.now() - issuedAt > TOKEN_LIFETIME_MS) {
         return jsonResp({ error: 'invalid_csrf' }, 403);
       }
-      const level = patch?.system?.log_level;
-      if (level === 'BAD') {
+      const read = readPatch(init.body);
+      if (!read) return jsonResp({ error: 'invalid_json' }, 400);
+      const patch = read.patch;
+      srv.patches.push(patch);
+      // SystemConfig refuses a memory.max_episodes it cannot parse as an integer ('not-an-int');
+      // it accepts '5000', 5000 and -1, and any string for system.name and system.log_level.
+      const episodes = patch?.memory?.max_episodes;
+      if (episodes !== undefined && !/^-?\d+$/.test(String(episodes))) {
         return jsonResp({
           error: 'validation_failed',
-          errors: [{ loc: ['system', 'log_level'], msg: 'Input should be INFO or DEBUG', type: 'enum' }],
+          errors: [{
+            loc: ['memory', 'max_episodes'],
+            msg: 'Input should be a valid integer, unable to parse string as an integer',
+            type: 'int_parsing',
+          }],
         }, 422);
       }
+      const level = patch?.system?.log_level;
       srv.saved.push(level);
       return jsonResp({ ok: true, restart_required: true, changed_fields: ['system.log_level'] });
     }
@@ -157,13 +176,17 @@ describe('BF-999 the settings store holds a live CSRF token for every save (#185
   it('a save refused by validation keeps the draft, and the corrected save sends every field with a fresh token', async () => {
     const srv = installServer();
     await s().openSettings();
-    await save({ 'system.name': 'Vessel', 'system.log_level': 'BAD' });
+    await save({ 'system.name': 'Vessel', 'memory.max_episodes': 'not-an-int' });
     expect(s().applyStatus).toBe('rejected');
-    expect(s().applyErrors).toHaveLength(1);
-    expect(s().draft).toEqual({ 'system.name': 'Vessel', 'system.log_level': 'BAD' });
-    await save({ 'system.log_level': 'DEBUG' });
+    expect(s().applyErrors).toEqual([{
+      loc: ['memory', 'max_episodes'],
+      msg: 'Input should be a valid integer, unable to parse string as an integer',
+      type: 'int_parsing',
+    }]);
+    expect(s().draft).toEqual({ 'system.name': 'Vessel', 'memory.max_episodes': 'not-an-int' });
+    await save({ 'memory.max_episodes': '5000' });
     expect(srv.posts).toEqual(['t1', 't2']);
-    expect(srv.patches[1]).toEqual({ system: { name: 'Vessel', log_level: 'DEBUG' } });
+    expect(srv.patches[1]).toEqual({ system: { name: 'Vessel' }, memory: { max_episodes: '5000' } });
     expect(srv.gets).toBe(2);
     expect(s().applyStatus).toBe('restart_required');
     expect(s().applyErrors).toEqual([]);
@@ -272,5 +295,30 @@ describe('BF-999 the settings store holds a live CSRF token for every save (#185
       expect(screen.getByTestId('settings-status-message').textContent).toBe('Restart required to take effect.'),
     );
     expect(screen.getByTestId('settings-restart-banner')).toBeTruthy();
+  });
+
+  it.each([
+    { label: 'answers 503', mode: 'status' as const, reason: 'config GET failed: 503' },
+    { label: 'throws', mode: 'throw' as const, reason: 'config GET error: TypeError: network down' },
+  ])('an aged token whose refresh read $label sends no save, and the next press reads first after the clock steps back', async ({ mode, reason }) => {
+    let now = 1000000;
+    vi.spyOn(Date, 'now').mockImplementation(() => now);
+    const srv = installServer();
+    await s().openSettings(); // t1, never sent
+    now += 240000;
+    srv.failNextGet = mode;
+    await save({ 'system.log_level': 'DEBUG' });
+    expect(srv.posts).toEqual([]);
+    expect(srv.gets).toBe(2);
+    expect(s().applyStatus).toBe('rejected');
+    expect(s().applyMessage).toBe(`Could not get a save token (${reason}); nothing was saved. Press APPLY to try again.`);
+    expect(s().draft).toEqual({ 'system.log_level': 'DEBUG' });
+    // A wall-clock correction makes t1 look 10 s old to Date.now; the store must still read before it sends.
+    now = 1010000;
+    await s().applyDraft();
+    expect(srv.posts).toEqual(['t2']);
+    expect(srv.gets).toBe(3);
+    expect(srv.saved).toEqual(['DEBUG']);
+    expect(s().applyStatus).toBe('restart_required');
   });
 });

@@ -214,7 +214,9 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
         if (!fetchedAt || Date.now() - fetchedAt >= CSRF_REFRESH_AFTER_MS) {
           const fresh = await _fetchSnapshot();
           if (typeof fresh === 'string') {
+            // The token was spent or aged: keep it marked for replacement so the next press reads first.
             set({
+              csrfFetchedAt: 0,
               applyStatus: 'rejected',
               applyMessage: `Could not get a save token (${fresh}); nothing was saved. Press APPLY to try again.`,
             });
