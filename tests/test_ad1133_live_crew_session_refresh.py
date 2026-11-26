@@ -617,6 +617,14 @@ async def test_ws_workforce_snapshot_ordinary_overflow_is_stable(
     tmp_path: Path,
     work_store: WorkItemStore,
 ) -> None:
+    # BF-997 (#1414 item 11) supersedes AD-1133's "Overflow closes 1013" for the
+    # workforce source: past the cap the snapshot keeps the first 100 rows in the
+    # store's order (newest first here). The HXI upserts snapshot rows and removes
+    # no record a snapshot omits; a snapshot marks its work-item cache stale, and
+    # while a surface shows work items the HXI re-reads them by REST, so an omitted
+    # row can arrive by a list read or by the read by ID a later live frame for it
+    # starts. Every other snapshot overflow still ends the socket with 1013
+    # (test_snapshot_source_overflow_closes_1013_without_partial_frame).
     for index in range(101):
         await work_store.create_work_item(
             id=f"ordinary-{index:03d}",
@@ -626,8 +634,11 @@ async def test_ws_workforce_snapshot_ordinary_overflow_is_stable(
         )
     runtime = _Runtime(tmp_path, work_items=work_store)
 
-    with pytest.raises(ValueError, match="^ws_workforce_source_overflow$"):
-        await build_ws_workforce_snapshot(runtime, limit=100)
+    snapshot = await build_ws_workforce_snapshot(runtime, limit=100)
+
+    assert [item["id"] for item in snapshot["work_items"]] == [
+        f"ordinary-{index:03d}" for index in range(100, 0, -1)
+    ]
 
 
 async def test_ws_workforce_snapshot_excluded_crew_rows_do_not_overflow(

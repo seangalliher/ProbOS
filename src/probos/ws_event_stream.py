@@ -60,6 +60,15 @@ _WORK_ITEM_EVENTS = {
     "work_item_updated",
     "work_item_status_changed",
 }
+# The work-item frames the HXI treats as invalidations (ui/src/store/useStore.ts,
+# invalidateWorkItemFrame). A dropped one that names its row asks for a resync.
+_RESYNC_WORK_ITEM_EVENTS = frozenset({
+    "work_item_created",
+    "work_item_updated",
+    "work_item_status_changed",
+    "work_item_assigned",
+    "work_item_claimed",
+})
 
 
 class WireValueError(ValueError):
@@ -81,6 +90,46 @@ def _is_correlated_tool_event(event_type: object, data: object) -> bool:
         type(data.get(key)) is int and data[key] >= 0
         for key in ("iteration", "tool_call_index")
     )
+
+
+def _has_exact_str_keys(mapping: dict[object, object]) -> bool:
+    """Whether every key of ``mapping`` is an exact ``str``.
+
+    Iterating a dict compares no keys, so this calls into no key object; a lookup
+    by name in a dict that passes compares only exact strings.
+    """
+    return all(type(name) is str for name in mapping)
+
+
+def _resyncs_on_drop(event_type: object, data: object) -> bool:
+    """Whether a dropped frame asks every client for the existing resync marker.
+
+    A correlated tool event does. Since #1414 item 12 so does a work-item frame
+    the HXI treats as an invalidation, naming its ``work_item.id``, or a
+    crew-session projection naming its ``parent_id``: dropping one leaves the
+    HXI's view of that work stale until something else re-reads it. A drop that
+    names no row keeps clients on their prior state. ``data`` may be the raw
+    value the wire detacher refused, so no key is looked up in a dict until
+    every key of that dict is an exact ``str``.
+    """
+    if type(data) is not dict or not _has_exact_str_keys(data):
+        return False
+    if _is_correlated_tool_event(event_type, data):
+        return True
+    if type(event_type) is EventType:
+        event_type = event_type.value
+    if type(event_type) is not str:
+        return False
+    if event_type in _RESYNC_WORK_ITEM_EVENTS:
+        record, key = data.get("work_item"), "id"
+    elif event_type == "crew_session_projection":
+        record, key = data, "parent_id"
+    else:
+        return False
+    if type(record) is not dict or not _has_exact_str_keys(record):
+        return False
+    value = record.get(key)
+    return type(value) is str and bool(value.strip()) and len(value) <= 128
 
 
 @dataclass(slots=True)
@@ -377,13 +426,13 @@ class WSEventStreamHub:
                 event_name = raw_event_type
             else:
                 event_name = "invalid"
-            if _is_correlated_tool_event(
+            if _resyncs_on_drop(
                 raw_event_type, event.get("data") if type(event) is dict else None,
             ):
                 logger.warning(
-                    "Dropped correlated tool event type %s because bounded wire "
-                    "finalization failed; progress delivery is incomplete and "
-                    "the existing resync marker is requested",
+                    "Dropped event type %s because bounded wire finalization "
+                    "failed; the delivery is incomplete and the existing resync "
+                    "marker is requested",
                     event_name,
                 )
                 self.request_resync()
@@ -569,11 +618,11 @@ class WSEventStreamHub:
                 sequence=next_sequence,
             )
         except WireValueError:
-            if _is_correlated_tool_event(event_type, data):
+            if _resyncs_on_drop(event_type, data):
                 logger.warning(
-                    "Dropped correlated tool event type %s because its final bounded "
-                    "envelope was invalid; progress delivery is incomplete and "
-                    "the existing resync marker is requested",
+                    "Dropped event type %s because its final bounded envelope "
+                    "was invalid; the delivery is incomplete and the existing "
+                    "resync marker is requested",
                     event_type,
                 )
                 self.request_resync()
