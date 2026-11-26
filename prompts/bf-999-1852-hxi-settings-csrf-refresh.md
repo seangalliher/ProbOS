@@ -6,7 +6,8 @@
 **Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-26 (review round 3 amendment at the round-three brake: section 6.11, M5)
 **Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-26 (review round 4 amendment at the round-four brake: section 6.12, M6)
 **Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-26 (review round 5 amendment at the round-five brake: section 6.13, M7)
-**Status:** M1 `f7086568`, M2 `418cc977`, M3 `fa73f33a`, M4 `579c8c14`, M5 `736bf5c9` and M6 `9c553946` built; the round-5 amendment builds as M7. **Base:** main `f7acb948` (tree `f12fe25c`). **Issue:** #1852 (PR says `Refs #1852`). **Path:** `prompts/bf-999-1852-hxi-settings-csrf-refresh.md`. **Estimated tests:** 1 new vitest file (14 cases after M3; 12 at M1); no existing test changes. **No AD.** BF-999 allocated by the orchestrator (four-source enumeration, 02:32Z); the ledger on main reads latest BF-998, next BF-999 (`docs/development/open-ads-report.md:32`).
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-26 (review round 6 amendment at the round-six brake: section 6.15, M8)
+**Status:** M1 `f7086568`, M2 `418cc977`, M3 `fa73f33a`, M4 `579c8c14`, M5 `736bf5c9`, M6 `9c553946` and M7 `079ad5c6` built; the round-6 amendment builds as M8. **Base:** main `f7acb948` (tree `f12fe25c`). **Issue:** #1852 (PR says `Refs #1852`). **Path:** `prompts/bf-999-1852-hxi-settings-csrf-refresh.md`. **Estimated tests:** 1 new vitest file (14 cases after M3; 12 at M1); no existing test changes. **No AD.** BF-999 allocated by the orchestrator (four-source enumeration, 02:32Z); the ledger on main reads latest BF-998, next BF-999 (`docs/development/open-ads-report.md:32`).
 
 ## 1. Problem
 
@@ -66,7 +67,7 @@
   - The fake `BAD` enum value goes. T3 was its only user, and only as a draft value; T12 renders the select but sets the draft directly.
   - Numbering: T1 to T12 keep their order and numbers. T3 changes in place (its values and an exact `applyErrors` check). The F1 coverage is appended as one `it.each` at the end of the file: T13 (503) and T14 (throws). Both start from an aged, unspent token.
   - The new cases check behaviour on the wire (posts and gets). They do not pin the field.
-- **D11 The double answers a POST only from measured router answers (F4).**
+- **D11 Measured router answers (F4).**
   - Why: D10(b)'s M3 rule answered 422 for `'+5000'`, `' 5000 '`, `'5000.0'`, `'1_000'` and `true`; the router answers each of them 200 (orchestrator probe, a TestClient over the unchanged router, head `fa73f33a`). pydantic's lax integer parsing accepts more forms than any rule here can list. The same was true of the "any string" acceptance for the other fields.
   - Chosen: `MEASURED`, a table keyed by the exact body the store sends for each case's patch (four bodies), each mapped to the router's measured answer: 200, or 422 `validation_failed` with one error entry. A POST that passes the token check (a live token, `refuseEveryPost` unset) and whose body is not in the table is recorded in `unmeasured` and refused with a thrown error, which the store reports as an APPLY error, and `afterEach` fails the case on any recorded body. M5 (F5): a POST reads its body only after the optional hold, so a POST still outstanding when a case ends has not reached the table. The double counts POSTs entered and not yet answered (`outstanding`, decremented in a `finally`), and `afterEach` also fails the case when that count is not 0. M6 (F6): the count and `unmeasured` live in a per-case ledger that `beforeEach` replaces and `installServer()` captures, so a POST an earlier case left outstanding settles into that case's ledger (6.12). `readPatch` and the 400 `invalid_json` branch are removed. No case and no store path sends a non-JSON body, and the branch also answered `invalid_json` to a JSON `null` body, which the router answers 400 `patch_required` (`config.py`:271-273, read).
   - Ranked alternatives (rejected):
@@ -91,6 +92,7 @@
 | M5 | the new test file (section 6.11) | `Settings store test double: fail a case that ends with a save still outstanding (#1852)` |
 | M6 | the new test file (section 6.12) | `Settings store test double: give each case its own ledger of outstanding and unmeasured saves (#1852)` |
 | M7 | the new test file (section 6.13) and `PROGRESS.md` (section 6.14) | `Settings store test double: state its guarantees by the code path a POST takes (#1852)` |
+| M8 | the new test file (section 6.15) | `Settings store test double: delete a comment sentence that a validation refusal contradicts (#1852)` |
 
 Subjects are ASCII and contain no AD- or BF- token. They contain no "close", "fix" or "resolve" substring.
 
@@ -119,6 +121,7 @@ npx vitest run src/store/__tests__/useSettingsStore.bf999.test.tsx src/component
 - **M5:** the M3 gates with the same counts (predicted), plus the outstanding-POST probes of D11 (section 9d).
 - **M6:** the M3 gates with the same counts (predicted), plus the ledger probes O-1 to O-4 of 6.12 (recorded in 9e).
 - **M7:** the M3 gates with the same counts (predicted), plus the comment-only proof and the probes of 6.13 (recorded in 9f).
+- **M8:** the M3 gates with the same counts (predicted), plus the comment-only proof of 6.15 (recorded in 9g).
 - **UI batch gates once on the candidate** (`run_test_gate.py` runs neither): `npx tsc -b`, then `npx vitest run` (0 failed).
 - **Broad gate** once after M2: `scripts/run_test_gate.py --label 1852-bf999 --receipt logs/gates/1852-bf999.receipt.json`.
 
@@ -1423,7 +1426,7 @@ REPLACE:
 ```
 
 **Claims after M6, and why each is true.** The precondition is that the file's cases run one at a time: the file has no `.concurrent`, and no `vite*.config.*` sets `sequence.concurrent`.
-- C-1, "a POST to a double it installed carried a live token and any other body" fails the case. Narrowed at M7 (6.13, F7): this holds for a POST that passed the token check (a live token, `refuseEveryPost` unset); a POST the check refuses gets a 403 before `MEASURED` is consulted and is not recorded. `mine.unmeasured.push` runs before the throw, and the POST stays counted in `mine.outstanding` from entry until its `finally`. So at the case's `afterEach` either the body is in the ledger or the POST is still counted.
+- C-1, "a POST to a double it installed carried a live token and any other body" fails the case. Narrowed at M7 (6.13, F7): this holds for a POST that passed the token check (a live token, `refuseEveryPost` unset); a POST the check refuses gets a 403 before `MEASURED` is consulted. `mine.unmeasured.push` runs before the throw, and the POST stays counted in `mine.outstanding` from entry until its `finally`. So at the case's `afterEach` either the body is in the ledger or the POST is still counted.
 - C-2, "still outstanding when the case ends" fails the case. The increment comes before any `await`; the only decrement is that POST's own `finally`, on its own `mine`. `afterEach` has no `await`, so it sees one consistent state.
 - C-3, "each case records both in its own ledger". `ledger` is written only at its declaration and in `beforeEach`. `installServer()` captures it into the closure constant `mine`, and every write to a ledger's fields goes through `mine`.
 - C-4, "settles into that case's ledger, never a later one". This follows from C-3, whenever the release fires: inside the case, after it, through fake timers, or never.
@@ -1457,11 +1460,13 @@ If round 5 has only record-class findings, the item lands. A repair-class findin
 
 ## Amendment after review round 5 (2026-11-26)
 
-F7 (P3, injected-only; the regression is the claim, not the code). The test double answers a POST with a 403 for `refuseEveryPost`, an unknown token or an expired one before it reads the body or looks it up in `MEASURED`, so a POST that the token check refuses is never recorded, whatever its body. The test file's header (since M4, restated at M6), C-1, D11, R-9 and the landing text say that any other body fails the case, which is false for such a POST. The Architect's decision at the round-five brake is to continue with F7 only: M7 restates each guarantee by the code path, in comments only, and the contract and `PROGRESS.md` sentences follow. F8 (the double hands the store its error entry and snapshot objects by reference) is recorded, not repaired, and R-13's sentence about module-level state is corrected.
+F7 (P3, injected-only; the regression is the claim, not the code). The test double answers a POST with a 403 for `refuseEveryPost`, an unknown token or an expired one before it reads the body or looks it up in `MEASURED`. The test file's header (since M4, restated at M6), C-1, D11, R-9 and the landing text say that any other body fails the case, which is false for such a POST. The Architect's decision at the round-five brake is to continue with F7 only: M7 restates each guarantee by the code path, in comments only, and the contract and `PROGRESS.md` sentences follow. F8 (the double hands the store its error entry and snapshot objects by reference) is recorded, not repaired, and R-13's sentence about module-level state is corrected.
 
 ### 6.13 `ui/src/store/__tests__/useSettingsStore.bf999.test.tsx` (M7; F7; comment lines only; on the file as committed at `9c553946`, LF, ASCII)
 
 Pairs on `ui/src/store/__tests__/useSettingsStore.bf999.test.tsx` as committed at `9c553946`. Comment lines only; no other byte changes.
+
+*Note (round 6 amendment): the F7-b text below stands as committed at M7. Its sentence "A refused POST never reaches the table." is false for a POST whose body the table maps to an error entry (F9): the double looks it up (test file line 130 at `079ad5c6`) and answers 422 from that entry (line 137), as for T3's first save. 6.15 deletes the sentence, and its row is removed from the code-path table.*
 
 **F7-a** (header, lines 7-12)
 SEARCH:
@@ -1527,8 +1532,7 @@ If a new line is wider than the widest existing comment line, rewrap the words w
 | "A case fails when a POST ... passed the token check and carried any other body" | the push comes before the throw; `afterEach` line 172 checks `unmeasured` is `[]` | yes (cases run one at a time, the 6.12 precondition) |
 | "or is still outstanding when the case ends" | increment at line 113 before any await; decrement in `finally` at line 138; `afterEach` line 171 | yes; also holds under `refuseEveryPost`, because the increment comes before line 122 |
 | "Each case records both in its own ledger" | `beforeEach` line 165; capture at line 92 (C-3) | yes |
-| "A POST the token check refuses gets a 403; its body is neither read nor recorded" | line 123 returns before line 125 reads `init.body`; nothing is pushed | yes; this is F7's planted case, which `probe_f7.py` shows passing |
-| "A refused POST never reaches the table" | line 123 returns before line 126 | yes |
+| "A POST the token check refuses gets a 403; its body is neither read nor recorded" | line 123 returns before line 125 reads `init.body` | yes; this is F7's planted case, which `probe_f7.py` shows passing |
 | "reads its body only after the hold and the token check" | line 118, then line 122, then line 125 | yes |
 | "bodies that passed the token check with no measured answer" | line 128 is reachable only past line 122 | yes |
 
@@ -1557,6 +1561,37 @@ REPLACE:
 ```
 answers each save whose token it accepts only from the router's measured answers to the four bodies the cases send (any other body of such a save fails the case)
 ```
+
+## Amendment after review round 6 (2026-11-26)
+
+F9 (P3, ordinary reach; a regression of the claim, written by M7): the sentence quoted in the note under 6.13's heading. F10 (P3, ordinary reach; not a regression): D11's headline said the double answers a POST only from measured router answers; every 403 is answered without the table, including the unknown-token 403 of the case at test file line 223 (after `srv.restart()`, line 226). F11 (P3; regressions of the claim, written by M7; found in the Architect's audit at the round-six brake): clauses in C-1's M7 note, the round-5 amendment paragraph, a row of 6.13's code-path table and 9f said a POST the token check refuses leaves no record, but it is counted in its case's `outstanding` from entry (line 117) until its `finally` (lines 141-143), and its token is pushed to `srv.posts` (line 120); R-13 listed three module-level objects as all the double reads, but it also reads `TOKEN_LIFETIME_MS` (line 126). The Architect's decision at the round-six brake is to continue with F9 to F11, by deletion only: M8 deletes the F9 sentence from the test file (6.15); this amendment deletes the F11 clauses, removes the F9 row from 6.13's table and replaces D11's headline with a label. No sentence is narrowed and no code changes. Line numbers in this section are the test file's at `079ad5c6`.
+
+### 6.15 `ui/src/store/__tests__/useSettingsStore.bf999.test.tsx` (M8; F9; one comment line; on the file as committed at `079ad5c6`, LF, ASCII)
+
+The pair deletes one sentence from line 71 and changes no other byte. The line is not rewrapped.
+
+**F9-a** (the `MEASURED` comment, line 71)
+SEARCH:
+```
+// passed the token check and is missing from the table is recorded in the case's ledger and the
+// double throws, and afterEach fails the case on it. A refused POST never reaches the table. A
+// POST reads its body only after the hold and the token check, so afterEach also fails a case
+```
+REPLACE:
+```
+// passed the token check and is missing from the table is recorded in the case's ledger and the
+// double throws, and afterEach fails the case on it. A
+// POST reads its body only after the hold and the token check, so afterEach also fails a case
+```
+
+**Census.** Not rerun: the store blob is unchanged and no non-comment token of the test file changes.
+
+**R-18 Round-7 stop rule.** Round 7 repairs only:
+- a non-comment token of the test file that differs from `079ad5c6`;
+- a sentence of the test file's comments that 6.15 leaves false or ungrammatical;
+- any `tsc`, vitest or gate failure, any P1 or P2, and anything in the store or in production behaviour.
+
+A sentence of this contract that this amendment writes or leaves false or ungrammatical is deleted in the contract before the gate, with no further round. Everything else is recorded in the landing comment's "Not covered" or in the #1820 wave item, including any other sentence of the test file, `PROGRESS.md`, `DECISIONS.md` or this contract, whichever milestone wrote it. If round 7 has only record-class findings or contract deletions, the item goes to the gate. If round 7 has a repair-class finding confined to the test file's comments, M9 deletes the whole comment block that holds the sentence (the header's sentences after its first, the `MEASURED` comment or the ledger comment), and round 8 checks only the first and third bullets above; it repairs no sentence.
 
 ## 7. Mutation census and generated-artifact commands
 
@@ -1640,8 +1675,9 @@ Guard: `SettingsPanel.test.tsx` "APPLY POSTs the patch with CSRF header and show
 - **R-10 Round-1 delta.** The store change is the one `csrfFetchedAt: 0` line and its comment in the refresh-failure `set`. T1 to T12 keep their order. T13 and T14 are appended. No component, router or other test changes.
 - **R-11 Round-2 delta.** Only the test file (6.9) and the BF-999 paragraph of `PROGRESS.md` (6.10) change. T1 to T14, the store, `DECISIONS.md`, every component and every other test are byte-unchanged.
 - **R-12 Round-3 delta.** Only the test file (6.11) changes: the counter, its reset, the try/finally around the unchanged POST statements, the `afterEach` assertion and three comments. T1 to T14, `MEASURED`, the store, `PROGRESS.md`, `DECISIONS.md` and every other file are byte-unchanged.
-- **R-13 Round-4 delta.** Only the test file (6.12) changes: `Ledger`, `ledger`, `mine`, the three substitutions in the POST branch, the `beforeEach` reset, the two `afterEach` expects and three comments. The other statements of the POST branch, T1 to T14, `MEASURED`, the store, `PROGRESS.md`, `DECISIONS.md` and every other file are byte-unchanged. No module-level binding is reassigned except `ledger` (by `beforeEach`), and the double writes no module-level object except the ledger it captured, through `mine`; it only reads `SNAPSHOT`, `INT_PARSING` and `MEASURED`, and hands the store `INT_PARSING` itself and the nested objects of `SNAPSHOT` by reference (F8, recorded in 6.13). C-1 (as narrowed by 6.13) to C-4 of 6.12 are each true for any case of the file on the unmodified store. Findings are classified by R-14.
+- **R-13 Round-4 delta.** Only the test file (6.12) changes: `Ledger`, `ledger`, `mine`, the three substitutions in the POST branch, the `beforeEach` reset, the two `afterEach` expects and three comments. The other statements of the POST branch, T1 to T14, `MEASURED`, the store, `PROGRESS.md`, `DECISIONS.md` and every other file are byte-unchanged. No module-level binding is reassigned except `ledger` (by `beforeEach`), and the double writes no module-level object except the ledger it captured, through `mine`, and hands the store `INT_PARSING` itself and the nested objects of `SNAPSHOT` by reference (F8, recorded in 6.13). C-1 (as narrowed by 6.13) to C-4 of 6.12 are each true for any case of the file on the unmodified store. Findings are classified by R-14.
 - **R-15 Round-5 delta (M7).** Only comment lines of the test file (6.13), the BF-999 paragraph of `PROGRESS.md` (E-57) and this contract change; the test file's non-comment lines are identical to `9c553946`. The store, `DECISIONS.md` and every other file are byte-unchanged. Findings are classified by R-16.
+- **R-17 Round-6 delta (M8).** One comment line of the test file (6.15) and this contract change; the test file's non-comment tokens are identical to `079ad5c6`. The store, `PROGRESS.md`, `DECISIONS.md` and every other file are byte-unchanged. Findings are classified by R-18.
 
 **#1852 landing comment:**
 
@@ -1740,8 +1776,20 @@ Measured on the oracle tree `oc1` (the M6 candidate, head `9c553946`: store `5ee
 - Pairs: the three pairs of 6.13 and the pair of 6.14 apply, each SEARCH occurring once at its turn (the test file is LF in the tree, `PROGRESS.md` is CRLF). The amended test file has the blob `40f6b459` (352 lines) and `PROGRESS.md` the blob `0bf28dc4`.
 - Comment-only proof: `tokens_equal.mjs` parses the committed `9c553946` test file and the amended one with the TypeScript compiler (TSX) and compares every leaf token: the two sequences are identical (3095 tokens). Every added or removed line of `git diff -U0` (+17 -13, 30 lines) matches `^[-+]\s*//`. The widest new comment line is 96 characters and the widest existing one 109, so no line is rewrapped. The tool's own self-test passes: a comment-only edit keeps the sequence; a code edit, and an edit inside a string that holds `//`, change it; a syntax error exits 2.
 - Amended file: 14 of 14 pass; `npx tsc -b` prints nothing and exits 0; A/B on the original base `f7acb948`: 12 failed, 2 passed (T1 and T6).
-- Probe F7 (`probe_f7.py`, scratch files removed afterwards): a case that sends the body `{"patch":{"memory":{"max_episodes":"+5000"}}}` with `refuseEveryPost` set (two POSTs `['t1','t2']`, status `rejected`) passes, which is what 6.13 now says (a POST the token check refuses is neither read nor recorded); the control, the same save without `refuseEveryPost`, fails in `afterEach` on the unmeasured list. The result on the M6 file is the same.
+- Probe F7 (`probe_f7.py`, scratch files removed afterwards): a case that sends the body `{"patch":{"memory":{"max_episodes":"+5000"}}}` with `refuseEveryPost` set (two POSTs `['t1','t2']`, status `rejected`) passes, which is what 6.13 now says; the control, the same save without `refuseEveryPost`, fails in `afterEach` on the unmeasured list. The result on the M6 file is the same.
 - Probe F8 (the same script): a case that changes the error entry the store kept (`applyErrors[0].msg`) makes the next, unchanged case fail; the control pair passes. Recorded in 6.13, not repaired.
 - No over-broad sentence left: `rg -n "carried a live token and any other body|A live-token POST|no module-level mutable"` finds no hit in the amended test file, `PROGRESS.md` or `DECISIONS.md`; in the contract it finds only the M6 pair text in 6.12, the quoted opening of C-1 (followed by its narrowing) and the old header text that 6.13 replaces. A wider search (`any other body`, `fails the case`, `answers each save`) finds the other sentences in D11, R-9, 6.14 and the landing text, each now narrowed or true as written.
 - `scripts/gen_ad_ledger.py --check` still reports the ledger current after the `PROGRESS.md` edit, so the ledger pair does not change. The census is not rerun: the store blob is `5ee13d2e` and no non-comment token of the test file changed. The prompt scan is clean on this file.
 - Corrections: C-11 E-49 keeps a comma after M4 (the answer's replacement would drop it); C-12 the 6.13 heading carries its path and the pairs use the contract's own labels F7-a to F7-c; C-13 the M7 row of the milestones table and the M7 gate line; C-14 R-13 names exactly what the double hands the store (`INT_PARSING` itself, the nested objects of `SNAPSHOT`); C-15 the landing text says "constant" where the answer uses another word, which the release-word scan of a posted comment flags; C-16 a note under the 6.12 heading; C-17 the M7 subject takes the branch's house style (the answer's subject has a `test(ui):` prefix that no commit on main uses); C-18 the code-path table's ellipses are written as three dots.
+
+### 9g Review round 6 repair re-proof (orchestrator, 2026-11-26)
+
+Measured on the oracle tree `oc1` (the M7 candidate, head `079ad5c6`: store `5ee13d2e`, test file `40f6b459`, `PROGRESS.md` `0bf28dc4`, `DECISIONS.md` `fae55d23`, all equal to the committed blobs) with the pair of 6.15 applied on top. Every prediction of the amendment held, except one count noted below.
+
+- Pair: the pair of 6.15 applies, its SEARCH occurring once (the test file is LF in the tree). The amended test file has the blob `16ec5f2c` (352 lines).
+- Comment-only proof: `tokens_equal.mjs` parses the committed `079ad5c6` test file and the amended one with the TypeScript compiler (TSX): the two token sequences are identical (3095 tokens). `git diff -U0` shows +1 -1, the one line that held the deleted sentence, both `//` lines.
+- Amended file: 14 of 14 pass; `npx tsc -b` prints nothing and exits 0; A/B on the original base `f7acb948`: 12 failed, 2 passed (T1 and T6); probes F7 and F8 (`probe_f7.py`, scratch files removed afterwards) give the same results as in 9f.
+- Searches over the contract: `never reaches the table` is absent from the test file and occurs three times in the contract (the E-64 note, the F7-b record in 6.13 and the 6.15 SEARCH); `only reads|is not recorded|never recorded|nothing is pushed|refuses is neither` finds nothing; `only from measured router answers` finds two lines, the M4 commit subject (a historical record) and the amendment paragraph that quotes D11's old headline in the past tense (the answer predicted one).
+- First-hand checks of the F10 and F11 claims before building: the case that calls `srv.restart()` (test file line 226) sends its first POST with a token the double no longer knows and gets the 403 without any lookup (ordinary reach); a refused POST is counted in `mine.outstanding` from line 117 until its `finally` and its token is pushed to `srv.posts` at line 120, so "not recorded" and "nothing is pushed" were false; the double also reads `TOKEN_LIFETIME_MS` and calls `jsonResp`, so "only reads three objects" was false. My own audit at the brake found F9's sentence only; the Architect's audit found the five contract clauses, because my check against the branch map had not tested the words "never", "only" and "recorded" against the ledger's own vocabulary.
+- `PROGRESS.md`, `DECISIONS.md`, the store and the generated ledger are untouched, so `scripts/gen_ad_ledger.py --check` still reports the ledger current. The census is not rerun (store blob `5ee13d2e`, no non-comment token changed). The prompt scan is clean on this file.
+- Corrections: C-19 the 6.15 section carries the contract's pair label (F9-a) and the pair texts in place of the answer's placeholders. Left as the answer says (record-class): the label E-51 in "Claims after M7" is not defined elsewhere in the contract.
