@@ -4,12 +4,14 @@
 // real SettingsPanel; fetch is a double that follows the order of src/probos/routers/config.py:
 // one token per GET; every POST spends the token it carries and, before the body is read,
 // answers 403 for an unknown token or one older than 300 s (the router ages tokens on
-// time.monotonic, the double on the test's Date.now). A POST with a live token is answered from
-// MEASURED, the router's answers to the exact bodies the cases send. A case fails when a POST to
-// a double it installed carried a live token and any other body, or is still outstanding when the
-// case ends (held or unsettled, so its body has not been read). Each case records both in its own
-// ledger. The fixed snapshot, the 200 body, the hold and the injected faults are not router
-// answers.
+// time.monotonic, the double on the test's Date.now). A POST the token check accepts (a live
+// token, and refuseEveryPost unset) is looked up in MEASURED, the router's answers to the exact
+// bodies the cases send: a listed body gets its measured answer; any other body is recorded in
+// its case's ledger and the double throws. A case fails when a POST to a double it installed
+// passed the token check and carried any other body, or is still outstanding when the case ends
+// (held or unsettled, so its body has not been read). Each case records both in its own ledger.
+// A POST the token check refuses gets a 403; its body is neither read nor recorded. The fixed
+// snapshot, the 200 body, the hold and the injected faults are not router answers.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 
@@ -64,10 +66,11 @@ interface ServerDouble {
 // The router's answer to each body a case POSTs with a live token, measured with a TestClient
 // over the unchanged src/probos/routers/config.py (contract D11): 'ok' is a 200, an entry is a
 // 422 validation_failed carrying it. pydantic parses integers laxly (it accepts '+5000',
-// ' 5000 ', '5000.0', '1_000' and true), so no rule here stands for the router: a body missing
-// from the table is recorded in the case's ledger and refused, and afterEach fails the case on
-// it. A POST reads its body only after the hold, so afterEach also fails a case whose ledger
-// still counts a POST outstanding.
+// ' 5000 ', '5000.0', '1_000' and true), so no rule here stands for the router: a body that
+// passed the token check and is missing from the table is recorded in the case's ledger and the
+// double throws, and afterEach fails the case on it. A refused POST never reaches the table. A
+// POST reads its body only after the hold and the token check, so afterEach also fails a case
+// whose ledger still counts a POST outstanding.
 const INT_PARSING = {
   loc: ['memory', 'max_episodes'],
   msg: 'Input should be a valid integer, unable to parse string as an integer',
@@ -79,9 +82,10 @@ const MEASURED = new Map<string, 'ok' | typeof INT_PARSING>([
   ['{"patch":{"system":{"name":"Vessel"},"memory":{"max_episodes":"not-an-int"}}}', INT_PARSING],
   ['{"patch":{"system":{"name":"Vessel"},"memory":{"max_episodes":"5000"}}}', 'ok'],
 ]);
-// A case's record of its doubles: POSTs entered and not yet answered or thrown, and bodies with
-// no measured answer. beforeEach gives each case a new ledger and installServer() captures it,
-// so a POST an earlier case left outstanding settles into that case's ledger, never a later one.
+// A case's record of its doubles: POSTs entered and not yet answered or thrown, and bodies that
+// passed the token check with no measured answer. beforeEach gives each case a new ledger and
+// installServer() captures it, so a POST an earlier case left outstanding settles into that
+// case's ledger, never a later one.
 interface Ledger {
   outstanding: number;
   unmeasured: string[];
