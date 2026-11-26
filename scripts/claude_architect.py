@@ -23,6 +23,14 @@ Usage:
 
 `--resume` finds the session by working directory: resume from the same worktree.
 
+A read-only run whose `--task-file` sits in a Copilot session's `files` folder
+(`~/.copilot/session-state/<id>/files/...`) may also read that one folder with
+its shell rules (`ls`, `grep`, `head` and the rest): the CLI gets `--add-dir` for
+it. Counted 2026-11-26 from the orchestrator's saved consult outputs (the
+`.out.txt`/`.console.txt` files in its session folder): 25 of the 100 consults
+since 2026-11-19 ended with exit 4 because an `ls` or `wc -l` of its briefs
+there was denied as outside the worktree. Runs that may edit get no extra folder.
+
 Exit codes: 0 completed, 1 agent error or incomplete run, 2 preflight refused,
 3 timed out, 4 completed but the agent was denied a tool call (read the answer
 and the listed denials: it may rest on evidence the agent could not gather),
@@ -470,8 +478,43 @@ def resumed_context_tokens(session_id: str, config_dir: Path) -> int | None:
     return session_cache_state(session_id, config_dir)[0]
 
 
-def build_command(cli: str, *, read_only: bool, resume: str | None, effort: str | None = None) -> list[str]:
-    """Return the headless CLI invocation; the task itself is sent on stdin."""
+def session_files_dir(task_file: Path | None, home: Path) -> Path | None:
+    """The Copilot session `files` folder that holds the request file, or None.
+
+    Only `~/.copilot/session-state/<id>/files` itself, never the session folder
+    above it (its events.jsonl is the orchestrator's live log).
+    """
+    if task_file is None:
+        return None
+    # `..` through a link resolves physically on POSIX but collapses lexically below,
+    # so the walk could check one folder and the grant name another; no request needs it.
+    if ".." in task_file.parts:
+        return None
+    try:
+        base = (home / ".copilot" / "session-state").resolve()
+        # No link or junction anywhere below session-state on the way to the file: a link
+        # in one session's folder that points into another's would grant the other one.
+        written = Path(os.path.normpath(task_file.absolute()))
+        for part in (written, *written.parents):
+            if part.is_symlink() or part.is_junction():
+                return None
+            if part.resolve() == base:
+                break
+        parts = task_file.resolve().relative_to(base).parts
+    except (OSError, ValueError):
+        return None
+    if len(parts) >= 3 and parts[1] == "files":
+        return base / parts[0] / "files"
+    return None
+
+
+def build_command(cli: str, *, read_only: bool, resume: str | None, effort: str | None = None,
+                  read_dirs: tuple[Path, ...] = ()) -> list[str]:
+    """Return the headless CLI invocation; the task itself is sent on stdin.
+
+    `read_dirs` are extra folders a read-only run may reach with its read tools
+    and shell rules; they are ignored for a run that may edit.
+    """
     tools = list(_READ_TOOLS) + list(_BASH_RULES)
     if not read_only:
         tools += list(_WRITE_TOOLS) + list(_TEST_RULES)
@@ -487,6 +530,9 @@ def build_command(cli: str, *, read_only: bool, resume: str | None, effort: str 
         "--allowedTools", *tools,
         "--disallowedTools", *_DENIED_RULES,
     ]
+    if read_only:
+        for folder in read_dirs:
+            command += ["--add-dir", str(folder)]
     if effort:
         command += ["--effort", effort]
     if resume:
@@ -560,13 +606,16 @@ def run_architect(
     run: Runner | None = None,
     effort: str | None = None,
     resumed_context: int | None = None,
+    read_dirs: tuple[Path, ...] = (),
 ) -> ArchitectResult:
     """Run claude-architect once, log the raw outcome under logs/architect/, and interpret it."""
     run = run or subprocess.run
-    command = build_command(cli, read_only=read_only, resume=resume, effort=effort)
+    read_dirs = read_dirs if read_only else ()
+    command = build_command(cli, read_only=read_only, resume=resume, effort=effort, read_dirs=read_dirs)
     preamble = bridge_preamble(read_only=read_only)
     # The log records what the agent was told, without repeating the whole text.
     told = {"read_only": read_only, "effort": effort, "resumed_context_tokens": resumed_context,
+            "read_dirs": [str(folder) for folder in read_dirs],
             "preamble_sha256": hashlib.sha256(preamble.encode("utf-8")).hexdigest()}
     try:
         completed = run(
@@ -704,9 +753,11 @@ def main(argv: list[str] | None = None) -> int:
         )
         print(render(refused))
         return refused.exit_code
+    files_dir = session_files_dir(args.task_file, Path.home())
     result = run_architect(
         task, root=root, cli=cli, read_only=args.read_only, resume=args.resume,
         timeout=args.timeout, env=env, effort=effort, resumed_context=resumed_context,
+        read_dirs=(files_dir,) if files_dir else (),
     )
     result.notes.extend(notes)
     # The answer may contain any Unicode; stdout was reconfigured above so the console code page cannot crash it.
