@@ -177,7 +177,11 @@ class _EventBus:
     async def drain(self) -> None:
         """Await every listener task, including ones they spawn in turn."""
         while self._tasks:
-            await asyncio.gather(*tuple(self._tasks))
+            pending = tuple(self._tasks)
+            try:
+                await asyncio.gather(*pending)
+            finally:
+                self._tasks.difference_update(task for task in pending if task.done())
 
 
 class _Runtime(SimpleNamespace):

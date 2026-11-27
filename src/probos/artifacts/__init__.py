@@ -33,6 +33,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
+from probos.admission.seam import check_at
+from probos.admission.taxonomy import EFFECT_STORE_WRITE
+
 logger = logging.getLogger(__name__)
 
 _SCHEMA = """
@@ -107,20 +110,11 @@ class ArtifactStore:
     ) -> None:
         self._version_committed_callback = callback
 
-    def _notify_version_committed(self, artifact: Artifact) -> None:
-        callback = self._version_committed_callback
-        if callback is None:
-            return
-        try:
-            callback(artifact)
-        except Exception:
-            logger.warning(
-                "Artifact %s version %d committed but its live-refresh callback "
-                "failed; clients will repair on reconnect",
-                artifact.id,
-                artifact.version,
-                exc_info=True,
-            )
+    _admission: object = None  # AD-1346 M3e4d7 (D329, set_admission): None checks nothing
+
+    def set_admission(self, service: object) -> None:
+        """AD-1346 M3e4d7 (D329): the service ``add_version`` and ``reconcile_exact_version`` hand ``check_at``; None checks nothing."""
+        self._admission = service
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(str(self._db_path), isolation_level=None)
@@ -145,6 +139,7 @@ class ArtifactStore:
         """
         artifact_id = self._id_factory()
         now = self._clock()
+        check_at(self._admission, effect=EFFECT_STORE_WRITE, presented_id=created_by)  # AD-1346 M3e4d7 (D328): the version's store-write check, in shadow, before its transaction; it blocks nothing
         with self._connect() as conn:
             # BF-324 (Wave 197): wrap SELECT MAX + INSERT in BEGIN IMMEDIATE
             # so two concurrent add_version calls on the same
@@ -198,7 +193,7 @@ class ArtifactStore:
             created_at=now,
             supersedes=supersedes,
         )
-        self._notify_version_committed(artifact)
+        _notify_version_committed(self._version_committed_callback, artifact)  # AD-1346 M3e4d7 (D329): a module-level function now, so the class keeps 15 direct methods
         return artifact
 
     def reconcile_exact_version(
@@ -213,6 +208,7 @@ class ArtifactStore:
     ) -> Artifact:
         """Create v1 for an empty chain or reuse its one exact row."""
         created: Artifact | None = None
+        check_at(self._admission, effect=EFFECT_STORE_WRITE, presented_id=created_by)  # AD-1346 M3e4d7 (D328): the reconcile's store-write check, in shadow, before its transaction; it blocks nothing
         with self._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
             try:
@@ -272,7 +268,7 @@ class ArtifactStore:
                 raise
         if created is None:
             raise ValueError("artifact_exact_match_create_failed")
-        self._notify_version_committed(created)
+        _notify_version_committed(self._version_committed_callback, created)  # AD-1346 M3e4d7 (D329): as in add_version
         return created
 
     def get(self, artifact_id: str) -> Artifact | None:
@@ -438,6 +434,25 @@ class ArtifactStore:
                 (content_hash,),
             ).fetchone()
         return _row(row) if row else None
+
+
+def _notify_version_committed(callback: Callable[[Artifact], None] | None, artifact: Artifact) -> None:
+    """AD-1346 M3e4d7 (D329): ``ArtifactStore``'s version-committed notice, moved out of the class so that
+    ``set_admission`` keeps it at 15 direct methods; the store passes its callback. None does nothing; a callback that
+    raises an ``Exception`` is logged, and the store goes on to return the committed version. A ``BaseException`` from
+    the callback (a cancellation, for one) and a failure of the logging itself propagate, after the commit."""
+    if callback is None:
+        return
+    try:
+        callback(artifact)
+    except Exception:
+        logger.warning(
+            "Artifact %s version %d committed but its live-refresh callback "
+            "failed; clients will repair on reconnect",
+            artifact.id,
+            artifact.version,
+            exc_info=True,
+        )
 
 
 def _row(row: sqlite3.Row) -> Artifact:

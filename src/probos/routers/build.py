@@ -14,6 +14,7 @@ from probos.api_models import (
     BuildApproveRequest, BuildEnqueueRequest, BuildQueueApproveRequest,
     BuildQueueRejectRequest, BuildRequest, BuildResolveRequest,
 )
+from probos.build_queue import QueuedBuild
 from probos.cognitive.builder_paths import operator_checkout_refusal
 from probos.events import EventType
 from probos.routers.deps import get_runtime, get_task_tracker
@@ -45,6 +46,41 @@ RESOLVE_CLEANUP_INCOMPLETE = (
     "build found it and may hold the git configuration its tests left. Check the checkout against "
     "the cleanup notes in the failure report, then abort and start a new build."
 )
+#: BF-937 (#1678): the typed answer to approving a build in review (POST /api/build/queue/approve). Since BF-897 nothing
+#: merges a build locally; a build is delivered through GitHub (AD-1336, child 6).
+QUEUE_APPROVE_UNAVAILABLE = "unavailable"
+QUEUE_APPROVE_UNAVAILABLE_CODE = "local_merge_unavailable"
+QUEUE_APPROVE_NOT_MERGED = (
+    "Not merged. Local merge is unavailable (BF-897), and a build is delivered through GitHub (AD-1336): "
+    "until that delivery route exists the candidate branch stays unmerged."
+)
+
+
+def _queue_approve_unavailable(build: QueuedBuild) -> dict[str, Any]:
+    """BF-937 (#1678): the answer to approving *build*, which is in review: not merged, and where its branch is kept."""
+    result = build.result
+    branch = result.branch_name if result is not None else ""
+    commit = result.commit_hash if result is not None else ""
+    message = QUEUE_APPROVE_NOT_MERGED
+    if branch:
+        message += f" Candidate: branch {branch}"
+        if commit:
+            message += f", commit {commit[:7]}"
+        if build.worktree_path:
+            message += f", kept in {build.worktree_path}"
+        message += ". Push it and open a pull request yourself, or reject the build to discard its worktree and branch."
+    else:
+        message += " Reject the build to discard it."
+    return {
+        "status": QUEUE_APPROVE_UNAVAILABLE,
+        "code": QUEUE_APPROVE_UNAVAILABLE_CODE,
+        "build_id": build.id,
+        "merged": False,
+        "branch": branch,
+        "worktree_path": build.worktree_path,
+        "commit": commit,
+        "message": message,
+    }
 
 
 @router.post("/submit")
@@ -195,14 +231,26 @@ async def approve_queued_build(
     req: BuildQueueApproveRequest,
     runtime: Any = Depends(get_runtime),
 ) -> dict[str, Any]:
-    """Captain approves a queued build — merge worktree to main."""
-    if not runtime.build_dispatcher:
+    """Answer the Captain's approval of a build in review: it is not merged (BF-937, #1678).
+
+    Since BF-897 nothing merges a build into the checkout ProbOS runs from, so approving can only say that. The answer is
+    typed (``status`` ``unavailable``, ``code`` ``local_merge_unavailable``, ``merged`` false) and names the candidate branch,
+    the worktree that keeps it and that delivery comes through GitHub (AD-1336, child 6). No git command runs and no
+    dispatcher method is called: ``approve_and_merge`` and ``merge_to_main`` keep BF-897's refusal, unchanged, for the
+    delivery route that replaces it. A dispatcher that is not running, or a build that is not in review, is answered as before.
+    """
+    queue = runtime.build_queue
+    if not runtime.build_dispatcher or queue is None:
         return {"status": "error", "message": "Build dispatcher not running"}
-    ok, result = await runtime.build_dispatcher.approve_and_merge(req.build_id)
-    if ok:
-        _emit_queue_snapshot(runtime)
-        return {"status": "ok", "commit": result, "message": f"Build merged: {result[:7]}"}
-    return {"status": "error", "message": result}
+    build = queue.get(req.build_id)
+    if build is None or build.status != "reviewing":
+        return {"status": "error", "message": f"Build {req.build_id} not in reviewing status"}
+    answer = _queue_approve_unavailable(build)
+    logger.warning(
+        "build queue approve not merged build_id=%s branch=%s: local merge is unavailable (BF-897)",
+        req.build_id, answer["branch"],
+    )
+    return answer
 
 
 @router.post("/queue/reject")
@@ -446,6 +494,7 @@ async def _execute_build(
             llm_client=getattr(rt, "llm_client", None),
             escalation_hook=None,
             enforce_sealed_core=sealed_core_enforced(rt),  # BF-904b (#1585): the runtime's flag; no runtime is passed
+            admission_service=getattr(rt, "admission_service", None),  # AD-1346 M3e2b: the targeted-test sink's service; None checks nothing
         )
 
         if result.success:
@@ -458,11 +507,13 @@ async def _execute_build(
                 "test_result": result.test_result[:500] if result.test_result else "",
                 "review": result.review_result,
                 "review_issues": result.review_issues,
+                "review_suggestions": result.review_suggestions,  # AD-1359 follow-up (#1769)
                 "message": (
                     f"\u2b22 Build complete! Branch: {result.branch_name}, "
                     f"Commit: {result.commit_hash}, "
                     f"Files: {len(result.files_written) + len(result.files_modified)}, "
                     f"Tests: {'passed' if result.tests_passed else 'FAILED'}"
+                    + (f", Review suggestions: {len(result.review_suggestions)}" if result.review_suggestions else "")
                 ),
             })
         else:

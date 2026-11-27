@@ -55,13 +55,15 @@ _ENC_FORMS = {
 }
 
 # Captured at 164e575b (contract section 1.4): CRLF -> LF, home.as_posix() -> <HOME>.
+# Re-captured for #1414 A1: every row gains "  llm_timeout_seconds: 300.0" (+29 bytes), and the Ollama
+# /v1 row writes llm_api_format_fast "openai" instead of "ollama" (same length).
 _INIT_GOLDENS = [
-    ("strict", "https://api.example.com/v1", "model-x", 979,
-     "93310b2a62c79becd5e969d256c29515647e2ba2ed1f82442511b17032945a74"),
-    ("relaxed", "https://api.example.com/v1", "model-x", 774,
-     "05556e840eb18afb9c65ff60b50fe9c6c22950cf3e880b5e7a6cd0ab21182afd"),
-    ("strict", "http://localhost:11434/v1", "llama3.1:8b", 982,
-     "d07186a043e8ced2e14633faae2614c2b49c71e37ece8593c7a2509c26658aae"),
+    ("strict", "https://api.example.com/v1", "model-x", 1008,
+     "c3fd4610adc7e9b5a15cb62324bd3b45333ad1ab526cde3cad196d79758fa6a8"),
+    ("relaxed", "https://api.example.com/v1", "model-x", 803,
+     "f0b1e9c69533a01c74175e234ebff910a99663d0ab8ed08a2c773f6fa9dfc9ce"),
+    ("strict", "http://localhost:11434/v1", "llama3.1:8b", 1011,
+     "72002a06ed08f9e5f325b6f740f27f902051e58084307806bc8a17325b76e534"),
 ]
 
 
@@ -422,7 +424,7 @@ def test_probe_chat_400_returns_request_rejected_with_redacted_excerpt() -> None
     assert "<redacted>" in result.message
     assert _KEY not in result.message
     assert "TAIL-MARKER" not in result.message  # the excerpt is capped
-    assert result.message.endswith("...")
+    assert result.message.endswith("\u2026")  # #1414 item 6: the cut marker is U+2026, not "..."
 
 
 def test_probe_chat_400_excerpt_redacts_the_full_key_but_may_show_a_provider_masked_form() -> None:
@@ -467,7 +469,7 @@ def test_probe_chat_excerpt_cap_leaves_no_part_of_a_key_that_whitespace_folding_
 
     result = ps.probe_chat(_BASE, _ENC_KEY, "model-x", transport=transport)
 
-    assert result.message.endswith("...")  # premise: the excerpt was capped
+    assert result.message.endswith("\u2026")  # premise: the excerpt was capped (#1414 item 6: U+2026 marks the cut)
     assert _ENC_KEY[:6] not in result.message
 
 

@@ -191,12 +191,18 @@ class ScaffoldDecompositionProbe:
         actual_scores: list[float] = []
         thresholds: list[float] = []
         per_test_multipliers: dict[str, float] = {}
+        # BF-988 (#1523): an input whose judge failed is not a measurement, so the aggregate is not either.
+        inconclusive_inputs: list[str] = []  # "<agent_id>:<test_name>"
+        inconclusive_tests: set[str] = set()
 
         for test_name, test in tier1_tests.items():
             test_actuals: list[float] = []
             for cid in crew_ids:
                 result = await store.get_latest(cid, test_name)
-                if result is not None and result.error is None:
+                if result is not None and result.inconclusive:
+                    inconclusive_inputs.append(f"{cid}:{test_name}")
+                    inconclusive_tests.add(test_name)
+                elif result is not None and result.error is None:
                     test_actuals.append(result.score)
                     actual_scores.append(result.score)
                     thresholds.append(test.threshold)
@@ -207,16 +213,28 @@ class ScaffoldDecompositionProbe:
                     mean_actual / max(test.threshold, 0.01), 4
                 )
 
-        if not thresholds:
+        if not thresholds and not inconclusive_inputs:
             return _skip_result(self.name, "no_tier1_data")
 
         # Architecture multiplier
-        mean_actual = sum(actual_scores) / len(actual_scores)
-        mean_threshold = sum(thresholds) / len(thresholds)
+        mean_actual = sum(actual_scores) / len(actual_scores) if actual_scores else 0.0
+        mean_threshold = sum(thresholds) / len(thresholds) if thresholds else 0.0
         multiplier = mean_actual / max(mean_threshold, 0.01)
 
         # Normalize: 2x multiplier = 1.0
         score = min(1.0, multiplier / 2.0)
+
+        details: dict[str, Any] = {
+            "skipped": False,
+            "architecture_multiplier": round(multiplier, 4),
+            "mean_actual": round(mean_actual, 4),
+            "mean_threshold": round(mean_threshold, 4),
+            "agents_measured": len(crew_ids),
+            "tests_measured": len(per_test_multipliers),
+            "per_test_multipliers": per_test_multipliers,
+        }
+        if inconclusive_inputs:
+            details["inconclusive_inputs"] = inconclusive_inputs
 
         duration_ms = (time.time() - t0) * 1000
         return TestResult(
@@ -224,18 +242,15 @@ class ScaffoldDecompositionProbe:
             test_name=self.name,
             tier=self.tier,
             score=round(score, 4),
-            passed=score >= self.threshold,
+            passed=not inconclusive_inputs and score >= self.threshold,
             timestamp=time.time(),
             duration_ms=duration_ms,
-            details={
-                "skipped": False,
-                "architecture_multiplier": round(multiplier, 4),
-                "mean_actual": round(mean_actual, 4),
-                "mean_threshold": round(mean_threshold, 4),
-                "agents_measured": len(crew_ids),
-                "tests_measured": len(per_test_multipliers),
-                "per_test_multipliers": per_test_multipliers,
-            },
+            details=details,
+            error=(
+                f"{len(inconclusive_inputs)} Tier-1 result(s) inconclusive: "
+                f"{', '.join(sorted(inconclusive_tests))}"
+            ) if inconclusive_inputs else None,
+            inconclusive=bool(inconclusive_inputs),
         )
 
 

@@ -19,6 +19,8 @@ from typing import Any, Callable, Awaitable
 
 import aiosqlite
 
+from probos.admission.seam import check_at
+from probos.admission.taxonomy import EFFECT_STORE_WRITE
 from probos.events import EventType
 from probos.protocols import ConnectionFactory, DatabaseConnection, EventEmitterMixin
 
@@ -99,6 +101,12 @@ class PersistentTaskStore(EventEmitterMixin):
     creates schema, stop() closes DB. A background tick loop fires due
     tasks and computes next_run_at.
     """
+
+    _admission: object = None  # AD-1346 M3e4d2 (D293, set_admission): None checks nothing
+
+    def set_admission(self, service: object) -> None:
+        """AD-1346 M3e4d2 (D293): the service ``create_task`` hands ``check_at``; None checks nothing."""
+        self._admission = service
 
     def __init__(
         self,
@@ -220,6 +228,7 @@ class PersistentTaskStore(EventEmitterMixin):
             agent_hint=agent_hint,
         )
 
+        check_at(self._admission, effect=EFFECT_STORE_WRITE, presented_id=created_by)  # AD-1346 M3e4d2 (D292): the task's store-write check, in shadow, before the write; it blocks nothing
         if self._db:
             await self._db.execute(
                 """INSERT INTO scheduled_tasks

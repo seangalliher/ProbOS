@@ -147,6 +147,7 @@ from probos.types import (
 
 from probos.agent_onboarding import AgentOnboardingService
 from probos.crew_utils import is_crew_agent
+from probos.cycle_trace import CycleIdRegistry, current_cycle_id, entry_scope, issue_entry_id  # AD-1360 (#1828)
 from probos.dream_adapter import DreamAdapter
 from probos.self_mod_manager import SelfModManager
 from probos.ward_room_router import WardRoomRouter
@@ -534,6 +535,7 @@ class ProbOSRuntime:
     crew_session_delivery_service: "CrewSessionDeliveryService | None"
     crew_session_delivery_listener: Callable[..., Any] | None
     cognitive_journal: CognitiveJournal | None
+    cycle_registry: CycleIdRegistry  # AD-1360 (#1828): the AD-492 ids this process issued
     skill_registry: SkillRegistry | None
     skill_service: AgentSkillService | None
     cognitive_skill_catalog: CognitiveSkillCatalog | None
@@ -738,6 +740,12 @@ class ProbOSRuntime:
         self.credential_store = CredentialStore(
             config=self.config, event_log=self.event_log,
         )
+        # AD-1337 S4: the per-run secret values (a vault credential handed to a browser session or an MCP server).
+        # Built here, not in finalize: the boot loop registers stored MCP servers before finalize builds the masker,
+        # and _wire_secret_masker keeps this registry.
+        from probos.security.secret_masking import SecretRegistry
+
+        self.secret_registry = SecretRegistry()
 
         # --- M365 Token Manager (AD-749) ---
         self._m365_token_manager: M365TokenManager | None = None
@@ -1174,6 +1182,11 @@ class ProbOSRuntime:
 
         # --- Cognitive Journal (AD-431) ---
         self.cognitive_journal: CognitiveJournal | None = None
+
+        # --- Cycle-id registry (AD-1360, #1828) ---
+        # The AD-492 ids this process issued, which EpisodicMemory.store() checks an episode's correlation id
+        # against. In memory and bounded; its TTL and size are CycleIdRegistry's unmeasured defaults.
+        self.cycle_registry: CycleIdRegistry = CycleIdRegistry()
 
         # --- Knowledge Edge Store (AD-687) ---
         self.knowledge_edges: Any = None  # SQLiteKnowledgeEdgeStore | None — Any to avoid circular import
@@ -2665,6 +2678,17 @@ class ProbOSRuntime:
             if gate is not None:
                 spawn_kwargs["command_policy_gate"] = gate
 
+        if agent_type in (ShellCommandAgent.agent_type, CodeSearchAgent.agent_type) and "runtime" not in spawn_kwargs:
+            # AD-1346 M3e1 (#1604): these agents' subprocess sinks read the admission service from their
+            # runtime; the pool keeps its spawn kwargs, so a respawned or added member gets it too. A
+            # caller's own value wins. The code-search agent's read floor (BF-758) reads it as well.
+            spawn_kwargs["runtime"] = self
+
+        if agent_type in (FileReaderAgent.agent_type, DirectoryListAgent.agent_type, FileSearchAgent.agent_type) and "runtime" not in spawn_kwargs:
+            # BF-944 (#1717): these agents apply their runtime's read policy to the path they are given (BF-758) and have none
+            # without one. The pool keeps its spawn kwargs, so a respawned or added member gets the runtime too. A caller's value wins.
+            spawn_kwargs["runtime"] = self
+
         on_agent_spawned: Callable[[Any], Awaitable[None]] | None = (
             self.onboarding.wire_agent
             if getattr(self, "onboarding", None) is not None
@@ -2743,6 +2767,7 @@ class ProbOSRuntime:
             # explicit value (a pool made with a caller's own value can differ).
             agent = RedTeamAgent(
                 pool="red_team", agent_id=agent_id,
+                runtime=self,  # AD-1346 M3e1 (#1604): the re-run's subprocess sink reads the admission service from it
                 command_env_passthrough=tuple(self.config.execution.command_env_passthrough),
                 # AD-1328 S2a (#1530): a command the policy would not run is not re-run.
                 command_policy_gate=getattr(self, "command_policy_gate", None),
@@ -2947,10 +2972,16 @@ class ProbOSRuntime:
             # Phase 1a started. The import and the constructor are inside the try; the except branch logs
             # an Exception and assigns nothing, so the attribute keeps its __init__ None (#1604, property 11;
             # D31, D34). Its log call has no guard of its own (D36). AD-1346 M3b passes the recorder above, or None.
+            # AD-1346 M3d2 (D108): the work-ticket registry, built in the same try over the same stop record with the
+            # configured delegation depth, and handed to the service; a constructor that raises leaves the service
+            # unbuilt, as above. It is in memory, and nothing persists it.
+            # AD-1346 M3d3a (D128): the service is given the loop running here; a sink check elsewhere hands its check to it.
             try:
                 from probos.admission import AdmissionService
+                from probos.admission.tickets import TicketRegistry
 
-                self.admission_service = AdmissionService(self.identity_service, self.agent_stops, recorder=shadow_recorder)
+                tickets = TicketRegistry(self.agent_stops, max_depth=self.config.agentic_tools.delegation_max_depth)
+                self.admission_service = AdmissionService(self.identity_service, self.agent_stops, recorder=shadow_recorder, tickets=tickets, loop=asyncio.get_running_loop())
             except Exception:  # AD-1346 M3a (#1604, property 11; D31, D34)
                 logger.warning("AD-1346 M3a: the shadow admission service was not built; runtime.admission_service stays None", exc_info=True)
         else:
@@ -3038,6 +3069,7 @@ class ProbOSRuntime:
             create_pool_fn=self.create_pool,
             emit_event_fn=self._emit_event,
             ontology=self.ontology,  # BF-118
+            cycle_registry=self.cycle_registry,  # AD-1360 (#1828)
         )
         self.self_mod_pipeline = cog.self_mod_pipeline
         self.behavioral_monitor = cog.behavioral_monitor
@@ -3081,6 +3113,8 @@ class ProbOSRuntime:
         self._expertise_directory = cog.expertise_directory  # AD-600
         self._telemetry_service = cog.telemetry_service  # AD-461
         self.dependency_resolver = cog.dependency_resolver  # AD-838c
+        if self.dependency_resolver is not None:  # AD-1346 M3e2a: the install sink's service; None checks nothing
+            self.dependency_resolver.set_admission(self.admission_service)
         self.schema_version_store = cog.schema_version_store  # AD-818
 
         # AD-588: Introspective Telemetry Service
@@ -3311,6 +3345,8 @@ class ProbOSRuntime:
         self.initiative = struct.initiative
         self.build_queue = struct.build_queue
         self.build_dispatcher = struct.build_dispatcher
+        if self.build_dispatcher is not None:  # AD-1346 M3e2b: the targeted-test sink's service for the dispatcher's builds; None checks nothing
+            self.build_dispatcher.set_admission(self.admission_service)
         self.service_profiles = struct.service_profiles
         self.directive_store = struct.directive_store
         self._bill_runtime = struct.bill_runtime  # AD-618d
@@ -3338,6 +3374,7 @@ class ProbOSRuntime:
             records_store=self._records_store,  # AD-1140: commons-write tool
             notebook_quality_engine=self._notebook_quality_engine,  # AD-1140
             pull_resource_resolver=self.resolve_workforce_pull_resource,
+            admission=self.admission_service,  # AD-1346 M3e4d6 (D322): handed to the capability request store's constructor and, from AD-1346 M3e4d8 (D336), the work item store's; None checks nothing
         )
         self.persistent_task_store = comm.persistent_task_store
         self.work_item_store = comm.work_item_store
@@ -3418,6 +3455,34 @@ class ProbOSRuntime:
         if self.tool_registry is not None:  # AD-1343: every tool path ends in check_and_invoke
             self.tool_registry.set_stop_gate(self.agent_stops)
             self.tool_registry.set_admission(self.admission_service)  # AD-1346 M3c: its shadow statement; None shadows nothing
+        if isinstance(self.llm_client, OpenAICompatibleClient):  # AD-1346 M3d3a (D127): the model gateway's sink check; None checks nothing
+            self.llm_client.set_admission(self.admission_service)
+        HttpFetchAgent.set_admission(self.admission_service)  # AD-1346 M3e3b (D203): the http_fetch egress sink's service, class-level; shutdown sets it back to None
+        from probos.artifacts import ArtifactStore
+        from probos.assignment import AssignmentService
+        from probos.cognitive.clinical_notes_store import ClinicalNotesStore
+        from probos.cognitive.episodic import EpisodicMemory
+        from probos.persistent_tasks import PersistentTaskStore
+        from probos.skill_request import SkillRequestStore
+        from probos.threads import ChatThreadStore
+        from probos.ward_room import WardRoomService
+
+        if isinstance(self.ward_room, WardRoomService):  # AD-1346 M3e4b (D233): the Ward Room's store-write checks; None checks nothing
+            self.ward_room.set_admission(self.admission_service)
+        if isinstance(self.episodic_memory, EpisodicMemory):  # AD-1346 M3e4b (D233): the episodic store's check; None checks nothing
+            self.episodic_memory.set_admission(self.admission_service)
+        if isinstance(self.clinical_notes_store, ClinicalNotesStore):  # AD-1346 M3e4d1 (D286): the clinical notes store's check; None checks nothing
+            self.clinical_notes_store.set_admission(self.admission_service)
+        if isinstance(self.skill_request_store, SkillRequestStore):  # AD-1346 M3e4d1 (D286): the skill request store's two checks; None checks nothing
+            self.skill_request_store.set_admission(self.admission_service)
+        if isinstance(self.persistent_task_store, PersistentTaskStore):  # AD-1346 M3e4d2 (D293): the persistent task store's check; None checks nothing
+            self.persistent_task_store.set_admission(self.admission_service)
+        if isinstance(self.chat_thread_store, ChatThreadStore):  # AD-1346 M3e4d3 (D300): the chat thread store's two checks; None checks nothing
+            self.chat_thread_store.set_admission(self.admission_service)
+        if isinstance(self.assignment_service, AssignmentService):  # AD-1346 M3e4d4 (D308): the assignment service's check; None checks nothing
+            self.assignment_service.set_admission(self.admission_service)
+        if isinstance(self.artifact_store, ArtifactStore):  # AD-1346 M3e4d7 (D329): the artifact store's two checks; None checks nothing
+            self.artifact_store.set_admission(self.admission_service)
         self.tool_permission_store = comm.tool_permission_store
         self.cognitive_journal = comm.cognitive_journal
         self.knowledge_edges = comm.knowledge_edges  # AD-687
@@ -5178,6 +5243,8 @@ class ProbOSRuntime:
                 ],
                 dag_summary={},
                 anchors=AnchorFrame(channel="mcp", trigger_type="mcp_invoke"),
+                # AD-1360 (#1828): the agent's cycle when the agentic loop invokes the tool inside one; "" outside one.
+                correlation_id=current_cycle_id(),
             )
             await self.episodic_memory.store(episode)
         except Exception:
@@ -5516,6 +5583,7 @@ class ProbOSRuntime:
                 ],
                 dag_summary={},
                 anchors=AnchorFrame(channel="device", trigger_type=intent_name),
+                correlation_id=current_cycle_id(),  # AD-1360 S2b (#1828): the actuating cycle's; "" outside one
             )
             await self.episodic_memory.store(episode)
         except Exception:
@@ -6094,20 +6162,24 @@ class ProbOSRuntime:
         if self.episodic_memory and dag.nodes:
             try:
                 t_end = time.monotonic()
-                if self.dream_adapter:
-                    self.dream_adapter._last_shapley_values = self._last_shapley_values
-                    episode = self.dream_adapter.build_episode(text, execution_result, t_start, t_end)
-                else:
-                    episode = Episode(
-                        timestamp=time.time(),
-                        user_input=text,
-                        dag_summary={},
-                        outcomes=[],
-                        agent_ids=[],
-                        duration_ms=(t_end - t_start) * 1000,
-                        source="direct",
-                        anchors=AnchorFrame(channel="dag", trigger_type="dag_execution"),
-                    )
+                # AD-1360 S2b (#1828): the request's own id (the cycle's when one reached this pipeline), bound while
+                # the episode is built; the dream adapter's builder and the inline episode read it.
+                with entry_scope(getattr(self, "cycle_registry", None), kind="nl_request"):
+                    if self.dream_adapter:
+                        self.dream_adapter._last_shapley_values = self._last_shapley_values
+                        episode = self.dream_adapter.build_episode(text, execution_result, t_start, t_end)
+                    else:
+                        episode = Episode(
+                            timestamp=time.time(),
+                            user_input=text,
+                            dag_summary={},
+                            outcomes=[],
+                            agent_ids=[],
+                            duration_ms=(t_end - t_start) * 1000,
+                            source="direct",
+                            correlation_id=current_cycle_id(),
+                            anchors=AnchorFrame(channel="dag", trigger_type="dag_execution"),
+                        )
                 await self.episodic_memory.store(episode)
 
                 # Persist to knowledge store (AD-159)
@@ -6972,6 +7044,8 @@ class ProbOSRuntime:
                     duration_ms=report.duration_ms,
                     embedding=[],
                     source="direct",
+                    # AD-1360 S2b (#1828): the QA run's own id; no cognitive cycle runs it.
+                    correlation_id=issue_entry_id(getattr(self, "cycle_registry", None), kind="system_qa"),
                     anchors=AnchorFrame(channel="smoke_test", trigger_type="smoke_test"),
                 )
                 if EpisodicMemory.should_store(episode):

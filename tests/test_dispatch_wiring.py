@@ -19,7 +19,11 @@ def _mock_runtime():
     rt = MagicMock(spec=ProbOSRuntime)
     rt.build_queue = BuildQueue()
     rt.build_dispatcher = MagicMock()
-    rt.build_dispatcher.approve_and_merge = AsyncMock(return_value=(True, "abc1234def"))
+    # BF-937 (#1678): the route no longer asks the dispatcher to merge (since BF-897 the real chain can only refuse), so a
+    # call is a defect. This stub used to answer (True, ...), a state the real chain cannot reach, and a case asserted it.
+    rt.build_dispatcher.approve_and_merge = AsyncMock(
+        side_effect=AssertionError("the approve route must not call approve_and_merge"),
+    )
     rt.build_dispatcher.reject_build = AsyncMock(return_value=True)
     rt.emit_event = MagicMock()
     return rt
@@ -112,14 +116,24 @@ class TestDispatchAPI:
         assert items[0]["priority"] == 3
 
     def test_approve_queued_build(self, client) -> None:
-        """POST /api/build/queue/approve calls dispatcher.approve_and_merge."""
+        """POST /api/build/queue/approve answers that the build is not merged and never asks the dispatcher to merge.
+
+        BF-937 (#1678): this case asserted ``status == "ok"`` and a merge commit from a dispatcher double that answered
+        ``(True, ...)``: the route's success path, which BF-897 made unreachable (the real chain refuses). It pinned a merge
+        that cannot happen. The build is now put in review and the answer is the typed not-merged one.
+        """
+        from probos.cognitive.builder import BuildSpec
+
         tc, rt = client
-        resp = tc.post("/api/build/queue/approve", json={"build_id": "abc123"})
+        build = rt.build_queue.enqueue(BuildSpec(title="Wired", description="d"))
+        for step in ("dispatched", "building", "reviewing"):
+            assert rt.build_queue.update_status(build.id, step), f"premise: the build moves to {step}"
+        resp = tc.post("/api/build/queue/approve", json={"build_id": build.id})
         assert resp.status_code == 200
         data = resp.json()
-        assert data["status"] == "ok"
-        assert "abc1234" in data["commit"]
-        rt.build_dispatcher.approve_and_merge.assert_awaited_once_with("abc123")
+        assert data["status"] == "unavailable"
+        assert data["merged"] is False
+        rt.build_dispatcher.approve_and_merge.assert_not_awaited()
 
     def test_reject_queued_build(self, client) -> None:
         """POST /api/build/queue/reject calls dispatcher.reject_build."""

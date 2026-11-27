@@ -71,6 +71,7 @@ This file is read by the reviewer agent when auditing a build prompt before it g
 - **Alternatives considered?** For non-obvious design choices (e.g., underscore vs dot replacement), is the rationale documented in the prompt?
 - **Consistency with prior art:** Does the fix pattern match how similar issues were resolved before? Check DECISIONS.md for precedent.
 - **Rollback path:** If the fix causes problems, can it be reverted cleanly? Any migration or state change that complicates rollback?
+- **Parity for a store the crew relies on:** If the prompt adds or changes a store an agent is meant to rely on as it relies on memory (for example AD-1240's workspace results, or the results BF-947 carries across resumes), ask three questions. Is it there when the agent needs it, without a special request? Can the agent tell who wrote each item and when? Is it governed like memory: kept, not deleted (AD-1340); private by default where it is personal (AD-1157); checked for currency (AD-1302)? A store that fails the first two is shown to the agent as a source to check, not as something it knows. (`docs/research/clark-extended-mind-absorption.md` item 3; #1743 item 6.)
 
 ## 9. Prompt Structure
 

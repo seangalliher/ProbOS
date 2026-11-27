@@ -8,9 +8,13 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import time
+from pathlib import Path
 from typing import Any
 
+from probos.agents.utility.stored_list import ReadStatus, UnreadableListGuard, read_stored_list
+from probos.cognitive.builder_paths import is_reserved_device_name
 from probos.cognitive.cognitive_agent import CognitiveAgent
 from probos.types import (
     CapabilityDescriptor,
@@ -36,22 +40,8 @@ class _BundledMixin:
 
 
 # ------------------------------------------------------------------
-# Mesh file I/O helpers (same pattern as productivity_agents)
+# Mesh file I/O helpers (same pattern as productivity_agents; the read is stored_list.read_stored_list, BF-961)
 # ------------------------------------------------------------------
-
-async def _mesh_read_file(runtime: Any, path: str) -> str | None:
-    if not runtime or not hasattr(runtime, "intent_bus"):
-        return None
-    msg = IntentMessage(intent="read_file", params={"path": path})
-    results = await runtime.intent_bus.broadcast(msg)
-    for r in results:
-        if r.success and r.result:
-            content = r.result
-            if isinstance(content, dict):
-                content = content.get("content", content.get("data", str(content)))
-            return str(content)
-    return None
-
 
 async def _mesh_write_file(runtime: Any, path: str, content: str) -> bool:
     """Write a file via FileWriterAgent.commit_write (personal data path).
@@ -75,6 +65,59 @@ async def _mesh_list_dir(runtime: Any, path: str) -> str | None:
         if r.success and r.result:
             return str(r.result)
     return None
+
+
+# ------------------------------------------------------------------
+# Note file names (BF-968)
+# ------------------------------------------------------------------
+
+#: A run of characters a note's file name does not keep; each run becomes one "-".
+_NOTE_NAME_UNSAFE = re.compile(r"[^A-Za-z0-9._-]+")
+#: A character that keeps an older note name from being read: a separator, the drive or stream colon, a control.
+_LEGACY_NOTE_NAME_REFUSED = re.compile(r"[/\\:\x00-\x1f\x7f-\x9f]")
+
+
+def _file_in(notes_dir: str, name: str) -> str | None:
+    """``f"{notes_dir}/{name}"`` when *name* is not a device name and its real parent is the real *notes_dir*, else None."""
+    if is_reserved_device_name(name):
+        return None
+    try:
+        inside = Path(notes_dir, name).resolve().parent == Path(notes_dir).resolve()
+    except (OSError, RuntimeError):  # a link loop: no file is named
+        inside = False
+    return f"{notes_dir}/{name}" if inside else None
+
+
+def note_file(notes_dir: str, name: str) -> str | None:
+    """The path of the one file *name* names directly in *notes_dir*, or None when it names none.
+
+    BF-968 (#1799): *name* comes from the model (save) or from the requested title (read). Each run of characters
+    outside ``[A-Za-z0-9._-]`` becomes "-", leading dots and dashes go and ".md" is appended when missing, so the
+    result is one component ("Q3/Q4 plan" -> "Q3-Q4-plan.md", "../x.md" -> "x.md"). An empty result and a Windows
+    device name are refused. Backstop: the resolved file must sit directly in the resolved folder, which also refuses a
+    note that is a link out of the folder.
+    """
+    safe = _NOTE_NAME_UNSAFE.sub("-", name).lstrip(".-")
+    if not safe:
+        return None
+    if not safe.endswith(".md"):
+        safe += ".md"
+    return _file_in(notes_dir, safe)
+
+
+def legacy_note_file(notes_dir: str, name: str) -> str | None:
+    """The path of a note an older build saved under *name* as given, or None. Read only: no save calls it.
+
+    BF-968 (#1799): before the reduction a note kept the name the model chose, and a title was read as
+    ``title.replace(" ", "-").lower()`` with ".md" appended. The read path tries that name only when the reduced name is
+    refused or missing, so a note saved earlier under an accented letter, an apostrophe or a plus sign is still found by
+    its title. A name holding a separator, a colon (``C:x.md`` is drive-relative, ``x.md:s`` a stream) or a control
+    character is refused; any other name passes the device-name check and the backstop ``note_file`` uses.
+    """
+    legacy = name if name.endswith(".md") else name + ".md"
+    if _LEGACY_NOTE_NAME_REFUSED.search(legacy):
+        return None
+    return _file_in(notes_dir, legacy)
 
 
 # ------------------------------------------------------------------
@@ -129,11 +172,17 @@ class NoteTakerAgent(_BundledMixin, CognitiveAgent):
         if action == "read":
             title = obs.get("params", {}).get("title", "")
             if title:
-                # Sanitize filename
-                filename = title.replace(" ", "-").lower()
-                if not filename.endswith(".md"):
-                    filename += ".md"
-                content = await _mesh_read_file(self._runtime, f"{notes_dir}/{filename}")
+                # BF-968 (#1799): the title names one file directly in the notes folder, or none (shown as not found)
+                requested = str(title).replace(" ", "-").lower()
+                path = note_file(notes_dir, requested)
+                read = await read_stored_list(self._runtime, path) if path is not None else None
+                if read is None or read.status is ReadStatus.MISSING:
+                    # a note saved before the reduction keeps the name the base read it by (L1)
+                    legacy = legacy_note_file(notes_dir, requested)
+                    if legacy is not None and legacy != path:
+                        read = await read_stored_list(self._runtime, legacy)
+                # BF-961: a note that cannot be read shows as not found, as before (BF-971: a read request never saves a note)
+                content = read.text if read is not None else ""
                 if content:
                     obs["fetched_content"] = f"Note '{title}':\n{content}"
                 else:
@@ -173,6 +222,12 @@ class NoteTakerAgent(_BundledMixin, CognitiveAgent):
 
         return obs
 
+    async def decide(self, observation: dict) -> dict:
+        """BF-971 (#1802): carry the requested action to ``act``, which saves only for a save request."""
+        decision = await super().decide(observation)
+        params = observation.get("params") or {}
+        return {**decision, "requested_action": str(params.get("action") or "list").strip().lower()}
+
     async def act(self, decision: dict) -> dict:
         if decision.get("action") == "error":
             return {"success": False, "error": decision.get("reason")}
@@ -184,10 +239,20 @@ class NoteTakerAgent(_BundledMixin, CognitiveAgent):
             try:
                 data = json.loads(llm_output)
                 if isinstance(data, dict) and data.get("action") == "save":
+                    if decision.get("requested_action") != "save":
+                        # BF-971: the model answered "save" to a request that was not a save; nothing is written
+                        logger.info(
+                            "BF-971: NoteTakerAgent declined a save: the request was %r, not a save",
+                            str(decision.get("requested_action"))[:40],
+                        )
+                        return {"success": True, "result": llm_output}
                     notes_dir = os.path.expanduser(self._NOTES_DIR)
-                    filename = data.get("filename", "untitled.md")
+                    filename = str(data.get("filename") or "untitled.md")
+                    path = note_file(notes_dir, filename)  # BF-968: one file directly in the notes folder
+                    if path is None:
+                        logger.warning("BF-968: NoteTakerAgent refused a note name that names no file in the notes folder")
+                        return {"success": False, "error": f"Failed to save note: {filename[:80]!r} is not a usable note name"}
                     content = data.get("content", "")
-                    path = f"{notes_dir}/{filename}"
                     written = await _mesh_write_file(self._runtime, path, content)
                     if not written:
                         return {"success": False, "error": f"Failed to save note: {filename}"}
@@ -205,7 +270,7 @@ class NoteTakerAgent(_BundledMixin, CognitiveAgent):
 # SchedulerAgent
 # ------------------------------------------------------------------
 
-class SchedulerAgent(_BundledMixin, CognitiveAgent):
+class SchedulerAgent(_BundledMixin, UnreadableListGuard, CognitiveAgent):
     """Set reminders and manage schedule — tasks execute on timer within the session."""
 
     agent_type = "scheduler"
@@ -252,7 +317,9 @@ class SchedulerAgent(_BundledMixin, CognitiveAgent):
         obs = await super().perceive(intent)
         if self._runtime:
             path = os.path.expanduser(self._REMINDERS_PATH)
-            content = await _mesh_read_file(self._runtime, path)
+            content = await self._stored_list(obs, path, "your saved reminders")  # BF-961: None: the read failed, ``decide`` ends the intent
+            if content is None:
+                return obs
             parts = []
             if content:
                 parts.append(f"Saved reminders:\n{content}")

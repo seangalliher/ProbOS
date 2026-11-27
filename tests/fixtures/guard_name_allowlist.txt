@@ -6,11 +6,11 @@
 #   finding  a dead-guard candidate BF-925's scan found, registered on #1523 (R1), not yet triaged
 # Measured 2026-10-25 on 72fae2dd with BF-925 M1 applied.
 # A2 (2026-10-26): nats_bus.py reconnected_count moved from duck to finding (nats-py 2.14.0 has no such attribute).
+# A3: the cognitive_agent.py _callsign entry is gone: the promotion request and the teaching post read self.callsign now (F-529 of #1523; D5-R1 of #1754).
 src/probos/channels/base.py | pairing_service | finding | self.runtime.pairing_service has no production definition
 src/probos/channels/discord_adapter.py | http | duck | discord.py Bot.http on the adapter's bot
 src/probos/channels/discord_adapter.py | _HTTPClient__session | duck | discord.py HTTPClient's private session; version-dependent
 src/probos/cognitive/captain_engagement.py | captain_dm_queue_depth | finding | ward_room.captain_dm_queue_depth has no production definition
-src/probos/cognitive/cognitive_agent.py | _callsign | finding | self._callsign has no production definition (agents define callsign)
 src/probos/cognitive/cognitive_agent.py | get_by_intent | finding | self._procedure_store.get_by_intent has no production definition
 src/probos/cognitive/communication_benchmarks.py | _callsign | finding | agent._callsign has no production definition (agents define callsign)
 src/probos/cognitive/counselor.py | model_dump | duck | pydantic v2 BaseModel.model_dump on a model-or-dict value

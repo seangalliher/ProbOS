@@ -11,6 +11,7 @@ from probos.cognitive.swe_harness.agentic_loop import AgenticLoop
 from probos.cognitive.swe_harness.tool_call import TextBlock, ToolCallRequest, ToolUseBlock
 from probos.cognitive.tier_policy import EligibilityVerdict, TierChoiceController
 from probos.tools.protocol import ToolResult
+from tests.offered_tools import offer_scripted  # #1796: the loop runs only offered tools.
 
 FLOOR = {"high": "standard", "severe": "deep"}
 DIRECTIVE = '@@next_tier {"tier":"fast","reason":"easy_step"}'
@@ -79,7 +80,7 @@ async def run(responses: list[Any], ctl: Any = None, tier: str = "fast", context
     extra = {"tier_controller": ctl} if ctl is not None else {}
     loop = AgenticLoop(llm_client=client, tool_executor=tools, tier=tier, max_iterations=10, **extra, **kw)
     result = await loop.run(
-        system_prompt="You are Ezri.", user_message="Research.", tools=[],
+        system_prompt="You are Ezri.", user_message="Research.", tools=[*offer_scripted(responses)],  # #1796: the loop runs only offered tools, so the scripted calls' tools are offered.
         context={"agent_id": "ezri", **(context or {})},
     )
     return result, client, tools

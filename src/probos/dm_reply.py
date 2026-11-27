@@ -591,35 +591,53 @@ class ToolInvocations:
 
     attempted: tuple[str, ...] = ()
     succeeded: tuple[str, ...] = ()
+    #: AD-1358 S2 (#1750): True when the loop made a call this record does not
+    #: list, because its id was unverifiable (AD-1295's fail-safe rule drops such
+    #: a call from both lists). The lists are as before, so the write verdict is
+    #: unchanged; the flag says only that "no call listed" is not "no call made".
+    #: ORed by ``merged_with``, so no later pass of the turn can make the record
+    #: look complete again. On the wire only when True.
+    incomplete: bool = False
 
     @classmethod
     def from_names(
-        cls, attempted: Iterable[str], succeeded: Iterable[str],
+        cls, attempted: Iterable[str], succeeded: Iterable[str], *, incomplete: bool = False,
     ) -> "ToolInvocations":
         """Normalise raw name iterables: de-duplicated, sorted, bounded."""
         return cls(
             attempted=_bounded_tool_names(attempted, "attempted"),
             succeeded=_bounded_tool_names(succeeded, "succeeded"),
+            incomplete=bool(incomplete),
         )
 
     def merged_with(self, other: "ToolInvocations") -> "ToolInvocations":
         """Union, for a turn that ran more than one agentic pass.
 
         Union rather than last-write-wins: an AD-1164 continuation adds calls,
-        and a tool that succeeded on pass 1 still succeeded on this turn.
+        and a tool that succeeded on pass 1 still succeeded on this turn. The
+        ``incomplete`` mark is ORed for the same reason: a call one pass could
+        not list was still made on this turn (AD-1358 S2).
         """
         return ToolInvocations.from_names(
             tuple(self.attempted) + tuple(other.attempted),
             tuple(self.succeeded) + tuple(other.succeeded),
+            incomplete=self.incomplete or other.incomplete,
         )
 
     def to_wire(self) -> dict[str, Any]:
-        """Bounded, JSON-safe payload. Never ``None`` -- see the class docstring."""
-        return {
+        """Bounded, JSON-safe payload. Never ``None`` -- see the class docstring.
+
+        ``incomplete`` is present only when True, so a complete record keeps the
+        AD-1295 payload byte for byte (AD-1358 S2).
+        """
+        payload: dict[str, Any] = {
             "v": _WIRE_VERSION,
             "attempted": list(self.attempted),
             "succeeded": list(self.succeeded),
         }
+        if self.incomplete:
+            payload["incomplete"] = True
+        return payload
 
     @classmethod
     def from_wire(cls, payload: Any) -> "ToolInvocations | None":
@@ -642,7 +660,12 @@ class ToolInvocations:
                     payload.get("v"), _WIRE_VERSION,
                 )
                 return None
-            if set(payload) != {"v", "attempted", "succeeded"}:
+            # AD-1358 S2 (#1750): ``incomplete`` is on the wire only when it is
+            # true; any other value of the key is malformed, like any extra key.
+            incomplete = "incomplete" in payload
+            if set(payload) - {"incomplete"} != {"v", "attempted", "succeeded"} or (
+                incomplete and payload["incomplete"] is not True
+            ):
                 logger.warning(
                     "AD-1295: tool-invocation metadata field set %r is not the "
                     "wire shape; treating as malformed rather than reconciling",
@@ -672,7 +695,7 @@ class ToolInvocations:
                         "grammar; treating the record as malformed"
                     )
                     return None
-            value = cls.from_names(raw_attempted, raw_succeeded)
+            value = cls.from_names(raw_attempted, raw_succeeded, incomplete=incomplete)
             if not set(value.succeeded) <= set(value.attempted):
                 logger.warning(
                     "AD-1295: tool-invocation metadata claims a success for a "

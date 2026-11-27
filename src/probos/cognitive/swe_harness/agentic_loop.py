@@ -40,9 +40,11 @@ from probos.cognitive.swe_harness.result_offload import (
     WorkspaceResultsSlot,
     delivery_trace,
     prepare_result,
+    retry_delivery_error,
     safe_delivery_error,
     seal_workspace_results,
 )
+from probos.cognitive.swe_harness.render_masking import RenderMask, SecretMaskerSlot
 from probos.crew_execution_usage import (
     TOKEN_SOURCE_ESTIMATED,
     TOKEN_SOURCE_MEASURED,
@@ -72,7 +74,7 @@ from probos.repository_instructions import (
     merge_instruction_observations,
 )
 from probos.tools.delegation_evidence import MESSAGE_OMISSION_MARKER, evidence_frame
-from probos.tools.executor import recording_identity, tool_recording_scope
+from probos.tools.executor import recording_identity, tool_record_identity, tool_recording_scope
 from probos.tools.protocol import ToolResult, ToolResultPresentation
 from probos.tools.self_query_tool import SELF_QUERY_OPTIONAL_DOMAINS
 from probos.types import LLMRequest
@@ -169,6 +171,17 @@ PARALLEL_SAFE_TOOL_IDS: frozenset[str] = frozenset(
 # in tests/test_ad1147_parallel_tools.py keeps the two in step.
 PARALLEL_TOOL_CALLS_DEFAULT = 3
 PARALLEL_TOOL_CALLS_MAX = 16
+
+# BF-965 (#1796): the model-facing refusal of a call that names a tool outside the
+# request's offer. Error-shaped and final, in the AD-1154 voice; it names no tool,
+# must not match ``_CAPABILITY_GAP_RE`` (``probos.cognitive.decomposer``) and is
+# never defect evidence (``agentic_dispatch._NEVER_RAN_REFUSALS``).
+UNOFFERED_TOOL_REFUSAL: str = (
+    "That call names a tool that is not in your current tool list, so it was "
+    "refused and did not run. Call only the tools in your list, by the names it "
+    "gives. If this step needs another tool, finish what your tools allow and "
+    "name the step and the tool it needs."
+)
 
 # AD-1148 / DD-3: truncation is visible to the model. The marker states that
 # content was elided and how much, so the agent can re-query more narrowly
@@ -861,6 +874,11 @@ def format_tool_result_content(
 ) -> str:
     """Render the typed extension only at the message boundary, never in trace output."""
     delivery = result_delivery(result)
+    if delivery is not None and delivery.status == "failed":
+        # BF-946: in the loop a failed delivery reaches the message boundary only when
+        # the run went on past it (``_delivery_stop``). The model is shown the bounded
+        # code and, when the text fits ``max_chars``, a request to ask for less.
+        return retry_delivery_error(delivery.code, max_chars)
     if delivery is not None:
         # AD-1240: a delivery is a complete, already-admitted frame; it is never
         # truncated, so one that no longer fits is refused rather than clipped.
@@ -1242,23 +1260,70 @@ def _executed_outcomes(
     return [use for use, _ in pairs], [item for _, item in pairs]
 
 
+def _continues_after_failed_delivery(use: ToolUseBlock, code: str) -> bool:
+    """BF-946: whether the run goes on past a failed delivery of ``use``'s result.
+
+    A read-only (tier-1) call does, as ``is_tier_1_tool_call`` judges it: its result
+    promised nothing, and asking again cannot repeat an effect. So does a recovery read over the per-read bound
+    (``recovery_slice_too_large``): its promise, reader and artifact are unchanged,
+    and the same path read over a smaller range is served. The native readers are
+    not tier 1, so every other failed recovery or source read still ends the run.
+    """
+    return code == "recovery_slice_too_large" or is_tier_1_tool_call(use.tool_call.name, use.tool_call.arguments)
+
+
 def _delivery_stop(
-    results: list[ToolCallResult | InvocationRefusal], max_chars: int,
+    tool_uses: list[ToolUseBlock], results: list[ToolCallResult | InvocationRefusal], max_chars: int,
 ) -> tuple[str, str] | None:
     """AD-1240: the ``(code, text)`` that ends the run, or ``None`` to continue.
 
-    A refused request (R2-1) and a result whose delivery failed both end the run:
-    no further model request can honestly follow either. ``results`` is in request
-    order, so the failure that ends the run is the first one issued.
+    A refused request (R2-1) ends the run: no further model request can honestly
+    follow it. So does a result whose delivery failed, unless
+    ``_continues_after_failed_delivery`` lets the run go on (BF-946); the model is
+    then shown the failure and may ask again for less. ``results`` is aligned with
+    ``tool_uses`` and in request order.
     """
-    for item in results:
+    for use, item in zip(tool_uses, results, strict=True):
         if isinstance(item, InvocationRefusal):
             return item.code, safe_delivery_error(item.code, max_chars)
         delivery = result_delivery(item)
-        if delivery is not None and delivery.status == "failed":
+        if (
+            delivery is not None and delivery.status == "failed"
+            and not _continues_after_failed_delivery(use, delivery.code)
+        ):
             # ``ResultDelivery`` validates that a failed delivery carries its code.
             return delivery.code, delivery.presentation
     return None
+
+
+def _offered_tool_names(
+    tools: list[dict[str, Any]] | None,
+    also_offered: Callable[[], frozenset[str]] | None,
+    agent_id: str,
+) -> frozenset[str]:
+    """BF-965 (#1796): the names one step may call, matched later by exact string.
+
+    The ``function.name`` of each definition in the request that produced the
+    response, plus the AD-1189 loadable names when ``also_offered`` is set. A
+    failing ``also_offered`` costs the loadable names, never the offer.
+    """
+    names: set[str] = set()
+    for definition in tools or ():
+        function = definition.get("function") if isinstance(definition, dict) else None
+        name = function.get("name") if isinstance(function, dict) else None
+        if isinstance(name, str) and name:
+            names.add(name)
+    if also_offered is None:
+        return frozenset(names)
+    try:
+        loadable = frozenset(name for name in also_offered() if type(name) is str)
+    except Exception:
+        logger.warning(
+            "BF-965: the loadable tool names for agent %s could not be read; this "
+            "step admits only the tools its request offered", agent_id[:12], exc_info=True,
+        )
+        loadable = frozenset()
+    return frozenset(names) | loadable
 
 
 def _observe_completion_spend(
@@ -1300,6 +1365,10 @@ class AgenticLoop:
     # ceiling stands). It reads ``None`` until one is assigned and refuses every
     # assignment once ``run()`` has begun.
     workspace_results = WorkspaceResultsSlot()
+    # AD-1337 S3 (#1560): the render seam's masker, the one this loop's executor masks with. A data descriptor like
+    # ``workspace_results`` and for the same reason: assigned after construction, so the constructor keywords the
+    # AD-1152 golden pins are unchanged. None (the default) masks nothing.
+    secret_masker = SecretMaskerSlot()
 
     def __init__(
         self,
@@ -1332,6 +1401,7 @@ class AgenticLoop:
             [LLMRequest, LLMResponse, Any, int, str], Any
         ] | None = None,
         workspace_results: WorkspaceResults | None = None,
+        also_offered: Callable[[], frozenset[str]] | None = None,
     ) -> None:
         self._llm = llm_client
         self._executor = tool_executor
@@ -1407,6 +1477,10 @@ class AgenticLoop:
             LoopTierSteps(tier_controller, estimate_context=_estimate_context_tokens, is_tier1=is_tier_1_tool_call)
             if tier_controller is not None else None
         )
+        # BF-965: the AD-1189 names of withheld tools, shown only inside the load_tools
+        # definition and admitted beside each request's offer. None (every caller
+        # without an armed manifest) admits the request's offer alone.
+        self._also_offered = also_offered
         # AD-1240: None (every caller that injects no owner) keeps legacy delivery.
         # The assignment goes through the slot, so an invalid owner is refused here.
         if workspace_results is not None:
@@ -2097,8 +2171,13 @@ class AgenticLoop:
                     delivery_remaining,
                     self._max_iter - counted_iterations - (1 if _counts_toward_max_iterations(tool_uses) else 0),
                 )
+            # BF-965 (#1796): the names this step may call are the offer of the request that
+            # produced the response (an AD-1324 floor re-issue keeps its tools), with the
+            # AD-1189 loadable names; read once per step, matched exactly.
+            offered = _offered_tool_names(req.tools, self._also_offered, agent_id)
             tool_results = await self._execute_tool_uses(
                 tool_uses,
+                offered=offered,
                 agent_id=agent_id,
                 iteration=iteration,
                 context=context,
@@ -2144,11 +2223,13 @@ class AgenticLoop:
             # is untouched by that path and does arrive whole.
             result.tool_results.extend(outcomes)
             # AD-1240: a refused request (R2-1) or a result whose delivery failed ends
-            # the run, selected by request order. The issued request stays in
-            # ``tool_calls``; ``tool_results`` holds genuine outcomes only. No further
-            # model request is made, and the model is told only a bounded code.
+            # the run, selected by request order, except a failed delivery that
+            # ``_continues_after_failed_delivery`` lets the run go on past (BF-946); the
+            # model is shown it. The issued request stays in ``tool_calls``;
+            # ``tool_results`` holds genuine outcomes only. When the run ends, no further
+            # model request is made and the reply is only the bounded code.
             if delivery_run is not None:
-                stop = _delivery_stop(tool_results, delivery_run.settings.max_chars)
+                stop = _delivery_stop(tool_uses, tool_results, delivery_run.settings.max_chars)
                 if stop is not None:
                     result.stopped_reason = "error"
                     result.error, result.final_text = stop
@@ -2222,9 +2303,10 @@ class AgenticLoop:
                         )
                     )
                     presentation_frames.append((dict(result_message), presentations))
-            # AD-1240: this group carries a delivered result's pointer or slice. It is
-            # kept whole for the rest of the run, so compaction cannot summarise away
-            # the path and offsets the model still has to read.
+            # AD-1240: this group carries a delivery: a pointer or slice, or (BF-946) a
+            # failed delivery's bounded text. It is kept whole for the rest of the run, so
+            # compaction cannot summarise away a path and offsets the model still has to
+            # read; a group whose only delivery failed holds none and is kept all the same.
             if delivery_run is not None and any(result_delivery(item) is not None for item in outcomes):
                 delivery_run.protected_groups.append(copy.deepcopy(messages[group_start:]))
 
@@ -2387,6 +2469,7 @@ class AgenticLoop:
         self,
         tool_uses: list[ToolUseBlock],
         *,
+        offered: frozenset[str],
         agent_id: str,
         iteration: int,
         context: dict[str, Any],
@@ -2420,7 +2503,7 @@ class AgenticLoop:
         if not self._parallel_tool_calls_enabled:
             return [
                 await self._execute_one_tool(
-                    use, agent_id=agent_id, iteration=iteration, context=context,
+                    use, offered=offered, agent_id=agent_id, iteration=iteration, context=context,
                     **({"fault_capture": fault_capture} if fault_capture is not None else {}),
                     **(
                         {"delivery_run": delivery_run, "delivery_remaining": delivery_remaining}
@@ -2444,6 +2527,7 @@ class AgenticLoop:
                 async with semaphore:
                     return await self._execute_one_tool(
                         tool_uses[index],
+                        offered=offered,
                         agent_id=agent_id,
                         iteration=iteration,
                         context=context,
@@ -2493,10 +2577,14 @@ class AgenticLoop:
                         agent_id[:12],
                         exc_info=outcome,
                     )
-                    by_index[index] = ToolCallResult(
-                        id=call.id,
-                        output=f"Tool {call.name} failed: {outcome}",
-                        is_error=True,
+                    # AD-1337 S3 (#1560): this text never passed a ToolResult, so the render seam masks it here.
+                    by_index[index] = await RenderMask(self.secret_masker).final(
+                        ToolCallResult(
+                            id=call.id,
+                            output=f"Tool {call.name} failed: {outcome}",
+                            is_error=True,
+                        ),
+                        emit_fn=self._emit, tool_name=call.name, strict=False, correlation=None,
                     )
                 else:
                     by_index[index] = outcome
@@ -2504,6 +2592,7 @@ class AgenticLoop:
         for index in sequential_indices:
             by_index[index] = await self._execute_one_tool(
                 tool_uses[index],
+                offered=offered,
                 agent_id=agent_id,
                 iteration=iteration,
                 context=context,
@@ -2526,6 +2615,7 @@ class AgenticLoop:
         self,
         use: ToolUseBlock,
         *,
+        offered: frozenset[str],
         agent_id: str,
         iteration: int,
         context: dict[str, Any],
@@ -2546,7 +2636,21 @@ class AgenticLoop:
         authority to recover it is refused BEFORE it starts, as an
         :class:`InvocationRefusal` (a control record, not a producer outcome):
         no executor call, no event, no hook and no observer ever sees it.
+
+        BF-965 (#1796): a call whose name is not in ``offered`` is refused first, as
+        an error result the model sees, before the AD-1240 invocation context, the
+        STARTED event, fault capture and the executor. Exact match: an offered
+        provider alias passes, the canonical id it stands for does not. R1: a name
+        that is not text is refused before it is hashed (the provider's JSON value
+        is unchecked; a list or a dict would raise outside the error handling).
         """
+        if type(use.tool_call.name) is not str or use.tool_call.name not in offered:
+            logger.info(
+                "BF-965: refused a call to a tool outside the offer agent=%s tool=%s "
+                "iteration=%d; it did not run",
+                agent_id[:12], tool_record_identity(use.tool_call.name), iteration,
+            )
+            return ToolCallResult(id=use.tool_call.id, output=UNOFFERED_TOOL_REFUSAL, is_error=True)
         correlation = (
             {
                 "run_id": run_id,
@@ -2568,6 +2672,8 @@ class AgenticLoop:
                     correlation["thread_id"] = thread_id
         strict = getattr(self._executor, "protected_effects_enabled", False)
         privacy = StrictEffectPrivacyProjector()
+        # AD-1337 S3 (#1560): this call's render-seam passes; inert without a masker.
+        render = RenderMask(self.secret_masker)
         read_context = None
         if delivery_run is not None:
             # AD-1240 R2-1: decided BEFORE STARTED and outside the producer window.
@@ -2860,12 +2966,22 @@ class AgenticLoop:
             # AD-1240: delivery is deliberately outside the producer exception window.
             # Every observer has already seen the original outcome, and a delivery
             # failure is never reported as a producer error: ``prepare_result`` turns
-            # one into a typed refusal on the result, and the run stops on it.
-            captured = capture_tool_result(
+            # one into a typed refusal on the result. The run stops on it unless
+            # ``_continues_after_failed_delivery`` lets it go on (BF-946).
+            # AD-1337 S3 (#1560): masked before prepare_result offloads, frames or returns any of it.
+            captured = render.capture(capture_tool_result(
                 use.tool_call.id, delivery_source, duration_ms,
                 max_chars=delivery_run.settings.max_chars,
+            ))
+            tcr = await prepare_result(
+                captured, DeliveryContext(delivery_run, delivery_remaining, use.tool_call.name),
             )
-            tcr = await prepare_result(captured, DeliveryContext(delivery_run, delivery_remaining))
+        # AD-1337 S3 (#1560): the render seam's final mask on the result this call hands the model, before the effect
+        # correlation is attached below (replace() would drop it) and before the message bound truncates the text, so
+        # whole forms still match. At most one SECRET_MASKED for this call, with the capture pass above.
+        tcr = await render.final(
+            tcr, emit_fn=self._emit, tool_name=use.tool_call.name, strict=strict, correlation=trace_correlation,
+        )
         if trace_correlation is not None:
             if strict and tcr.is_error:
                 tcr = replace(

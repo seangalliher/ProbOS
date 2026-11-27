@@ -54,7 +54,7 @@ from probos.knowledge.lessons import (
     parse_citations,
     parse_lesson,
 )
-from probos.knowledge.records_store import RecordsStore, _markdown_files_or_raise
+from probos.knowledge.records_store import RecordsStore, _markdown_files
 from probos.tools.oracle_query_tool import _MAX_ENTRY_CHARS, OracleQueryTool
 from tests.test_ad1341_s1_archive_store import _rows, _store
 from tests.test_ad1341_s1_reset_and_erase import _NEXT_SHIP, _SHIP, _config, _data_dir, _records, _reset
@@ -275,11 +275,16 @@ class _Trace:
 
 
 class _TracedEntry:
-    """A5: a directory entry offering only ``name`` and ``is_dir``: 7.3a's table has no row for anything else."""
+    """A5: a directory entry offering only ``name``, ``is_junction`` (BF-958's OJ row) and ``is_dir``: 7.3a's table
+    has no row for anything else."""
 
     def __init__(self, entry: Any, trace: _Trace) -> None:
         self.name: str = entry.name
         self._entry, self._trace = entry, trace
+
+    def is_junction(self) -> bool:
+        self._trace.tick("is_junction", self._entry.path)
+        return bool(self._entry.is_junction())
 
     def is_dir(self, *, follow_symlinks: bool = True) -> bool:
         assert follow_symlinks is False, "O4 reads the listing record and never follows a link"
@@ -308,7 +313,7 @@ class _TracedListing:
 
 
 def _traced_walk(root: Path, trace: _Trace) -> list[Path]:
-    """A5: the real ``_markdown_files_or_raise`` with every ``os.scandir`` traced, and a tripwire on every other
+    """A5: the real ``_markdown_files(strict=True)`` with every ``os.scandir`` traced, and a tripwire on every other
     filesystem call it could make, so an operation without a row in 7.3a's table fails the test."""
     real_scandir = os.scandir
 
@@ -324,7 +329,7 @@ def _traced_walk(root: Path, trace: _Trace) -> list[Path]:
         patch.setattr(os, "scandir", scandir)
         for name in ("stat", "lstat", "listdir", "walk"):
             patch.setattr(os, name, tripwire)
-        return _markdown_files_or_raise(root)
+        return _markdown_files(root, strict=True)
 
 
 def _walk_tree(root: Path) -> None:
@@ -506,9 +511,11 @@ def test_a_lesson_cites_at_most_the_bounded_number_of_episodes() -> None:
 
 
 #: The longest inheritance label S2 writes (a six-digit generation) and the longest provenance marker the Oracle tool
-#: puts before an archive entry it has just retrieved (relevance at most 1.00, retrieved under a minute ago).
+#: puts before an archive entry: relevance at most 1.00 and, from BF-950, the entry's own age (five digits of days
+#: covers every write time after 1970 until 2243) marked STALE. Before BF-950 it was "age:59s", the retrieval's age,
+#: which the tool measured in the same call that rendered it.
 _WORST_LABEL = "[Inherited from the crew of generation 999999: not your own memory]"
-_WORST_MARKER = "[source:archive relevance:1.00 age:59s]"
+_WORST_MARKER = "[source:archive relevance:1.00 age:99999d STALE]"
 
 
 async def test_a_whole_note_at_every_bound_reaches_a_later_crew_through_the_oracle_tool(tmp_path: Path) -> None:
@@ -641,8 +648,9 @@ _YAML_HARD = (
 async def test_every_provenance_value_the_rule_admits_comes_back_whole_from_ship_s_records(
     tmp_path: Path, field: str,
 ) -> None:
-    """A4 (R2-F3): Ship's Records cuts a document's frontmatter at the first two ``---`` it finds, wherever they stand
-    (register R25), so a callsign such as ``normal---value`` came back as ``normal``: the stand-down reported the
+    """A4 (R2-F3): Ship's Records cut a document's frontmatter at the first two ``---`` it found, wherever they stood
+    (register R25; BF-940, #1686, ended that and the rule stays), so a callsign such as ``normal---value`` came back
+    as ``normal``: the stand-down reported the
     note written and the promotion withheld it. The rule now refuses a value holding ``---``. Each value here (YAML's
     quoting cases, and for the callsign, which the store writes three times, every code point to U+017F) is either
     refused by the rule and withheld, or admitted, stored, read back whole and archived."""
@@ -930,7 +938,8 @@ async def test_the_strict_listing_lists_exactly_what_the_default_listing_lists(t
 def test_every_operation_of_the_strict_walk_raises_unless_the_root_is_missing(tmp_path: Path, kind: str) -> None:
     """A5 (round 3 R3-M1-1): a trace-and-fault matrix over 7.3a's table, not one case per round. A clean walk over a
     real tree records every filesystem operation it makes (each ``os.scandir``, each listing step, the last one
-    included, each ``is_dir``); the trace allows nothing else, so an operation added without a row fails here. Then
+    included, each ``is_junction`` and each ``is_dir``); the trace allows nothing else, so an operation added without
+    a row fails here. Then
     each recorded operation fails once with ``kind``: the walk raises that error, except a missing root
     (``FileNotFoundError`` or ``NotADirectoryError`` at the root's open), which lists nothing. Every cell first asserts
     that its fault fired at the operation the clean walk made there."""
@@ -939,7 +948,7 @@ def test_every_operation_of_the_strict_walk_raises_unless_the_root_is_missing(tm
     clean = _Trace()
     found = sorted(_traced_walk(root, clean))
     assert found == sorted(path for path in root.rglob("*.md") if path.is_file())  # rglob's files, on a sound tree
-    assert set(clean.operations) == {"open-root", "open-subdirectory", "next", "is_dir"}  # one row each, no other
+    assert set(clean.operations) == {"open-root", "open-subdirectory", "next", "is_junction", "is_dir"}  # one row each
     for fail_at, operation in enumerate(clean.operations, start=1):
         trace = _Trace(fail_at, _WALK_FAULTS[kind])
         try:

@@ -22,6 +22,9 @@ import httpx
 
 from probos.types import LLMRequest, LLMResponse, Priority
 from probos.attachments.store import AttachmentStore
+from probos.admission import AdmissionService
+from probos.admission.seam import check_at
+from probos.admission.taxonomy import SEAM_MODEL_CALL
 
 logger = logging.getLogger(__name__)
 
@@ -284,6 +287,7 @@ class OpenAICompatibleClient(BaseLLMClient):
     """
 
     _UNREACHABLE_THRESHOLD = 3  # BF-069: consecutive failures before tier is unreachable
+    _admission: AdmissionService | None = None  # AD-1346 M3d3a (set_admission): None checks nothing
 
     def __init__(
         self,
@@ -1466,6 +1470,7 @@ class OpenAICompatibleClient(BaseLLMClient):
         (Captain DMs, @mentions). NORMAL and LOW share background capacity.
         LOW is an observability label — same semaphore as NORMAL.
         """
+        check_at(self._admission, effect=SEAM_MODEL_CALL, presented_id=getattr(request, "agent_id", None))  # AD-1346 M3d3a: the model gateway's sink check of the carried work ticket, in shadow; it blocks nothing (getattr: D127).
         # AD-637f: CRITICAL uses reserved interactive slots; NORMAL and LOW share background
         is_critical = priority == Priority.CRITICAL
         sem = self._interactive_semaphore if is_critical else self._background_semaphore
@@ -2175,6 +2180,14 @@ class OpenAICompatibleClient(BaseLLMClient):
             effective_max_tokens=effective_max_tokens,
             effective_system_suffix=effective_system_suffix,
         )
+
+    def set_admission(self, service: AdmissionService | None) -> None:
+        """AD-1346 M3d3a: late-bind the shadow admission service whose sink check ``complete`` makes first; None checks nothing.
+
+        The runtime passes the service it built, or None when ``admission.shadow_enabled`` is false or the service was
+        not built. The check blocks nothing and changes no request or response.
+        """
+        self._admission = service
 
     def set_attachment_store(self, store: AttachmentStore | None) -> None:
         """AD-731: deferred setter for the AttachmentStore.

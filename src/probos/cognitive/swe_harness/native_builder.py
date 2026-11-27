@@ -9,6 +9,7 @@ from probos.cognitive.agentic_dispatch import (
     classify_tool_fault_error,
     tool_fault_capture,
     tool_fault_id_resolver,
+    without_never_ran_refusals,
 )
 from probos.cognitive.swe_harness.agentic_loop import (
     PARALLEL_TOOL_CALLS_DEFAULT,
@@ -156,6 +157,11 @@ class NativeBuilderHarness:
             ),
         )
 
+        # AD-1337 S3 (#1560): the render seam masks with this harness's executor's masker (the runtime's, from
+        # finalize), assigned after construction like the AD-1240 owner below; a test double's executor gives None.
+        from probos.security.secret_masking import secret_masker_of
+
+        loop.secret_masker = secret_masker_of(self._executor)
         # AD-1240: assigned after construction, never as a keyword. The run context
         # carries the SAME authorized registry view this harness's executor serves,
         # only when a real owner was injected.
@@ -178,8 +184,13 @@ class NativeBuilderHarness:
         )
         if fault_observer is not None:
             assert fault_turn is not None
+            # BF-965 (#1796): the run without never-ran refusals, as the DM route
+            # observes it. The same-run count is taken before the noise filter, so
+            # two refusals of one tool would file a fault for a tool that never
+            # ran. Every other reader below keeps the raw result.
             await observe_completed_tool_run(
-                fault_observer, outcome=agentic_result, turn=fault_turn,
+                fault_observer, outcome=without_never_ran_refusals(agentic_result),
+                turn=fault_turn,
                 classify_error=classify_tool_fault_error, agent_id=agent_id,
                 resolve_tool_id=fault_id_resolver, fault_capture=fault_capture,
             )

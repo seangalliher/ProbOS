@@ -3,17 +3,40 @@
 import asyncio
 import fnmatch
 import logging
+import math
 import os
+import re
 import subprocess
+import threading
+from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 import yaml
 
+from probos.cognitive.provenance import record_write_time
 from probos.execution.command_env import trusted_command_env
+from probos.utils.frontmatter import dump_frontmatter, load_frontmatter, split_frontmatter
 
 logger = logging.getLogger(__name__)
+
+# BF-957: how many distinct git errors one store remembers so that each is logged once; past this the oldest is dropped.
+_GIT_WARNED_MAX = 32
+# BF-957: the git verbs that take the index lock. A zero exit of one forgets every remembered error.
+_GIT_INDEX_VERBS = frozenset({"add", "commit"})
+# BF-957: a commit with nothing staged exits non-zero and says so on stdout; it is not an error.
+_GIT_NOTHING_STAGED = ("nothing to commit", "nothing added to commit")
+
+
+def _git_error_line(stderr: str, stdout: str) -> str:
+    """BF-957: the first non-empty line a failed git command printed. Two failures with the same line are one error."""
+    for text in (stderr, stdout):
+        for line in text.splitlines():
+            if line.strip():
+                return line.strip()[:300]
+    return "(no output)"
+
 
 # Directory structure per AD-434 design
 _SUBDIRS = (
@@ -80,6 +103,50 @@ _IDENTITY_GATED_CLASSIFICATIONS = frozenset({"private", "department"})
 # BF-679: the one reader id with unrestricted read access (``read_entry``'s rule).
 _UNRESTRICTED_READER = "captain"
 
+#: BF-940 slice 4 (L19): the key an entry of ``RecordsStore.list_entries`` carries, set to ``True`` and only then, for a document whose
+#: frontmatter did not load, so that a caller which acts on the document (the semantic backfill) can tell that it reads as ``{}``
+#: because YAML refused its frontmatter and not because it holds none. Owned here; ``knowledge.semantic`` imports it, as it imports
+#: ``_UNRESTRICTED_READER``.
+FRONTMATTER_UNPARSED_KEY = "frontmatter_unparsed"
+
+
+def effective_classification(value: object) -> str:
+    """BF-966 (#1797): the classification the access rules apply to a stored ``value``. Never raises.
+
+    ``value`` itself when it is exactly one of the four labels of ``_CLASSIFICATION_LEVELS`` (a ``str``, compared as
+    written: no case-folding, no stripping); ``"private"`` for anything else (a misspelling, a case variant, a list, a
+    mapping, a number, a bool, ``None``), as ``security.classification`` reads an unknown source label as the most
+    restrictive. The caller applies its own default for a missing key first (``frontmatter.get("classification",
+    "ship")``). ``knowledge.semantic`` imports it, so the index and the keyword readers apply one rule.
+    """
+    if type(value) is str and value in _CLASSIFICATION_LEVELS:
+        return value
+    return "private"
+
+
+def _author_identity(value: object) -> str | None:
+    """BF-969 (#1800): the reader id a record's ``author`` value admits. The value when it is a non-empty ``str``;
+    otherwise ``None``, which equals no reader id (the anonymous ``""`` included), as :func:`_unparsed_gate`'s ``None``
+    author does. Never raises."""
+    if type(value) is str and value:
+        return value
+    return None
+
+
+def _unparsed_gate(rel_path: str) -> dict[str, Any]:
+    """BF-940 slice 4 (L19): the frontmatter the access rules read for a document whose own did not load.
+
+    Its classification and its author are unknown, so it is private, and its author is nobody, except under
+    ``notebooks/<callsign>/``, where the notebook's owner is the author. ``None`` equals no reader id (the anonymous ``""``
+    included), so only the owner is its author; the Captain and a reader that named no identity pass the rules as they do for any
+    private document (:func:`record_is_readable`, :meth:`RecordsStore.read_entry`). ``rel_path`` is the path the document resolves
+    to in the repository, as ``read_entry`` resolves it, so a contained link takes its target's owner; BF-970 A2 (round 1 F1): the
+    search names it so too (:func:`_resolved_rel_path`), not by the lexical path of its walk.
+    """
+    parts = rel_path.split("/")
+    owner = parts[1] if len(parts) >= 3 and parts[0] == "notebooks" else None
+    return {"classification": "private", "author": owner}
+
 
 def record_is_readable(
     frontmatter: dict[str, Any],
@@ -100,9 +167,11 @@ def record_is_readable(
     Two layers compose:
 
     * **Scope level** (always applied) — a record is admissible when
-      ``level(classification) <= level(scope)``. An unrecognised record
-      classification defaults to level ``0`` and an unrecognised ``scope`` to
-      level ``2``, exactly as :meth:`RecordsStore.search` has always done.
+      ``level(classification) <= level(scope)``. BF-966 (#1797): a record
+      classification that is not exactly one of the four labels (of any type)
+      reads as ``private`` (:func:`effective_classification`), so it is
+      identity-gated too; a missing one is ``ship``. An unrecognised ``scope``
+      is level ``2``.
     * **Reader identity** — mirrors :meth:`RecordsStore.read_entry`:
       ``private`` needs authorship, ``department`` needs a matching department
       or authorship. Strictly stricter than the scope level, never looser.
@@ -111,12 +180,12 @@ def record_is_readable(
     and "an anonymous reader asked" are different questions:
 
     * ``None`` — **identity not specified**. Scope level only; the pre-BF-679
-      behaviour, kept so existing callers of :meth:`RecordsStore.search` (the
-      ``/records/search`` endpoint, self-monitoring's notebook pull) are
-      byte-identical.
+      behaviour.
     * ``""`` — **anonymous reader**. The identity layer runs with an empty
       author, so identity-gated classifications are withheld. This is the
       fail-closed state the Oracle uses for a caller it cannot identify.
+      BF-969 (#1800): an author that is empty or not a ``str`` is nobody
+      (:func:`_author_identity`), so ``""`` is never a record's author.
     * ``"captain"`` — unrestricted, per ``read_entry``.
     * anything else — an author/department identity, matched against the
       record's ``author`` / ``department`` frontmatter.
@@ -130,22 +199,21 @@ def record_is_readable(
     paths is the BF-679 requirement, and of the two behaviours the closed one
     is the safe one to converge on.
     """
-    doc_class = frontmatter.get("classification", "ship")
-    # A non-str classification takes the same level-0 default ``search`` has
-    # always applied; the explicit type check additionally survives an
-    # unhashable value rather than raising out of the scan, and keeps such a
-    # record out of the identity-gated set (it is not one of the four labels).
-    is_labelled = type(doc_class) is str
-    doc_level = _CLASSIFICATION_LEVELS.get(doc_class, 0) if is_labelled else 0
-    if doc_level > _CLASSIFICATION_LEVELS.get(scope, 2):
+    # BF-966 (#1797): a classification that is not exactly one of the four labels
+    # (a misspelling, a case variant, a list, a number, null) is read as private,
+    # so it is identity-gated; a missing one is ship. The helper never raises, so
+    # an unhashable value cannot end the scan.
+    doc_class = effective_classification(frontmatter.get("classification", "ship"))
+    if _CLASSIFICATION_LEVELS[doc_class] > _CLASSIFICATION_LEVELS.get(scope, 2):
         return False
 
     if reader_id is None or reader_id == _UNRESTRICTED_READER:
         return True
-    if not is_labelled or doc_class not in _IDENTITY_GATED_CLASSIFICATIONS:
+    if doc_class not in _IDENTITY_GATED_CLASSIFICATIONS:
         return True
 
-    doc_author = frontmatter.get("author", "")
+    # BF-969 (#1800): an empty or non-str author is nobody, so it admits no reader, "" included.
+    doc_author = _author_identity(frontmatter.get("author"))
     if reader_id == doc_author:
         return True
     if doc_class == "department":
@@ -166,23 +234,403 @@ def _jaccard_similarity(text_a: str, text_b: str) -> float:
     return len(intersection) / len(union)
 
 
-def _markdown_files_or_raise(search_path: Path) -> list[Path]:
-    """AD-1341 S4 (A4, A5): every file named ``*.md`` under ``search_path``, or the ``OSError`` that hid one.
+# BF-952: the keyword axis of Ship's Records search (``RecordsStore.search``).
+#
+# The base scored a record by the fraction of query words found as substrings of the raw file,
+# YAML keys included, and broke ties by path: ``i`` matched "ship", ``status`` matched every
+# record, and a conversational question matched the whole repository at one score, so the paths
+# that sort first won. A record is now matched on whole words of its body and of the frontmatter
+# values in ``_SEARCH_FIELD_WEIGHTS``, and ranked by term rarity: BM25 with field weights, the
+# shape BF-625 uses in ``cognitive/transcript_grounding.py``.
+_SEARCH_TOKEN_RE = re.compile(r"\w+(?:[-.]\w+)*")
+_SEARCH_PART_RE = re.compile(r"\w+")
+_SEARCH_STOPWORDS: frozenset[str] = frozenset(
+    (
+        "a about above after again against all also am an and any are as at be because been before being "
+        "below between both but by can could did do does doing down during each few for from further had has "
+        "have having he her here hers herself him himself his how i if in into is it its itself just me may "
+        "might more most must my myself no nor not now of off on once only or other our ours ourselves out "
+        "over own same shall she should so some such than that the their theirs them themselves then there "
+        "these they this those through to too under until up us very was we were what when where which while "
+        "who whom why will with would you your yours yourself yourselves "
+        # what the tokeniser leaves of a contraction: I'd, we'll, I'm, they're, it's, don't, I've
+        "d ll m re s t ve"
+    ).split()
+)
+#: Frontmatter fields whose *values* are scored, each weighted against one body occurrence (1.0).
+#: Keys, ``classification``, ``status``, the timestamps and ``revision`` are never scored.
+#: ``department`` is here because the self-monitoring pull searches by department name.
+_SEARCH_FIELD_WEIGHTS: dict[str, float] = {
+    "title": 3.0,
+    "topic": 3.0,
+    "tags": 3.0,
+    "department": 2.0,
+    "author": 2.0,
+}
+_SEARCH_BM25_K1 = 1.5
+_SEARCH_BM25_B = 0.75
+_SEARCH_LIMIT = 20
+#: BF-952: the search loads frontmatter with libyaml when it is installed (it parses every record on
+#: each call, and PyYAML's pure-Python scanner was about a third of that cost). Every other reader
+#: loads as the base did, with ``yaml.SafeLoader`` (A5, round 5). BF-970 (#1801): every reader loads through
+#: :func:`probos.utils.frontmatter.load_frontmatter`, which reads a block holding ``FRONTMATTER_DEPTH_LIMIT`` (64)
+#: collections open at once or more as unparsed, with either loader; the search reads with PyYAML a block libyaml
+#: cannot build or reads as nothing (A4). This replaces A5's separate search limit of 100.
+_RECORDS_YAML_LOADER: Any = yaml.CSafeLoader if getattr(yaml, "__with_libyaml__", False) else yaml.SafeLoader
+
+
+def _search_query_terms(query: str) -> list[str]:
+    """BF-952: the distinct compound tokens of ``query``, in order, without stopwords.
+
+    A query made only of stopwords keeps them all rather than finding nothing.
+    """
+    terms = list(dict.fromkeys(match.group() for match in _SEARCH_TOKEN_RE.finditer(query.lower())))
+    kept = [term for term in terms if term not in _SEARCH_STOPWORDS]
+    return kept or terms
+
+
+def _search_field_text(value: Any) -> str:
+    """BF-952: a frontmatter value as the text to score: a string, a number, or the strings and numbers of a list.
+
+    A boolean is not text, alone or in a list (A1, finding 2).
+    """
+    if isinstance(value, str):
+        return value
+    if isinstance(value, (int, float)) and type(value) is not bool:
+        return str(value)
+    if isinstance(value, (list, tuple)):
+        return " ".join(
+            str(item) for item in value
+            if isinstance(item, (str, int, float)) and type(item) is not bool
+        )
+    return ""
+
+
+def _load_document(raw: str) -> tuple[Any, str, bool]:
+    """BF-970 (#1801): a document as every reader but the search's first pass reads it: ``(frontmatter, body, unparsed)``.
+
+    The framing every reader shares (:func:`probos.utils.frontmatter.split_frontmatter`) and the one load
+    (:func:`probos.utils.frontmatter.load_frontmatter` with ``yaml.SafeLoader``: ``yaml.safe_load``'s reading below the
+    nesting limit). A document with no frontmatter block (no opener, or no closing line: L18) is ``({}, raw, False)``. A block
+    YAML refuses, or one holding ``FRONTMATTER_DEPTH_LIMIT`` collections open at once or more, is ``({}, body, True)``, and the
+    access rules read :func:`_unparsed_gate` for it. BF-940 A1 is gone: the base's cut of the text is never read in the block's
+    place. A constructor's error (``updated: 2026-13-05``) propagates, as from ``yaml.safe_load``.
+    """
+    block, rest = split_frontmatter(raw)
+    if block is None:  # no frontmatter block (L18): there is none to refuse
+        return {}, raw, False
+    frontmatter, unparsed = load_frontmatter(block)
+    return frontmatter, rest.strip(), unparsed
+
+
+def _search_read_frontmatter(block: str) -> tuple[Any, bool]:
+    """BF-952 A4, A5; BF-970 (#1801): a frontmatter block as the search's first pass reads it: ``(frontmatter, unparsed)``.
+
+    With libyaml installed, libyaml's reading (:func:`probos.utils.frontmatter.load_frontmatter` with ``_RECORDS_YAML_LOADER``)
+    stands where it holds something: RK8's one admitted difference (BF-940 slice 4, L11). A block libyaml cannot build, for any
+    reason (A4), reads as nothing, or holds ``FRONTMATTER_DEPTH_LIMIT`` collections open at once or more is read as ``read_entry``
+    reads it: PyYAML's value, ``({}, True)`` for a block it refuses or one that deep, or its constructor's error (A6).
+    """
+    if _RECORDS_YAML_LOADER is not yaml.SafeLoader:
+        try:
+            frontmatter, _ = load_frontmatter(block, _RECORDS_YAML_LOADER)
+        except Exception:  # A4: libyaml cannot build the block, for any reason, so PyYAML's reading decides
+            frontmatter = None
+        if frontmatter:
+            return frontmatter, False
+    return load_frontmatter(block)
+
+
+def _search_read_document(raw: str) -> tuple[Any, str, str | None, bool]:
+    """BF-952 A5; BF-970 (#1801): a document as the search's first pass reads it: ``(frontmatter, body, block, unparsed)``.
+
+    The framing every reader shares (BF-940: :func:`probos.utils.frontmatter.split_frontmatter`) and the search's load
+    (:func:`_search_read_frontmatter`). The block (``None`` for a document with no frontmatter) lets the search check a record
+    it would return against ``read_entry``'s reading (:func:`_base_reading_admits`). ``unparsed`` is True where the reading is
+    ``{}`` because YAML refused the block or it nests too deep; the walk then applies :func:`_unparsed_gate`. BF-940 A1 is gone:
+    the base's cut of the text is never read in the block's place.
+    """
+    block, rest = split_frontmatter(raw)
+    if block is None:
+        return {}, raw, None, False
+    frontmatter, unparsed = _search_read_frontmatter(block)
+    return frontmatter, rest.strip(), block, unparsed
+
+
+def _base_reading_admits(
+    block: str, *, scope: str, reader_id: str | None, reader_department: str, path: str | None,
+) -> bool:
+    """BF-952 A5: whether ``read_entry``'s reading of a frontmatter block admits this reader at ``scope``.
+
+    That reading is :func:`probos.utils.frontmatter.load_frontmatter` with ``yaml.SafeLoader``, ``read_entry``'s and the
+    semantic index's. The search returns a record only where it admits the reader too, so no difference between libyaml's
+    reading and PyYAML's, known (RK8) or not, can show a reader a record ``read_entry`` withholds (RK15; BF-679). BF-940 slice 4
+    (L19), BF-970 (#1801): where the block is unparsed (YAML refuses it, or it holds ``FRONTMATTER_DEPTH_LIMIT`` collections open
+    at once or more) the rules read the document's stand-in (:func:`_unparsed_gate` of ``path``, the path the document resolves
+    to in the repository), as ``read_entry`` does. BF-940 A1 is gone: the base's cut is never read. BF-970 A2 (round 1 F1): a
+    ``path`` of ``None`` (the search could not resolve it) names no owner, so an unparsed block is withheld (fail closed); a
+    parsed one does not read ``path``.
+    """
+    try:
+        frontmatter, unparsed = load_frontmatter(block)  # read_entry's reading (yaml.SafeLoader)
+    except Exception:  # A5: read_entry raises on this block (a constructor error)
+        logger.debug("BF-952: withholding a record the base's reading cannot build", exc_info=True)
+        return False  # A5: the search withholds what read_entry raises on
+    if unparsed:  # BF-940 slice 4 (L19), BF-970: the same document read_entry withholds
+        if path is None:  # BF-970 A2 (round 1 F1): no owner can be named, so the document is withheld (fail closed)
+            return False
+        frontmatter = _unparsed_gate(path)
+    return type(frontmatter) is dict and record_is_readable(
+        frontmatter, scope=scope, reader_id=reader_id, reader_department=reader_department,
+    )
+
+
+def _search_record_counts(
+    frontmatter: dict[str, Any], body: str, terms: list[str],
+) -> tuple[dict[str, float], int]:
+    """BF-952: each query term's weighted count in a record, and the record's length in words.
+
+    A body occurrence counts 1 and a field of ``_SEARCH_FIELD_WEIGHTS`` its weight. A plain
+    term counts each word (``\\w+``) equal to it, so ``952`` is found inside ``bf-952``; a term
+    holding ``-`` or ``.`` counts each whole compound equal to it. The length counts words,
+    whatever their weight. A record whose scored text holds no term even as a substring is
+    only measured: a term counted as a word is always such a substring, so nothing is lost.
+    """
+    scored = [(body.lower(), 1.0)]
+    scored.extend(
+        (_search_field_text(frontmatter.get(name)).lower(), weight)
+        for name, weight in _SEARCH_FIELD_WEIGHTS.items()
+    )
+    words = [_SEARCH_PART_RE.findall(text) for text, _ in scored]
+    length = sum(len(found) for found in words)
+    weights: dict[str, float] = {}
+    if not any(term in text for text, _ in scored for term in terms):
+        return weights, length
+    compound_terms = [term for term in terms if "-" in term or "." in term]
+    for (text, weight), found in zip(scored, words):
+        if not found:
+            continue
+        word_counts = Counter(found)
+        compound_counts = Counter(_SEARCH_TOKEN_RE.findall(text)) if compound_terms else word_counts
+        for term in terms:
+            count = compound_counts[term] if term in compound_terms else word_counts[term]
+            if count:
+                weights[term] = weights.get(term, 0.0) + weight * count
+    return weights, length
+
+
+def _search_records(
+    search_path: Path,
+    root: Path,
+    terms: list[str],
+    *,
+    scope: str,
+    reader_id: str | None,
+    reader_department: str,
+) -> list[dict]:
+    """BF-952: the walk, parse and ranking of :meth:`RecordsStore.search`, run in a worker thread.
+
+    It reads files under ``search_path`` and touches no store state, so it is safe off the
+    event loop. Every record is parsed, not only those that match, because a term's rarity
+    is counted over what this reader may read and over nothing else (A4). BF-958: the walk is
+    the default listing's (:func:`_markdown_files`), and a file that resolves outside the
+    repository is skipped before it is read, as :meth:`RecordsStore.list_entries` skips it.
+    """
+    repo = root.resolve()  # BF-958: root is the repository, resolved or as configured
+    # BF-970 A2 (round 1 F1): each entry carries its file, so the second reading names an unparsed document's owner by the path
+    # it resolves to; ``rel_path``, the walk's lexical path, stays the result's ``path`` and the ranking's last key.
+    readable: list[tuple[str, dict[str, Any], str, dict[str, float], int, str | None, Path]] = []
+    for md_file in sorted(_markdown_files(search_path, strict=False)):
+        rel_path = str(md_file.relative_to(root)).replace("\\", "/")
+        if rel_path.startswith("_archived/"):
+            continue
+        try:
+            if not _resolves_inside(md_file, repo):  # BF-958: read_entry's rule, before the search reads
+                logger.warning(
+                    "BF-958: Ship's Records search skipped %s: it resolves outside the records repository (a link), "
+                    "so it is not read; read_entry refuses it too",
+                    rel_path,
+                )
+                continue
+            raw = md_file.read_text(encoding="utf-8")
+        except Exception:
+            logger.debug("Skipping unreadable file", exc_info=True)
+            continue
+        try:
+            frontmatter, content_text, block, unparsed = _search_read_document(raw)
+        except Exception:
+            # A1, A5: YAML accepted the frontmatter and its constructor raised (``updated: 2026-13-05``
+            # is a ``ValueError``, not a ``YAMLError``). ``read_entry`` raises for such a record; the search
+            # withholds it rather than end every search or read it as ``{}``. BF-970: a block nesting too deep
+            # is unparsed, so no ``RecursionError`` comes from the nesting.
+            logger.debug("BF-952: skipping %s, whose frontmatter cannot be constructed", rel_path, exc_info=True)
+            continue
+        if type(frontmatter) is not dict:
+            # A non-empty YAML list or a truthy scalar names no classification; the record is
+            # withheld rather than read at a default level (it raised on the base). A falsy one
+            # (``[]``, ``false``, ``0``, ``''``) is ``{}``, as every reader has read it.
+            logger.debug("BF-952: skipping %s, whose frontmatter is not a mapping", rel_path)
+            continue
+        # Classification scope + reader-identity check (BF-679). BF-940 slice 4 (L19): where this pass reads a document whose frontmatter
+        # did not load as {} it applies the stand-in, private to the owner of its notebook directory, so a record only the Captain may
+        # read is not found for another reader and cannot move the scores that reader is shown (BF-952 A4). Where it reads the document
+        # as something else, the ordinary rules decide on that reading and nothing more is specified for it (L11). The second reading
+        # withholds more and never gives more (L11). BF-970: the verdict is the first pass's own, from inside the try above.
+        # BF-970 A2 (round 1 F1): the stand-in's owner comes from the path the document resolves to, as read_entry's does, so a
+        # contained link under notebooks/bob/ to alice's unparsed note is alice's here too; resolved only where an owner is needed.
+        gate = frontmatter
+        if unparsed:  # BF-970 A2 (round 1 F1): only an unparsed document needs an owner
+            resolved = _resolved_rel_path(md_file, repo)
+            if resolved is None:  # BF-970 A2 (round 1 F1): no owner can be named, so the document is withheld (fail closed)
+                continue
+            gate = _unparsed_gate(resolved)
+        if not record_is_readable(
+            gate,
+            scope=scope,
+            reader_id=reader_id,
+            reader_department=reader_department,
+        ):
+            continue
+        weights, length = _search_record_counts(frontmatter, content_text, terms)
+        readable.append((rel_path, frontmatter, content_text, weights, length, block, md_file))
+    if not readable:
+        return []
+
+    count = len(readable)
+    average_length = sum(entry[4] for entry in readable) / count
+    rarity: dict[str, float] = {}
+    for term in terms:
+        holders = sum(1 for entry in readable if term in entry[3])
+        rarity[term] = math.log(1.0 + (count - holders + 0.5) / (holders + 0.5))
+    total_rarity = sum(rarity[term] for term in terms)
+
+    ranked: list[tuple[tuple[Any, ...], dict[str, Any], str | None, Path]] = []
+    for rel_path, frontmatter, content_text, weights, length, block, md_file in readable:
+        matched = [term for term in terms if term in weights]
+        if not matched:
+            continue
+        coverage = min(1.0, sum(rarity[term] for term in matched) / total_rarity)
+        norm = 1.0 - _SEARCH_BM25_B + _SEARCH_BM25_B * (length / average_length if average_length else 0.0)
+        relevance = sum(
+            rarity[term] * weights[term] * (_SEARCH_BM25_K1 + 1.0)
+            / (weights[term] + _SEARCH_BM25_K1 * norm)
+            for term in matched
+        )
+        written = record_write_time(frontmatter)
+        key = (-coverage, -relevance, written is None, -(written or 0.0), rel_path)
+        ranked.append((key, {
+            "path": rel_path,
+            "frontmatter": frontmatter,
+            "score": coverage,
+            "snippet": content_text[:200],
+        }, block, md_file))
+    ranked.sort(key=lambda pair: pair[0])
+    results: list[dict] = []
+    for _, result, block, md_file in ranked:
+        # A5 (round 5): a record is returned only where the base's reading of it, read_entry's and the
+        # semantic index's, admits this reader too. A record with no frontmatter reads as {} for both.
+        # BF-970 A2 (round 1 F1): its stand-in's owner comes from the path it resolves to (None: withheld if unparsed).
+        if block is not None and not _base_reading_admits(
+            block, scope=scope, reader_id=reader_id, reader_department=reader_department,
+            path=_resolved_rel_path(md_file, repo),
+        ):
+            continue
+        results.append(result)
+        if len(results) == _SEARCH_LIMIT:
+            break
+    return results
+
+
+def _resolves_inside(path: Path, repo: Path) -> bool:
+    """BF-958: whether ``path`` resolves inside ``repo`` (the resolved repository), :meth:`RecordsStore._safe_path`'s
+    rule, which the listing and the search apply to each file their walk returns before reading it. A link loop
+    resolves nowhere (``Path.resolve`` raises ``RuntimeError``), so it is not inside; an ``OSError`` propagates."""
+    try:
+        return path.resolve().is_relative_to(repo)
+    except RuntimeError:
+        return False  # Path.resolve raised RuntimeError: a link loop resolves nowhere, so it is outside
+
+
+def _resolved_rel_path(md_file: Path, repo: Path) -> str | None:
+    """BF-970 A2 (round 1 F1): the path ``md_file`` resolves to, relative to ``repo`` (the resolved repository) with ``/``:
+    the path ``read_entry`` names a document by (:meth:`RecordsStore._safe_path`), so the search's stand-in for an unparsed
+    document (:func:`_unparsed_gate`) names the owner ``read_entry``'s does, and a contained link under ``notebooks/bob/`` to
+    alice's note is alice's. ``None`` where it does not resolve inside ``repo`` now (a link loop, an ``OSError``, or a link moved
+    outside since the walk checked it); the caller withholds an unparsed document then. Never raises."""
+    try:
+        return md_file.resolve().relative_to(repo).as_posix()
+    except (OSError, RuntimeError, ValueError):  # fail closed: no owner can be named
+        logger.debug("BF-970: the search cannot resolve %s inside the records repository", md_file, exc_info=True)
+        return None
+
+
+def _contained(path: Path, repo: Path, rel_path: str, reader: str) -> bool:
+    """BF-959: whether a reader that lists or reads ``path`` itself may use it: it resolves inside ``repo`` (the
+    resolved repository), :func:`_resolves_inside`'s rule. Never raises. A path outside, or in a link loop, is logged
+    at WARNING by ``rel_path`` and not used; one whose resolution raises ``OSError`` is logged at DEBUG and not used
+    either, as ``list_entries`` skips an unreadable file in its default mode."""
+    try:
+        inside = _resolves_inside(path, repo)
+    except OSError:  # BF-959: a path whose resolution fails is not used, and is no error of the reader
+        logger.debug(
+            "BF-959: Ship's Records %s skipped %s: its path could not be resolved", reader, rel_path, exc_info=True,
+        )
+        return False  # BF-959: fail closed
+    if not inside:
+        logger.warning(
+            "BF-959: Ship's Records %s skipped %s: it resolves outside the records repository (a link); "
+            "read_entry refuses it too",
+            reader, rel_path,
+        )
+    return inside
+
+
+def _holds_every_tag(stored: Any, wanted: list[str]) -> bool:
+    """BF-940 A1 (F1): whether a document's ``tags`` value, as its frontmatter loaded it, holds every tag in ``wanted``.
+
+    Membership is by equality over the stored elements, so no element is hashed. ``set(stored)`` raised ``TypeError`` for a
+    nested list, mapping or set (``write_entry`` accepts one; a JSON client of the notebook route can send a list or a
+    mapping, not a set) and for a number, a date or nothing on disk, out of the whole listing, because the filter stands
+    outside the per-file ``try``. A
+    value that is not a collection holds no tag, as a document without ``tags`` holds none. Where
+    ``set(wanted).issubset(set(stored))`` could be computed, this gives its answer, so no listing that returned changes (a
+    string is read by character and a mapping by key, as that call read them; ``write_entry`` refuses both now).
+    """
+    try:
+        held = list(stored)
+    except TypeError:  # a number, a date or nothing is no collection: it holds no tag
+        return False
+    return all(tag in held for tag in wanted)
+
+
+def _markdown_files(search_path: Path, *, strict: bool, pattern: str = "*.md") -> list[Path]:
+    """AD-1341 S4 (A4, A5), BF-958, BF-959: every file named ``pattern`` (default ``*.md``) under ``search_path`` by a
+    walk that descends no directory link; with ``strict``, or the ``OSError`` that hid one.
 
     A5 (round 3 R3-M1-1): ``os.walk`` filed an entry whose type it could not read as a file and never descended into
     it, as ``Path.rglob`` passed over a directory it could not list (A4): each standard walker absorbs some error. So
-    this walk is explicit, and each filesystem operation it makes has one disposition (the contract's 7.3a table):
+    this walk is explicit, and each filesystem operation it makes has one disposition (the AD-1341 S4 contract's 7.3a
+    table, with BF-958's OJ row and default column):
 
     - O1 ``os.scandir(search_path)``: ``FileNotFoundError`` or ``NotADirectoryError`` lists nothing, since nothing
-      was written under a directory that is not there; any other ``OSError`` raises.
-    - O2 ``os.scandir`` of a directory a listing reported: any ``OSError`` raises, ``FileNotFoundError`` included
-      (gone since, or unaddressable, it is not proved empty; a strict caller refuses and is retried).
-    - O3 each step of a listing: any ``OSError`` raises.
-    - O4 ``entry.is_dir(follow_symlinks=False)``: any ``OSError`` raises; the entry is never taken for a file. The
-      type comes from the listing record, so a symbolic link is not descended, as ``rglob`` descends none.
+      was written under a directory that is not there. Any other ``OSError``: ``strict`` raises; the default lists
+      nothing.
+    - O2 ``os.scandir`` of a directory a listing reported: ``strict`` raises any ``OSError``, ``FileNotFoundError``
+      included (gone since, or unaddressable, it is not proved empty; a strict caller refuses and is retried). The
+      default passes over that directory, as ``rglob`` did.
+    - O3 each step of a listing: any ``OSError`` raises, in both modes, as ``rglob``'s descent (``Path.walk``)
+      raised one. ``rglob`` also matched each directory in a separate scan that swallowed one, so the base outlived
+      a one-shot fault that hit that scan, losing that directory's own documents (BF-958 contract L10).
+    - OJ ``entry.is_junction()`` (BF-958): a directory junction is not descended, and a WARNING names it, in both
+      modes. ``is_dir(follow_symlinks=False)`` is true for a junction, so before BF-958 this walk descended one.
+    - O4 ``entry.is_dir(follow_symlinks=False)``: the type comes from the listing record, so a symbolic link is not
+      descended, as ``rglob`` descends none.
 
-    Only a successful listing proves a document absent. A directory named ``*.md`` is no document and is not
-    returned; the suffix matches with the platform's case rule (``fnmatch``), as ``rglob``'s does.
+    An ``OSError`` from OJ or O4 raises with ``strict``, and the entry is never taken for a file; the default takes
+    the entry for no directory, as ``rglob``'s walk did. Only a successful listing proves a document absent. A
+    directory named ``*.md`` is no document and is not returned; the suffix matches with the platform's case rule
+    (``fnmatch``), as ``rglob``'s does. Whether a returned file resolves inside the repository is the caller's
+    check (:func:`_resolves_inside`).
     """
     found: list[Path] = []
     pending: list[Path] = [search_path]
@@ -191,15 +639,33 @@ def _markdown_files_or_raise(search_path: Path) -> list[Path]:
         try:
             listing = os.scandir(directory)  # O1 for search_path, O2 below it
         except (FileNotFoundError, NotADirectoryError):
-            if directory is not search_path:
+            if strict and directory is not search_path:
                 raise  # O2 (A5): a directory a listing reported is never "no documents"
-            return found  # O1: search_path does not exist, so nothing was written under it
+            continue  # O1: search_path does not exist, so nothing was written under it; O2 in the default mode
+        except OSError:
+            if strict:  # O1, O2: the strict walk raises what it cannot list
+                raise
+            logger.debug("Skipping a records directory that cannot be listed: %s", directory, exc_info=True)
+            continue  # O1, O2 in the default mode, as rglob passed over it
         with listing:
-            for entry in listing:  # O3: an OSError while listing propagates
+            for entry in listing:  # O3: an OSError while listing propagates, in both modes
                 path = Path(directory, entry.name)
-                if entry.is_dir(follow_symlinks=False):  # O4: an OSError propagates; it is never read as "a file"
+                try:
+                    if entry.is_junction():  # OJ (BF-958): never descended; it may lead out of the repository
+                        logger.warning(
+                            "BF-958: Ship's Records did not descend %s: it is a directory junction, which may lead "
+                            "out of the records repository; the records behind it are not listed or searched there",
+                            path,
+                        )
+                        continue
+                    is_dir = entry.is_dir(follow_symlinks=False)  # O4
+                except OSError:
+                    if strict:  # OJ, O4: the strict walk never reads an unknown entry as a file
+                        raise
+                    is_dir = False  # BF-958: the default walk reads it as rglob's walk did, as no directory
+                if is_dir:
                     pending.append(path)
-                elif fnmatch.fnmatch(entry.name, "*.md"):
+                elif fnmatch.fnmatch(entry.name, pattern):  # BF-959
                     found.append(path)
     return found
 
@@ -216,6 +682,11 @@ class RecordsStore:
         self._repo_path = Path(config.repo_path)
         self._ontology = ontology
         self._commit_lock = asyncio.Lock()
+        # BF-957: one git child of this store at a time, held from launch until the child has exited.
+        self._git_lock = threading.Lock()
+        # BF-957: the git errors already logged, oldest first; read and written only under _git_warned_lock.
+        self._git_warned: dict[tuple[str, str], None] = {}
+        self._git_warned_lock = threading.Lock()
         self._pending_commits: list[str] = []
         self._commit_task: asyncio.Task | None = None
         self._confidence_tracker: Any = None
@@ -270,9 +741,22 @@ class RecordsStore:
         Returns the relative path of the created file.
 
         AD-1140: ``extra_frontmatter`` merges caller-owned envelope fields into
-        the frontmatter **before** ``yaml.dump``, so they round-trip through
-        ``_parse_document`` and land whole in the AD-1138 ``frontmatter_json``
-        sidecar. Any key in :data:`_RESERVED_FRONTMATTER_KEYS` raises
+        the frontmatter **before** the dump. They round-trip through
+        ``_parse_document`` when every value is one YAML's safe loader builds
+        (a string, number, boolean, date, or a list or mapping of them), a
+        value holding ``---`` included: the frontmatter ends at a line of its
+        own (BF-940, #1686). The text is written by
+        :func:`probos.utils.frontmatter.dump_frontmatter` (BF-940 slice 2,
+        L24): a tuple is written as a list, and a value no reader loads (any
+        other Python object: ``yaml.dump`` wrote it with a ``!!python/`` tag,
+        so the document read as ``{}``, at the default ``ship`` classification,
+        whoever its author) raises ``ValueError`` naming the key, before any
+        file is touched. ``tags`` must be a list or a tuple (L27); its elements are written as given, the index joins them as
+        text and ``list_entries`` matches them by equality (BF-940 A1, F1). The AD-1138
+        ``frontmatter_json`` sidecar holds them whole only within
+        ``semantic.py``'s 4,000-character cap (``_RECORD_FRONTMATTER_CHARS``);
+        past it the index stores ``{}``. Any key in
+        :data:`_RESERVED_FRONTMATTER_KEYS` raises
         ``ValueError`` — this is the fail-fast tier, because silently dropping a
         reserved key would let a caller believe it stamped provenance that is
         not there. ``None`` (the default) leaves the written bytes identical.
@@ -285,6 +769,10 @@ class RecordsStore:
         because the write path is the same for a first draft and a revision,
         that default is applied to documents authored long before it existed.
         Ignored on create, where there is nothing to preserve.
+
+        BF-940 slice 4 (L19), BF-970: an update-in-place of a document whose frontmatter did not load (YAML refused it, or it nests 64 collections deep or more) proceeds as before and
+        replaces it, since the store's own writers and ``seed_manuals`` overwrite by design; its ``created`` time and ``revision``
+        cannot be carried and restart, so a WARNING names the path (the replaced version stays in git history).
         """
         # Validate classification
         if classification not in _CLASSIFICATION_LEVELS:
@@ -302,6 +790,8 @@ class RecordsStore:
                     "extra_frontmatter may not set store-owned keys: "
                     + ", ".join(collisions)
                 )
+        if tags and not isinstance(tags, (list, tuple)):  # BF-940 slice 2 (L27): the readers iterate tags and the index joins them
+            raise ValueError("tags must be a list")
 
         # Build frontmatter
         now = datetime.now(timezone.utc).isoformat()
@@ -318,7 +808,12 @@ class RecordsStore:
         if file_path.exists():
             try:
                 existing_raw = file_path.read_text(encoding="utf-8")
-                existing_fm, _ = self._parse_document(existing_raw)
+                existing_fm, _, existing_unparsed = _load_document(existing_raw)  # BF-970: the reading and its verdict, one load
+                if existing_unparsed:  # BF-940 slice 4 (L19): said, not refused (seed_manuals overwrites)
+                    logger.warning(
+                        "BF-940 slice 4 (L19): %s is rewritten in place and its frontmatter did not load: its created time and revision "
+                        "are not carried, and the replaced version stays in git history", path,
+                    )
                 if "created" in existing_fm:
                     frontmatter["created"] = existing_fm["created"]
                 existing_rev = existing_fm.get("revision", 1)
@@ -353,7 +848,7 @@ class RecordsStore:
             frontmatter.update(extra_frontmatter)
 
         # Compose full document
-        fm_yaml = yaml.dump(frontmatter, default_flow_style=False, sort_keys=False)
+        fm_yaml = dump_frontmatter(frontmatter)  # BF-940 slice 2 (L24): a tuple is a list; an unreadable value raises
         full_content = f"---\n{fm_yaml}---\n\n{content}"
 
         # Write file
@@ -377,7 +872,7 @@ class RecordsStore:
                 await self._semantic_indexer.index_record(
                     path=path,
                     content=content,
-                    classification=classification,
+                    classification=frontmatter["classification"],
                     author=author,
                     department=department,
                     topic=topic,
@@ -391,7 +886,7 @@ class RecordsStore:
                     path, exc_info=True,
                 )
 
-        logger.info("Record written: %s by %s (%s)", path, author, classification)
+        logger.info("Record written: %s by %s (%s)", path, author, frontmatter["classification"])
         return path
 
     def set_semantic_indexer(self, indexer: Any) -> None:
@@ -476,7 +971,7 @@ class RecordsStore:
                 "status": "published",
                 "created": datetime.now(timezone.utc).isoformat(),
             }
-            fm_yaml = yaml.dump(frontmatter, default_flow_style=False, sort_keys=False)
+            fm_yaml = dump_frontmatter(frontmatter)  # BF-940 slice 2 (L24): the one writer function
             file_path.parent.mkdir(parents=True, exist_ok=True)
             file_path.write_text(f"---\n{fm_yaml}---\n\n# Captain's Log — {today}\n{entry}", encoding="utf-8")
 
@@ -595,7 +1090,7 @@ class RecordsStore:
         """List all Bill files in Ship's Records (AD-618a).
 
         Bypasses list_entries() — bills are .bill.yaml files, not .md.
-        list_entries() uses rglob("*.md") which would never find them.
+        list_entries() lists only *.md files, so it would never find them.
 
         Returns:
             List of dicts with 'path' and 'bill_id' keys for each bill.
@@ -605,8 +1100,12 @@ class RecordsStore:
             return []
 
         results = []
-        for yaml_file in sorted(bills_dir.rglob("*.bill.yaml")):
-            rel_path = str(yaml_file.relative_to(self._repo_path)).replace("\\", "/")
+        # BF-949 R1: bills_dir comes from _safe_path, which resolves, so its paths are taken against the resolved root
+        root = self._repo_path.resolve()
+        for yaml_file in sorted(_markdown_files(bills_dir, strict=False, pattern="*.bill.yaml")):  # BF-959
+            rel_path = str(yaml_file.relative_to(root)).replace("\\", "/")
+            if not _contained(yaml_file, root, rel_path, "bill listing"):  # BF-959
+                continue
             # Extract bill_id from filename (e.g. "research-consultation.bill.yaml" → "research-consultation")
             bill_id = yaml_file.name.removesuffix(".bill.yaml")
             results.append({"path": rel_path, "bill_id": bill_id})
@@ -721,10 +1220,14 @@ class RecordsStore:
         if notebook_dir.is_dir():
             try:
                 entries: list[tuple[float, Path]] = []
+                repo = self._repo_path.resolve()  # BF-959: layer 3 compares resolved paths
                 for md_file in notebook_dir.glob("*.md"):
                     if md_file.name == f"{topic_slug}.md":
                         continue  # Already checked above
                     try:
+                        rel_path = f"notebooks/{callsign}/{md_file.name}"
+                        if not _contained(md_file, repo, rel_path, "notebook similarity check"):  # BF-959
+                            continue
                         raw = md_file.read_text(encoding="utf-8")
                         fm, _ = self._parse_document(raw)
                         updated_str = fm.get("updated", "")
@@ -810,17 +1313,29 @@ class RecordsStore:
 
         # Scan other agents' notebook directories
         try:
+            repo = self._repo_path.resolve()  # BF-959: the scan compares resolved paths
             for agent_dir in sorted(notebooks_dir.iterdir()):
                 if not agent_dir.is_dir():
                     continue
                 other_callsign = agent_dir.name
                 if other_callsign == anchor_callsign:
                     continue  # Skip self
+                if agent_dir.is_junction() or agent_dir.is_symlink():  # BF-959: a directory link is never scanned
+                    logger.warning(
+                        "BF-959: Ship's Records convergence scan did not scan notebooks/%s: it is a directory link "
+                        "(a junction or a symbolic link), which may lead out of the records repository; the "
+                        "notebooks behind it are not read",
+                        other_callsign,
+                    )
+                    continue
 
                 # Collect recent entries for this agent
                 entries: list[tuple[float, Path, str, str]] = []  # (ts, path, topic, dept)
                 for md_file in agent_dir.glob("*.md"):
                     try:
+                        rel_path = f"notebooks/{other_callsign}/{md_file.name}"
+                        if not _contained(md_file, repo, rel_path, "convergence scan"):  # BF-959
+                            continue
                         raw = md_file.read_text(encoding="utf-8")
                         fm, content = self._parse_document(raw)
                         updated_str = fm.get("updated", "")
@@ -976,19 +1491,31 @@ class RecordsStore:
         """Read a document, enforcing classification access control.
 
         Returns {"frontmatter": {...}, "content": "..."} or None if denied.
+
+        BF-940 slice 4 (L19), BF-970: a document whose frontmatter did not load (YAML refused it, or it nests 64 collections deep or more) reads as ``{}`` and is private to the owner of
+        its ``notebooks/<callsign>/`` directory: it is returned to that owner and to the Captain, and denied to every other reader, the
+        anonymous ``""`` included. ``RecordsStore.list_entries`` marks its entry (:data:`FRONTMATTER_UNPARSED_KEY`); this mapping is
+        unchanged.
         """
         file_path = self._safe_path(path)
         if not file_path.exists():
             return None
 
         raw = file_path.read_text(encoding="utf-8")
-        frontmatter, content = self._parse_document(raw)
+        frontmatter, content, unparsed = _load_document(raw)  # BF-970: the reading and its verdict, one load
 
         # Classification check — Captain has unrestricted read access
         if reader_id != "captain":
-            doc_class = frontmatter.get("classification", "ship")
-            doc_author = frontmatter.get("author", "")
-            doc_dept = frontmatter.get("department", "")
+            # BF-940 slice 4 (L19), BF-970: a frontmatter that did not load, or nests too deep, names no classification, so the
+            # document is private to its owner
+            gate = (
+                _unparsed_gate(file_path.relative_to(self._repo_path.resolve()).as_posix())
+                if unparsed else frontmatter
+            )
+            # BF-966 (#1797): a classification that is not exactly one of the four labels is private.
+            doc_class = effective_classification(gate.get("classification", "ship"))
+            doc_author = _author_identity(gate.get("author"))  # BF-969 (#1800): an empty or non-str author is nobody
+            doc_dept = gate.get("department", "")
 
             if doc_class == "private" and reader_id != doc_author:
                 return None
@@ -1017,24 +1544,45 @@ class RecordsStore:
         exists but cannot be read now), for a caller that must not take an unreadable document for an absent one (the
         AD-754 erasure's read of pending exit notes, and the stand-down). Bytes that are not UTF-8 are still skipped:
         that is a property of the file, not of the moment. ``False`` (the default) keeps every other caller unchanged.
-        A4, A5: ``strict=True`` walks with ``_markdown_files_or_raise``, which raises every ``OSError`` that could leave
-        a document unseen (a directory it cannot open, a listing step that fails, an entry whose type it cannot read)
-        and reads only a missing ``directory`` as empty. A listed file whose read fails raises for any ``OSError``,
-        with no second look at whether it is still a file (A5).
+        A4, A5: ``strict=True`` walks with ``_markdown_files(strict=True)``, which raises every ``OSError`` that could
+        leave a document unseen (a directory it cannot open, a listing step that fails, an entry whose type it cannot
+        read) and reads only a missing ``directory`` as empty. A listed file whose read fails raises for any
+        ``OSError``, with no second look at whether it is still a file (A5).
+
+        BF-958: in both modes the walk does not descend a directory junction, and a listed file that resolves outside
+        the repository (a link; :meth:`read_entry` refuses it) is skipped. Each is logged at WARNING; neither raises.
+
+        BF-940 A1 (F1): ``tags`` is matched by equality over the document's own ``tags`` value (:func:`_holds_every_tag`), so a
+        document whose ``tags`` hold a nested list, mapping or set, or are a number or nothing, is listed or not by the tags it
+        holds and never aborts the listing.
+
+        BF-940 slice 4 (L19), BF-970: the entry of a document whose frontmatter did not load (YAML refused it, or it nests 64 collections deep or more) reads ``{}`` and carries
+        :data:`FRONTMATTER_UNPARSED_KEY` set to ``True``; no other entry has the key. The listing is not reader-scoped, so it lists such
+        a document for every caller, as it lists a private one.
         """
         search_path = self._safe_path(directory) if directory else self._repo_path
+        # BF-949 R1: _safe_path resolves, so a directory's paths are taken against the resolved root
+        root = self._repo_path.resolve() if directory else self._repo_path
+        repo = self._repo_path.resolve()  # BF-958: the containment rule compares resolved paths
         results = []
-        # AD-1341 S4 (A4): rglob passes over a directory it cannot list; the strict walk raises its OSError instead
-        found = _markdown_files_or_raise(search_path) if strict else search_path.rglob("*.md")
+        # AD-1341 S4 (A4), BF-958: one walk for both modes; only the strict mode raises what hid a document
+        found = _markdown_files(search_path, strict=strict)
 
         for md_file in sorted(found):
-            rel_path = str(md_file.relative_to(self._repo_path)).replace("\\", "/")
+            rel_path = str(md_file.relative_to(root)).replace("\\", "/")
             # Skip archived
             if rel_path.startswith("_archived/"):
                 continue
             try:
+                if not _resolves_inside(md_file, repo):  # BF-958: read_entry's rule, before the listing reads
+                    logger.warning(
+                        "BF-958: Ship's Records listing skipped %s: it resolves outside the records repository "
+                        "(a link), so it is not listed; read_entry refuses it too",
+                        rel_path,
+                    )
+                    continue
                 raw = md_file.read_text(encoding="utf-8")
-                fm, _ = self._parse_document(raw)
+                fm, _, unparsed = _load_document(raw)  # BF-940 slice 4 (L19), BF-970: the reading and its verdict, one load
             except OSError:
                 if strict:  # A5 (O5): a file the walk listed is never "no document", whatever the read's error
                     raise  # AD-1341 S4 (A2): a file that exists but cannot be read now is never "no document"
@@ -1051,45 +1599,61 @@ class RecordsStore:
                 continue
             if classification and fm.get("classification") != classification:
                 continue
-            if tags and not set(tags).issubset(set(fm.get("tags", []))):
+            if tags and not _holds_every_tag(fm.get("tags"), tags):  # BF-940 A1 (F1): by equality, so no stored element is hashed
                 continue
 
-            results.append({"path": rel_path, "frontmatter": fm})
+            entry: dict[str, Any] = {"path": rel_path, "frontmatter": fm}
+            if unparsed:
+                entry[FRONTMATTER_UNPARSED_KEY] = True  # BF-940 slice 4 (L19): the one entry that has the key
+            results.append(entry)
 
         return results
 
     async def get_history(self, path: str, limit: int = 20) -> list[dict]:
-        """Get git log for a specific file."""
+        """Get git log for a specific file.
+
+        BF-957 A5, A7: one ``git log`` with ``--encoding=UTF-8``, which overrides an operator's
+        ``i18n.logOutputEncoding``. Git outputs an unlabelled commit's subject as stored and converts a labelled
+        commit's subject from its encoding label to UTF-8. The store's own commits carry no label: ``_git_sync``
+        runs every ``git commit`` with ``i18n.commitEncoding=UTF-8`` (A7), because an operator's setting would
+        label the store's UTF-8 messages without converting them. A commit an older store labelled that way is
+        read as git converts it (contract L15). Fields are separated by NUL (A6).
+        """
         self._safe_path(path)  # Validate — raises ValueError if traversal
         try:
             result = await self._git(
                 "log", f"--max-count={limit}",
-                "--format=%H|%aI|%s", "--follow", "--", path
+                "--encoding=UTF-8", "--format=%H%x00%aI%x00%s",  # BF-957 A5, A7: one read, UTF-8 output
+                "--follow", "--", path
             )
             entries = []
             for line in result.strip().split("\n"):
                 if not line.strip():
                     continue
-                parts = line.split("|", 2)
+                parts = line.split("\x00", 2)
                 if len(parts) == 3:
-                    entries.append({
-                        "commit": parts[0],
-                        "timestamp": parts[1],
-                        "message": parts[2],
-                    })
+                    entries.append({"commit": parts[0], "timestamp": parts[1], "message": parts[2]})
             return entries
         except Exception:
             logger.debug("Git query failed", exc_info=True)
             return []
 
     async def publish(self, path: str, author: str) -> None:
-        """Promote a document from draft to published status."""
+        """Promote a document from draft to published status.
+
+        BF-940 slice 4 (L19), BF-970: a document whose frontmatter did not load (YAML refused it, or it nests 64 collections deep or more) is not published. ``publish`` writes back what
+        it read, which for such a document is ``{}``, so it would replace the author, the classification and the times with a status
+        and the note would read ``ship``. It raises ``ValueError`` naming the path, for the Captain too, and writes nothing.
+        """
         file_path = self._safe_path(path)
         if not file_path.exists():
             raise FileNotFoundError(f"Record not found: {path}")
 
         raw = file_path.read_text(encoding="utf-8")
-        fm, content = self._parse_document(raw)
+        fm, content, unparsed = _load_document(raw)  # BF-970: the reading and its verdict, one load
+
+        if unparsed:
+            raise ValueError(f"The frontmatter of {path} does not load, so it is not published: fix the file first")
 
         if fm.get("author") != author and author != "captain":
             raise PermissionError("Only the author or Captain can publish")
@@ -1097,7 +1661,7 @@ class RecordsStore:
         fm["status"] = "published"
         fm["updated"] = datetime.now(timezone.utc).isoformat()
 
-        fm_yaml = yaml.dump(fm, default_flow_style=False, sort_keys=False)
+        fm_yaml = dump_frontmatter(fm)  # BF-940 slice 2 (L24): what safe_load built (an !!omap is a list of tuples) is written readably
         file_path.write_text(f"---\n{fm_yaml}---\n\n{content}", encoding="utf-8")
 
         if self._config.auto_commit:
@@ -1111,56 +1675,93 @@ class RecordsStore:
         *,
         reader_id: str | None = None,
         reader_department: str = "",
+        directory: str = "",
     ) -> list[dict]:
         """Keyword search across records.
 
-        Simple word-matching against frontmatter fields and content.
+        BF-952: a record matches on whole words of its body and of the values of
+        its ``title``, ``topic``, ``tags``, ``department`` and ``author``
+        frontmatter, never on a YAML key or on part of a word. The query's
+        stopwords are dropped; a query made only of stopwords keeps them all, and
+        a query with no words finds nothing. Records rank by how much of the
+        query's rarity they hold, then by BM25 relevance with title, topic and tag
+        hits weighted above body hits, then by the newer ``updated`` (else
+        ``created``), then by path. ``score`` is the first of these: the summed
+        rarity (IDF) of the query terms the record holds over that of all of them,
+        between 0 and 1, and it never rises down the list. Rarity is counted only
+        over the records this reader may read, so a record withheld from the
+        reader cannot move the scores it is shown (one that only the second
+        reading withholds can: L7). A record whose frontmatter is a non-empty YAML list or a truthy
+        scalar, or one YAML's constructor cannot build (``updated: 2026-13-05``),
+        is skipped; one whose frontmatter does not parse, or nests 64 collections
+        deep or more (``read_entry`` reads it as ``{}``; the base's cut is never
+        read: BF-970, #1801), is private to the owner of its
+        ``notebooks/<callsign>/`` directory (BF-940 slice 4, L19). At any
+        ``scope``, with either loader, no reader but that owner, the Captain and a
+        reader that named no identity finds it, and no reader that named an
+        identity is shown a note ``read_entry`` withholds from her. The search reads the
+        block of such a record twice and a reader finds it only where both readings
+        admit her: the first pass reads it with the search's own loader (libyaml
+        where BF-952 admits it) and decides what counts toward a term's rarity, the
+        second reading is ``read_entry``'s. Where the first pass reads the note as
+        ``{}`` too, those three find it at every ``scope``, as they find any private
+        note; where it reads something else, nothing more is specified for it
+        (L11). A number in ``title``, ``topic``, ``tags``,
+        ``department`` or ``author`` is
+        scored as text; a boolean is not. At most 20 results. The walk, parse and
+        ranking (:func:`_search_records`) run in a worker thread, so a search does
+        not block the event loop; ``scope`` and ``directory`` are checked first, here.
 
         BF-679: ``reader_id`` / ``reader_department`` add the identity layer
         :meth:`read_entry` applies, so a caller that knows who is asking no
         longer receives another crew member's ``private`` or out-of-department
         records. The default ``reader_id=None`` means *identity not specified*
-        and leaves the scope-level-only behaviour byte-identical; see
-        :func:`record_is_readable` for the full tri-state contract.
+        and applies the scope level only; see :func:`record_is_readable` for the
+        full tri-state contract.
+
+        BF-949: ``scope`` is one of the four classification labels; any other
+        value raises ``ValueError``. ``directory`` confines the walk to that
+        directory of the repository, validated as :meth:`list_entries` validates
+        it (a path that leaves the repository raises ``ValueError``); ``""`` walks
+        the whole repository.
         """
-        query_words = set(query.lower().split())
-        results = []
-        for md_file in sorted(self._repo_path.rglob("*.md")):
-            rel_path = str(md_file.relative_to(self._repo_path)).replace("\\", "/")
-            if rel_path.startswith("_archived/"):
-                continue
-            try:
-                raw = md_file.read_text(encoding="utf-8")
-            except Exception:
-                logger.debug("Skipping unreadable file", exc_info=True)
-                continue
-
-            # Simple keyword match
-            raw_lower = raw.lower()
-            matches = sum(1 for w in query_words if w in raw_lower)
-            if matches > 0:
-                fm, content_text = self._parse_document(raw)
-                # Classification scope + reader-identity check (BF-679)
-                if not record_is_readable(
-                    fm,
-                    scope=scope,
-                    reader_id=reader_id,
-                    reader_department=reader_department,
-                ):
-                    continue
-                results.append({
-                    "path": rel_path,
-                    "frontmatter": fm,
-                    "score": matches / len(query_words) if query_words else 0,
-                    "snippet": content_text[:200],
-                })
-
-        results.sort(key=lambda x: x["score"], reverse=True)
-        return results[:20]
+        if type(scope) is not str or scope not in _CLASSIFICATION_LEVELS:
+            raise ValueError(
+                "Unknown records scope; expected one of: "
+                + ", ".join(_CLASSIFICATION_LEVELS)
+            )
+        search_path = self._safe_path(directory) if directory else self._repo_path
+        # BF-949 R1: _safe_path resolves, so a directory's paths are taken against the resolved root
+        root = self._repo_path.resolve() if directory else self._repo_path
+        terms = _search_query_terms(query)
+        if not terms:
+            return []
+        # BF-952: the walk parses every readable record (A4), most of a second on a ship's
+        # corpus, so it runs in a worker thread and the event loop stays free meanwhile.
+        return await asyncio.to_thread(
+            _search_records,
+            search_path,
+            root,
+            terms,
+            scope=scope,
+            reader_id=reader_id,
+            reader_department=reader_department,
+        )
 
     async def get_stats(self) -> dict:
-        """Get repository statistics."""
-        doc_count = sum(1 for _ in self._repo_path.rglob("*.md"))
+        """Get repository statistics.
+
+        BF-959: one walk of the repository (:func:`_markdown_files`, which descends no directory junction) counts the
+        ``*.md`` files that resolve inside it, ``_archived`` included; a file that resolves outside (a link) is logged
+        at WARNING and not counted. Each directory's count is taken from that list by the file's first path component.
+        """
+        repo = self._repo_path.resolve()  # BF-959: the statistics compare resolved paths
+        counted: list[Path] = []  # BF-959: the repository-relative path of each file counted
+        for md_file in _markdown_files(self._repo_path, strict=False):
+            rel = md_file.relative_to(self._repo_path)
+            if _contained(md_file, repo, rel.as_posix(), "statistics"):  # BF-959
+                counted.append(rel)
+        doc_count = len(counted)
         try:
             commit_count_str = await self._git("rev-list", "--count", "HEAD")
             commit_count = int(commit_count_str.strip())
@@ -1173,9 +1774,8 @@ class RecordsStore:
         for subdir in _SUBDIRS:
             if subdir.startswith("_"):
                 continue
-            subdir_path = self._repo_path / subdir
-            if subdir_path.exists():
-                dir_counts[subdir] = sum(1 for _ in subdir_path.rglob("*.md"))
+            if (self._repo_path / subdir).exists():
+                dir_counts[subdir] = sum(1 for p in counted if p.parts[0] == subdir)  # BF-959
 
         return {
             "total_documents": doc_count,
@@ -1246,16 +1846,17 @@ class RecordsStore:
         return path
 
     def _parse_document(self, raw: str) -> tuple[dict, str]:
-        """Parse YAML frontmatter + content from a markdown document."""
-        if raw.startswith("---"):
-            parts = raw.split("---", 2)
-            if len(parts) >= 3:
-                try:
-                    fm = yaml.safe_load(parts[1]) or {}
-                except yaml.YAMLError:
-                    fm = {}
-                return fm, parts[2].strip()
-        return {}, raw
+        """Parse YAML frontmatter + content from a markdown document.
+
+        BF-940 (#1686): the frontmatter ends at the first later line of only hyphens, so a value holding ``---``
+        stays whole (:func:`probos.utils.frontmatter.split_frontmatter`). BF-970 (#1801): the document is read by
+        :func:`_load_document`, every reader's one reading; a block YAML refuses, or one nesting 64 collections deep or
+        more, reads as ``{}``, and the base's cut of the text is never read in its place (BF-940 A1 is gone). The callers
+        that must know whether ``{}`` means unparsed (``read_entry``, ``list_entries``, ``publish``, update-in-place) call
+        :func:`_load_document` itself; the scans call this.
+        """
+        frontmatter, body, _ = _load_document(raw)
+        return frontmatter, body
 
     def _safe_path(self, user_path: str) -> Path:
         """Validate and resolve a user-supplied path, preventing traversal.
@@ -1295,26 +1896,115 @@ class RecordsStore:
         return await loop.run_in_executor(None, self._git_sync, args)
 
     def _git_sync(self, args: tuple[str, ...]) -> str:
-        """Synchronous git execution."""
-        result = subprocess.run(
-            ["git"] + list(args),
-            env=trusted_command_env(),
-            cwd=str(self._repo_path),
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-        if result.returncode != 0 and "nothing to commit" not in result.stdout:
-            if result.stderr.strip():
-                logger.debug("git %s stderr: %s", args[0], result.stderr.strip())
-        return result.stdout
+        """Synchronous git execution.
+
+        BF-957: at most one git child of this store runs at a time (``_git_lock``, held until the child has
+        exited and its result is classified), so the store's own commands never meet at the index lock, and the
+        once-per-error memory changes in the order the children ran. A non-zero exit is logged at WARNING once
+        per distinct error, with git's first output line only, and its stdout is returned as before; a commit
+        with nothing staged is not an error. A command that outlives the timeout is stopped by
+        ``subprocess.run``; this logs a WARNING, because what it changed is not known and a lock it held may
+        remain, and re-raises the same exception. A4: the WARNING is emitted after this call releases
+        ``_git_lock``, so a log handler that reads git through this store does not wait on this call; it can
+        still wait for a command another thread is running (contract L14). Git's output is decoded as UTF-8
+        with replacement, so a locale codec (cp1252) that cannot decode it no longer turns it into ``None``.
+        Git re-encodes a commit subject for a configured encoding, so ``get_history`` asks for UTF-8 output. A7:
+        ``git commit`` alone runs with ``-c i18n.commitEncoding=UTF-8`` (``pin``), so an operator's setting cannot
+        label the store's UTF-8 messages without converting them; no other command's argv changes.
+        """
+        verb = args[0] if args else ""
+        # BF-957 A7: the store writes UTF-8; an operator's i18n.commitEncoding would label it without converting
+        pin = ("-c", "i18n.commitEncoding=UTF-8") if verb == "commit" else ()
+        due: tuple[object, ...] = ()  # BF-957 A4: the WARNING, emitted once _git_lock is released
+        try:
+            with self._git_lock:
+                try:
+                    result = subprocess.run(
+                        ["git", *pin, *args],
+                        env=trusted_command_env(),
+                        cwd=str(self._repo_path),
+                        capture_output=True,
+                        encoding="utf-8",  # BF-957 A4: the locale's codec (cp1252) lost output; A5: see get_history
+                        errors="replace",
+                        timeout=30,
+                    )
+                except subprocess.TimeoutExpired:
+                    if self._remember_git_warning((verb, "timeout")):
+                        due = (
+                            "Ship's Records: git %s did not finish in 30 s and was stopped. What it changed is "
+                            "not known, and a lock file it held may remain in %s. `probos doctor` reports the "
+                            "repository's state.",
+                            verb,
+                            self._repo_path / ".git",
+                        )
+                    raise
+                # BF-957 A3: classified under the lock, so a later child's warning is never cleared by an earlier success.
+                if result.returncode == 0:
+                    if verb in _GIT_INDEX_VERBS:
+                        self._forget_git_warnings()
+                    return result.stdout
+                if any(phrase in result.stdout for phrase in _GIT_NOTHING_STAGED):
+                    return result.stdout
+                error = _git_error_line(result.stderr, result.stdout)
+                if self._remember_git_warning((verb, error)):
+                    due = (
+                        "Ship's Records: git %s failed (exit %d): %s. Records are still written to disk, but a "
+                        "failed add or commit leaves them out of the records history. This error is logged once "
+                        "until a git add or commit succeeds; `probos doctor` reports the repository's state.",
+                        verb,
+                        result.returncode,
+                        error,  # BF-957 A3: git's first line only; the rest may advise removing a lock without the precondition
+                    )
+                return result.stdout
+        finally:
+            if due:  # BF-957 A4: after _git_lock is released; a log handler may read git through this store
+                logger.warning(*due)
+
+    def _remember_git_warning(self, key: tuple[str, str]) -> bool:
+        """BF-957 A4: remember ``key``; True when it was not logged since the last successful git add or commit.
+
+        At most ``_GIT_WARNED_MAX`` keys are remembered; past that the oldest is dropped and may be logged again.
+        The caller logs when this returns True; ``_git_sync`` does so after releasing ``_git_lock``.
+        """
+        with self._git_warned_lock:
+            if key in self._git_warned:
+                return False
+            if len(self._git_warned) >= _GIT_WARNED_MAX:
+                self._git_warned.pop(next(iter(self._git_warned)))
+            self._git_warned[key] = None
+            return True
+
+    def _warn_git_once(self, key: tuple[str, str], msg: str, *args: object) -> None:
+        """BF-957: log ``msg`` at WARNING unless ``key`` was logged since the last successful git add or commit."""
+        if self._remember_git_warning(key):
+            logger.warning(msg, *args)
+
+    def _forget_git_warnings(self) -> None:
+        """BF-957: a git add or commit succeeded, so any earlier error that recurs is logged again."""
+        with self._git_warned_lock:
+            self._git_warned.clear()
 
     async def _commit(self, message: str) -> None:
-        """Debounced git commit."""
+        """Debounced git commit.
+
+        BF-957: an ``Exception`` other than a timeout (for example, git is missing) is logged at WARNING once per
+        exception type until a git add or commit succeeds, without a claim about whether git ran: it may come from
+        before the launch or after it. A timeout is not logged again: ``_git_sync`` has logged it, and what the
+        stopped commit changed is not known. Neither is raised, as before; cancellation (``CancelledError``, not an
+        ``Exception``) still propagates, as before. Here the warning memory is updated without ``_git_lock``.
+        """
         if not self._config.auto_commit:
             return
         async with self._commit_lock:
             try:
                 await self._git("commit", "-m", message, "--allow-empty-message")
             except Exception as e:
-                logger.debug("Git commit skipped: %s", e)
+                if isinstance(e, subprocess.TimeoutExpired):
+                    return  # BF-957 A3: _git_sync logged it once per verb; "did not run" would be false
+                self._warn_git_once(
+                    ("commit", type(e).__name__),
+                    "Ship's Records: git commit raised %s: %s. The record is written to disk; whether it reached "
+                    "the records history is not known. Logged once until a git add or commit succeeds.",
+                    type(e).__name__,
+                    e,
+                )

@@ -407,6 +407,19 @@ class TestShutdownMarkerReset:
             def __init__(self, *a, **kw):
                 self._collection = None
 
+            # BF-984 (#1830): the rebuild binds its gates through bind_episodic_memory_gates.
+            def set_storage_gate(self, _gate):
+                return None
+
+            def set_security_config(self, _config):
+                return None
+
+            def set_security_gate(self, _gate):
+                return None
+
+            def set_security_event_emitter(self, _emitter):
+                return None
+
             async def start(self):
                 return None
 

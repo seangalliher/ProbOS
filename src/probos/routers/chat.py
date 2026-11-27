@@ -31,6 +31,13 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["chat"])
 
+# #1794: how much of an agent's own reply its @-mention fan-out episode
+# indexes (the reflection). 600 is the cap the group fan-out applies as
+# shipped (memory.group_reflection_max_chars with enrichment enabled in
+# config/system.yaml), so a reply is indexed to the same length whichever
+# fan-out stored it.
+_MENTION_REFLECTION_MAX_CHARS = 600
+
 
 @router.post("/chat")
 async def chat(
@@ -167,10 +174,13 @@ async def chat(
             # store failure logs + drops back to the store-absent path; replies
             # are never blocked.
             _main_thread_store = getattr(runtime, "chat_thread_store", None)
+            # #1794 A5: the main-chat thread as the seed resolved it, for the
+            # plan-mode gate each recipient's turn opens below.
+            _main_thread: Any = None
             if _main_thread_store is not None:
                 from probos.threads import MAIN_CHAT_THREAD_ID
                 try:
-                    _main_thread_store.get_or_create_system_thread(
+                    _main_thread = _main_thread_store.get_or_create_system_thread(
                         MAIN_CHAT_THREAD_ID, title="Main Chat",
                     )
                     _main_thread_store.append_message(
@@ -196,6 +206,18 @@ async def chat(
             for cs in all_callsigns:
                 resolved_list.append((cs, runtime.callsign_registry.resolve(cs)))
 
+            # #1794 A5: the recipients whose turn plan mode may have governed,
+            # read by the episode loop below, which marks their episodes so
+            # dreaming keeps them as memory and learns nothing from them
+            # (AD-1156 A-4). Keyed by agent id: a recipient named twice is
+            # marked if either turn was governed (plan mode only withholds,
+            # so marking errs safe).
+            _plan_governed: set[str] = set()
+            from probos.cognitive.agent_mode import (
+                open_plan_mode_reply_gate,
+                open_plan_mode_session_gate,
+            )
+
             async def _send_one(callsign: str, resolved: dict[str, Any] | None) -> PerAgentReply:
                 if resolved is None:
                     return PerAgentReply(
@@ -217,6 +239,23 @@ async def chat(
                         callsign=resolved["callsign"],
                         text="(no message — append text after the mentions)",
                         status="no_message",
+                    )
+                # #1794 A5: this turn reads its mode itself (it sends no
+                # is_group_chat): on the main-chat thread while the seed holds,
+                # otherwise on the agent's own default thread (BF-698's third
+                # source). Open the gate on that same thread before the send and
+                # ask it once the answer is back, as the one-to-one route and the
+                # CLI session do. None, reading nothing, unless agent modes and
+                # the dm_agentic loop are on and a thread store exists.
+                if _main_thread_store is not None:
+                    plan_gate = open_plan_mode_reply_gate(
+                        runtime, _main_thread_store, _main_thread,
+                        agent_id=resolved["agent_id"],
+                    )
+                else:
+                    plan_gate = open_plan_mode_session_gate(
+                        runtime, getattr(runtime, "chat_thread_store", None),
+                        resolved["agent_id"], resolved["callsign"],
                     )
                 intent = _IntentMessage(
                     intent="direct_message",
@@ -287,6 +326,9 @@ async def chat(
                     str(DmReply.from_intent_result(result).render())
                     if result is not None else ""
                 )
+                # #1794 A5: the gate's second read, after the agent's last pass.
+                if plan_gate is not None and plan_gate.withholds():
+                    _plan_governed.add(resolved["agent_id"])
                 return PerAgentReply(
                     agent_id=resolved["agent_id"],
                     callsign=resolved["callsign"],
@@ -355,42 +397,56 @@ async def chat(
             episodic_memory = getattr(runtime, "episodic_memory", None)
             if episodic_memory is not None:
                 t_end_fanout = time.monotonic()
-                dream_adapter = getattr(runtime, "dream_adapter", None)
+                # #1794: ONE Episode construction, no adapter branch.
+                # DreamAdapter.build_episode reads only the dag, results and
+                # reflection keys, so on a started vessel (which has an
+                # adapter) the old branch stored an episode with no owner, a
+                # dag frame and none of the reply. Same shape as the group
+                # fan-out (AD-933a, routers/thread_fanout.py).
+                from probos.cognitive.episodic import resolve_sovereign_id_from_slot
+                from probos.types import EPISODE_PLAN_MODE_KEY, AnchorFrame, Episode
                 for reply in per_agent_replies:
                     if not _is_genuine_agent_turn(reply):
                         continue
                     try:
                         episode_input = f"@{reply.callsign} {remaining_message}"
-                        if dream_adapter is not None:
-                            episode = dream_adapter.build_episode(
-                                episode_input,
-                                {"response": reply.text, "agent_ids": [reply.agent_id]},
-                                t_start_fanout,
-                                t_end_fanout,
-                            )
-                        else:
-                            from probos.types import AnchorFrame, Episode
-                            episode = Episode(
-                                timestamp=time.time(),
-                                user_input=episode_input,
-                                dag_summary={},
-                                outcomes=[],
-                                agent_ids=[reply.agent_id],
-                                duration_ms=(t_end_fanout - t_start_fanout) * 1000,
-                                source="multi_agent_chat",  # AD-719 distinct tag
-                                anchors=AnchorFrame(
-                                    channel="chat",
-                                    trigger_type="at_mention_fanout",
-                                ),
-                            )
-                        # AD-791g / AD-933a TRAP: anchor the episode to the
-                        # shared main-chat thread AFTER the if/else so BOTH
-                        # branches are reached. ``dream_adapter.build_episode``
-                        # returns a channel="dag" AnchorFrame that does NOT set
-                        # chat_thread_id, so augmenting only the else-branch
-                        # AnchorFrame would silently drop the id in production
-                        # (where a dream_adapter exists). Episode + AnchorFrame
-                        # are BOTH frozen dataclasses, so we rebuild via
+                        # The owner is the agent's sovereign id where its slot
+                        # has a certificate, the slot id otherwise.
+                        owner_id = resolve_sovereign_id_from_slot(
+                            reply.agent_id, runtime.identity_registry,
+                        )
+                        speaker = reply.callsign or owner_id
+                        episode = Episode(
+                            timestamp=time.time(),
+                            user_input=episode_input,
+                            dag_summary={},
+                            outcomes=[{
+                                "intent": "direct_message",
+                                "success": True,
+                                "response": reply.text[:500],
+                                "callsign": reply.callsign,
+                                "source": "multi_agent_chat",
+                                # #1794 A5 (AD-1156 A-4): a turn plan mode may have
+                                # governed is a conversation, not work done, so
+                                # dreaming keeps it as memory and learns nothing.
+                                **({EPISODE_PLAN_MODE_KEY: True} if reply.agent_id in _plan_governed else {}),
+                            }],
+                            agent_ids=[owner_id],
+                            duration_ms=(t_end_fanout - t_start_fanout) * 1000,
+                            # AD-977 parity: index the agent's own reply, so
+                            # its episode is findable by its words, not only
+                            # by the Captain's.
+                            reflection=f"{speaker} said: {reply.text[:_MENTION_REFLECTION_MAX_CHARS]}",
+                            source="multi_agent_chat",  # AD-719 distinct tag
+                            anchors=AnchorFrame(
+                                channel="chat",
+                                trigger_type="at_mention_fanout",
+                                participants=["captain", speaker],
+                            ),
+                        )
+                        # AD-791g: anchor the episode to the shared main-chat
+                        # thread. Episode + AnchorFrame are BOTH frozen
+                        # dataclasses, so we rebuild via
                         # ``dataclasses.replace`` rather than assign in place.
                         # Gated on store-presence → episode is left untouched
                         # (stays chat_thread_id="") when absent, byte-identical

@@ -37,6 +37,7 @@ from probos.cognitive.swe_harness.tool_call import (
 from probos.config import AgenticLoopConfig, SystemConfig
 from probos.tools.protocol import ToolResult
 from probos.types import LLMRequest, LLMResponse
+from tests.offered_tools import offer_scripted  # #1796: the loop runs only offered tools.
 
 
 # ---------------------------------------------------------------- fixtures
@@ -135,7 +136,7 @@ async def _run_loop(*, structured: bool, client: _CapturingClient, executor: Any
     return await loop.run(
         system_prompt="SYS",
         user_message="task",
-        tools=[{"type": "function"}],
+        tools=[{"type": "function"}, *offer_scripted(client.responses)],  # #1796: the loop runs only offered tools, so the scripted calls' tools are offered.
         context={"agent_id": "a1"},
     )
 

@@ -39,7 +39,7 @@ from probos.runtime import ProbOSRuntime
 from probos.substrate.registry import AgentRegistry
 from probos.threads import ChatThreadMessage, ChatThreadStore
 from probos.tools.permissions import ToolPermissionStore
-from probos.tools.protocol import ToolResult, ToolType
+from probos.tools.protocol import ToolPermission, ToolResult, ToolType
 from probos.tools.registry import ToolRegistry
 from probos.types import LLMRequest, LLMResponse
 from probos.workforce import WorkItemStore
@@ -295,6 +295,7 @@ class ConsultedEvidenceFixture:
             agent = _ReceiptAgent(agent_id=identity, runtime=self.runtime, llm_client=llm)
             agent.callsign = callsign
             await self.runtime.registry.register(agent)
+            await self.runtime.tool_permission_store.issue_grant(agent.id, _ProbeTool.tool_id, ToolPermission.READ)  # #1796: the loop runs only offered tools; a dispatch run offers its agent's granted tools, so each fixture agent is granted the probe its scripted model calls.
             self.runtime.intent_bus.subscribe(
                 identity, agent.handle_intent, ["direct_message"],
                 latency_class=agent.handler_latency_class,

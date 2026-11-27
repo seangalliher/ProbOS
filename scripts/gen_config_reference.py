@@ -44,6 +44,9 @@ ProbOS runs with **zero configuration** — every field has a default. The
 shipped `config/system.yaml` deliberately does not list every knob; this page
 does.
 
+Each section is headed by its dotted path from the root: `security.memory` is
+the `memory` block inside `security`, nested the same way in YAML.
+
 A value marked **default-OFF** ships inert. Turning it on is an operator
 decision, and each one states what changes when you do.
 
@@ -135,14 +138,17 @@ def _constraints(field: Any) -> str:
     return ", ".join(parts)
 
 
-def _describe_model(name: str, model: type, seen: set[str]) -> list[str]:
-    """Render one Pydantic model as a markdown section, recursing into children."""
-    if name in seen:
-        return []
-    seen.add(name)
+def _describe_model(path: str, model: type) -> list[str]:
+    """Render one Pydantic model as a markdown section headed by its dotted path, then each nested model.
 
-    lines = [f"## `{name}`", ""]
-    intro = _INTRO_BY_SECTION.get(name)
+    BF-983 (#1676): the path is the heading, so every model-typed field at every path has its own section. A ``seen``
+    set keyed on the field name used to leave out a model whose name an earlier section had used: ``security.memory``
+    after ``memory``, ``proactive_cognitive.duty_schedule`` after ``duty_schedule``, and the top-level ``discovery``
+    after ``federation.discovery``. A path cannot repeat, so nothing is skipped. No config model is recursive; one
+    that were would raise ``RecursionError`` here rather than drop a section.
+    """
+    lines = [f"## `{path}`", ""]
+    intro = _INTRO_BY_SECTION.get(path)
     if intro:
         lines += [intro, ""]
 
@@ -171,7 +177,7 @@ def _describe_model(name: str, model: type, seen: set[str]) -> list[str]:
         lines += rows + [""]
 
     for child_name, child_model in nested:
-        lines += _describe_model(child_name, child_model, seen)
+        lines += _describe_model(f"{path}.{child_name}", child_model)
 
     return lines
 
@@ -181,11 +187,10 @@ def render() -> str:
     from probos.config import SystemConfig
 
     lines = [_HEADER]
-    seen: set[str] = set()
     for field_name, field in SystemConfig.model_fields.items():
         annotation = field.annotation
         if hasattr(annotation, "model_fields"):
-            lines += _describe_model(field_name, annotation, seen)
+            lines += _describe_model(field_name, annotation)
     return "\n".join(lines).rstrip() + "\n"
 
 

@@ -30,6 +30,7 @@ from probos.tools.permissions import ToolPermissionStore
 from probos.tools.protocol import ToolPermission, ToolResult
 from probos.tools.registry import ToolRegistry
 from probos.types import LLMRequest, LLMResponse
+from tests.offered_tools import offer  # #1796: the loop runs only offered tools.
 
 _ROOT = Path(__file__).resolve().parents[1]
 _GOLDEN = _ROOT / "tests" / "fixtures" / "ad1200_no_instructions_golden.json"
@@ -500,11 +501,16 @@ async def test_reader_extensions_preserve_slicing_output_metadata_and_errors(
     )
     result = await reader.invoke(params)
     assert isinstance(result, InstructionToolResult)
-    assert result.output == "beta" and result.metadata == {} and result.error is None
+    # AD-1361 (#1743 item 1): a sliced read_file states the whole after the slice; codebase_read_source does not.
+    expected = "beta" if tool == "codebase_read_source" else (
+        "beta\n\n[read_file slice: lines 1 to 2 of 2, counted from 0 (offset=1, limit=1). "
+        "This slice reaches the end of the file.]"
+    )
+    assert result.output == expected and result.metadata == {} and result.error is None
     assert "NOT-SOURCE-OUTPUT" not in repr(result)
     adapted = ToolCallResult.from_tool_result("call", result, 12.5)
     assert isinstance(adapted, InstructionToolCallResult)
-    assert adapted.output == "beta" and adapted.duration_ms == 12.5
+    assert adapted.output == expected and adapted.duration_ms == 12.5
     assert adapted.repository_instructions is result.repository_instructions
     with pytest.raises(FrozenInstanceError):
         adapted.repository_instructions = InstructionObservation()
@@ -732,7 +738,7 @@ async def test_shared_loop_nested_and_concurrent_runs_keep_observations_local(
 
     async def run(label: str) -> Any:
         return await loop.run(
-            system_prompt="BASE", user_message=label, tools=[],
+            system_prompt="BASE", user_message=label, tools=[*offer("read_file")],  # #1796: the loop runs only offered tools, so the scripted call's tool is offered.
             context={"agent_id": _AGENT, "rank": "lieutenant"},
         )
 
@@ -787,7 +793,7 @@ async def test_cancelled_loop_drops_guidance_before_next_run(tmp_path: Path) -> 
         structured_tool_messages=True,
     )
     task = asyncio.create_task(loop.run(
-        system_prompt="BASE", user_message="cancel", tools=[],
+        system_prompt="BASE", user_message="cancel", tools=[*offer("read_file")],  # #1796: the loop runs only offered tools, so the scripted call's tool is offered.
         context={"agent_id": _AGENT, "rank": "lieutenant"},
     ))
     try:

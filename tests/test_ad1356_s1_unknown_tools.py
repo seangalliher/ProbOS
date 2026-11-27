@@ -1,0 +1,202 @@
+"""AD-1356 S1.1 (#1722): under agent work, a call to a tool id the registry does not hold is refused before the gate.
+
+Through the rig of ``tests/test_ad1347_s3_execution.py`` (the real runner, stores, executor and a scripted model) with a
+cache-only ``FaultReportStore`` on the runtime, and the real ``DispatchToolExecutor`` over a real ``ToolRegistry``. On the
+base this file fails at import (``UNREGISTERED_TOOL_REFUSAL``).
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from probos.agent_work import AgentWorkCreated, AgentWorkOrigin
+from probos.agent_work_runner import CarriedResults, approval_payload
+from probos.capability_request import action_dedup_key, is_action_tool_id, requests_for_work_item
+from probos.cognitive import agentic_dispatch
+from probos.cognitive.agentic_dispatch import (
+    CONFINED_CALL_FILED,
+    CONFINEMENT_ADMIT,
+    CONFINEMENT_FILED,
+    UNREGISTERED_TOOL_REFUSAL,
+    DispatchToolExecutor,
+    ToolCallConfinement,
+    classify_tool_fault_error,
+)
+from probos.cognitive.decomposer import is_capability_gap
+from probos.cognitive.swe_harness.tool_call import llm_function_name
+from probos.fault_report import FaultReportStore
+from probos.tools.protocol import ToolResult, ToolType
+from probos.tools.registry import ToolRegistry
+from tests.test_ad1347_s1_agent_work import REASON
+from tests.test_ad1347_s3_execution import _call, _final, _pump, _rig, _seen, _thread_in
+
+UNKNOWN = "grep_app_placeholder_skip"
+
+
+class _Probe:
+    """A registered tool outside every read set, under a given id."""
+
+    name = "Probe"
+    tool_type = ToolType.INFRA_SERVICE
+    description = "Answers once."
+    input_schema: dict[str, Any] = {"type": "object", "properties": {}}
+    output_schema: dict[str, Any] = {"type": "object"}
+
+    def __init__(self, tool_id: str) -> None:
+        self.tool_id = tool_id
+
+    async def invoke(self, params: dict[str, Any], context: dict[str, Any] | None = None) -> ToolResult:
+        return ToolResult(output="probed")
+
+
+# UT1
+async def test_an_unregistered_tool_is_refused_not_filed_and_never_counts_toward_a_fault(tmp_path: Path) -> None:
+    """Acceptance 3: the model is shown a refusal (the loop's since BF-965); nothing is filed on the item; the
+    item is done; and two refusals in one run leave the fault store empty with no FAULT_REPORTED."""
+    script = [_call(UNKNOWN, {}, "c1"), _call(UNKNOWN, {}, "c2"), _final("No such tool; nothing to report.")]
+    async with _rig(tmp_path, script) as rig:
+        events: list[tuple[Any, dict[str, Any]]] = []
+        faults = FaultReportStore(emit_event=lambda kind, data: events.append((kind, data)))
+        rig.runtime.fault_report_store = faults
+        origin = await _thread_in(rig, "engineering", "laforge-1")
+        created = await rig.service.create_self_task(
+            "forge-1", title="Search the relay log", description="", reason=REASON,
+            origin=AgentWorkOrigin("ward_room", thread_id=origin.id),
+        )
+        assert isinstance(created, AgentWorkCreated), created
+        await _pump(rig)
+        item = await rig.store.get_work_item(created.work_item.id)
+        assert item is not None and item.status == "done"
+        assert requests_for_work_item(rig.requests, item.id) == []
+        # BF-965 (#1796): an unregistered id is never offered, so the loop refuses it before the executor's AD-1356
+        # S1.1 refusal is reached; UT2 drives that refusal directly. Neither is filed or counted as a fault.
+        assert _seen(rig, agentic_dispatch.UNOFFERED_TOOL_REFUSAL)
+        assert not _seen(rig, UNREGISTERED_TOOL_REFUSAL)
+        assert faults.list_open() == [] and events == []
+
+
+# UT2
+async def test_only_a_confined_call_to_an_unregistered_id_is_refused_before_the_gate() -> None:
+    """Without a confinement the registry answers as before (#1214). Under one, an unregistered id is refused without
+    asking the gate, and the refusal is a never-ran policy outcome; a registered tool outside the set, by its id or by
+    its provider alias, is put to the gate, under its registered id either way (BF-982)."""
+    registry = ToolRegistry()
+    registry.register(_Probe("hull_survey"))
+    registry.register(_Probe("ops:hull:survey"))
+    executor = DispatchToolExecutor(registry=registry)
+    unconfined = await executor.invoke("forge-1", UNKNOWN, {})
+    assert unconfined.error == f"Tool '{UNKNOWN}' not found"
+    asked: list[Any] = []
+
+    async def gate(agent_id: str, tool_id: Any, params: Any) -> str:
+        asked.append(tool_id)
+        return CONFINEMENT_FILED
+
+    executor.confine_calls(ToolCallConfinement(frozenset({"event_log_query"}), gate))
+    refused = await executor.invoke("forge-1", UNKNOWN, {})
+    assert refused.error == UNREGISTERED_TOOL_REFUSAL and asked == []
+    alias = llm_function_name("ops:hull:survey")
+    for tool_id in ("hull_survey", alias):
+        assert (await executor.invoke("forge-1", tool_id, {})).error == CONFINED_CALL_FILED
+    # BF-982 (#1817): the gate is asked under the registered id the alias resolves to. This line asserted the alias
+    # itself, which pinned the defect: a call filed under the alias is classified critical whatever the tool's tier.
+    assert asked == ["hull_survey", "ops:hull:survey"]
+    assert UNREGISTERED_TOOL_REFUSAL in agentic_dispatch._NEVER_RAN_REFUSALS
+    assert classify_tool_fault_error(UNREGISTERED_TOOL_REFUSAL) == "permission_denied"
+    assert not is_capability_gap(UNREGISTERED_TOOL_REFUSAL) and "search_capabilities" in UNREGISTERED_TOOL_REFUSAL
+
+
+# BF-982 (#1817): a registered id the provider rejects, so a model is shown only its alias (llm_function_name).
+CANONICAL = "ops:hull:survey"
+
+
+def _confined(
+    tool_ids: frozenset[str], verdict: str, *also: str,
+) -> tuple[DispatchToolExecutor, list[Any], list[Any]]:
+    """An executor over a registry holding ``CANONICAL`` and ``also``, confined to ``tool_ids``. The gate answers
+    ``verdict`` and notes each id it is asked; ``record`` notes each id it is handed with the result's error."""
+    registry = ToolRegistry()
+    for tool_id in (CANONICAL, *also):
+        registry.register(_Probe(tool_id))
+    executor = DispatchToolExecutor(registry=registry)
+    asked: list[Any] = []
+    recorded: list[Any] = []
+
+    async def gate(agent_id: str, tool_id: Any, params: Any) -> str:
+        asked.append(tool_id)
+        return verdict
+
+    def record(agent_id: str, tool_id: Any, params: Any, result: ToolResult) -> None:
+        recorded.append((tool_id, result.error))
+
+    executor.confine_calls(ToolCallConfinement(tool_ids, gate, record=record))
+    return executor, asked, recorded
+
+
+# UT3
+async def test_an_alias_call_is_gated_and_recorded_under_the_registered_id() -> None:
+    """BF-982: by its alias or by its id, an admitted call reaches the gate and ``record_admitted`` under the registered
+    id, so the runner files it, keeps its result (BF-947's key) and admits its approval under one id."""
+    executor, asked, recorded = _confined(frozenset({"event_log_query"}), CONFINEMENT_ADMIT)
+    for name in (llm_function_name(CANONICAL), CANONICAL):
+        assert (await executor.invoke("forge-1", name, {})).error is None
+    assert asked == [CANONICAL, CANONICAL]
+    assert recorded == [(CANONICAL, None), (CANONICAL, None)]
+
+
+# UT4
+async def test_an_alias_of_a_tool_in_the_direct_set_runs_without_the_gate() -> None:
+    """BF-982: the direct-set check reads the registered id too, so the alias runs directly; nothing is asked or
+    recorded."""
+    executor, asked, recorded = _confined(frozenset({CANONICAL}), CONFINEMENT_FILED)
+    result = await executor.invoke("forge-1", llm_function_name(CANONICAL), {})
+    assert result.error is None
+    assert asked == [] and recorded == []
+
+
+# UT5
+async def test_an_ambiguous_name_goes_to_the_gate_as_the_model_sent_it() -> None:
+    """BF-982 keeps AD-1356 S1.1's rule for a name two registered tools would be offered under (``_resolve_tool_id``
+    answers None): it is put to the gate as sent, and filing it runs nothing."""
+    alias = llm_function_name(CANONICAL)
+    executor, asked, recorded = _confined(frozenset({"event_log_query"}), CONFINEMENT_FILED, alias)
+    assert (await executor.invoke("forge-1", alias, {})).error == CONFINED_CALL_FILED
+    assert asked == [alias] and recorded == []
+
+
+# UT6
+def test_an_id_the_payload_pattern_refuses_is_filed_and_kept_under_its_alias() -> None:
+    """BF-982 (round 1): a registered id the action payload's tool-id pattern refuses (65 characters, or a ``/``) is
+    filed under the provider alias the model was shown, as before BF-982, and the recorder keeps its result under the
+    key the gate computes for it. An id the pattern accepts is filed as it is."""
+    params = {"query": "drift budget"}
+    for registered in ("mcp:docs:" + "s" * 56, "mcp:docs:search/web"):
+        alias = llm_function_name(registered)
+        assert (is_action_tool_id(registered), is_action_tool_id(alias)) == (False, True)  # premise
+        payload = approval_payload(registered, params, "wi-1")
+        assert payload is not None and payload["tool_id"] == alias
+        carried = CarriedResults()
+        carried.recorder("wi-1")("forge-1", registered, params, ToolResult(output="found"))
+        [entry] = carried.for_agent("wi-1", "forge-1")
+        key = action_dedup_key(agent_id="forge-1", payload=payload, work_item_id="wi-1")
+        assert (entry.tool_id, entry.key) == (alias, key)
+    assert approval_payload(CANONICAL, params, "wi-1")["tool_id"] == CANONICAL
+
+
+# UT7
+def test_a_name_with_no_utf8_form_is_not_filed_or_kept() -> None:
+    """BF-982 (round 2): a name holding a lone surrogate (a model's JSON can decode to one) has no provider alias,
+    because ``llm_function_name`` hashes its UTF-8 bytes. ``approval_payload`` answers None for it, as before round 1,
+    so the gate files nothing and the recorder keeps nothing; neither raises."""
+    params = {"query": "drift budget"}
+    for sent in ("mcp:docs:" + "\ud800", "\ud800"):
+        assert not is_action_tool_id(sent)  # premise: the payload pattern refuses it
+        with pytest.raises(UnicodeEncodeError):  # premise: it has no alias
+            llm_function_name(sent)
+        assert approval_payload(sent, params, "wi-1") is None
+        carried = CarriedResults()
+        carried.recorder("wi-1")("forge-1", sent, params, ToolResult(output="found"))
+        assert carried.for_agent("wi-1", "forge-1") == ()

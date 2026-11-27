@@ -41,6 +41,7 @@ from probos.cognitive.conversation_trust import (
 )
 from probos.cognitive.dm import DmReplyContext, DmReplyPipeline
 from probos.cognitive.dm.write_ledger import WriteLedger
+from probos.cognitive.context_manifest import context_manifest_metadata  # AD-1357
 from probos.dm_reply import DmReply  # AD-1248
 from probos.cognitive.confab_probe import probe_referent
 from probos.cognitive.emergence_taxonomy import BehaviorCode
@@ -965,6 +966,7 @@ async def _fan_one_round(
             metadata: dict[str, Any] = {"intent_id": intent.id, "fanout": "ad914"}
             if generated_ids:
                 metadata["generated_attachment_ids"] = generated_ids
+            metadata.update(context_manifest_metadata(result))  # AD-1357 (#1749)
             saved_message = store.append_message(
                 thread_id, author_id=agent_id, role="agent",
                 body=reply_text, metadata=metadata,

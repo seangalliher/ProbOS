@@ -8,7 +8,10 @@ Three endpoints:
 - ``GET /api/config/yaml`` returns the current YAML text with secret
   values replaced by ``"<redacted>"``.
 - ``POST /api/config`` accepts a sparse patch dict, validates it by
-  constructing a fresh :class:`SystemConfig`, persists it to disk, and
+  constructing a fresh :class:`SystemConfig`, merges it onto the config
+  file as it is on disk (#1414 item 3: an edit made since boot is kept,
+  and no value the environment set is written), validates that too,
+  persists it, and
   returns ``restart_required=True``. Secret-flagged paths are rejected
   with 400 ``secret_field_readonly`` — defense-in-depth alongside the
   UI's chip-only render.
@@ -31,7 +34,7 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse, PlainTextResponse
 from pydantic import ValidationError
 
-from probos.config import SystemConfig
+from probos.config import SystemConfig, drop_null_sections
 from probos.routers.auth import require_crew_scope
 from probos.routers.deps import get_runtime
 from probos.settings import section_registry
@@ -143,10 +146,50 @@ def _diff_paths(before: dict, after: dict, prefix: str = "") -> list[str]:
     return out
 
 
+class _ConfigUnreadable(Exception):
+    """The config file, or the mapping a save would write, cannot be used; ``str()`` is a reason that quotes none of it."""
+
+
+def _read_disk_mapping(path: Path) -> dict[str, Any]:
+    """#1414 item 3: the config file's sections as they are on disk; ``{}`` when it does not exist.
+
+    Top-level sections that parse as None (every value commented out) are dropped by the helper
+    load_config uses. Raises _ConfigUnreadable when the file cannot be checked for or read, is not
+    UTF-8, is not YAML or its top level is not a mapping; the reason never quotes the file, since a
+    YAML error's own text holds the offending line. Any exception from the parse counts as not YAML:
+    besides YAMLError, PyYAML raises ValueError for an impossible date or an integer of over 4,300
+    digits, RecursionError for deep nesting and, from its constructors, KeyError (!!bool on a
+    non-boolean), IndexError (an empty !!int or !!float), AttributeError (!!timestamp on a non-date)
+    and OverflowError (a long sexagesimal float). load_config fails on each such file at boot.
+    The existence check is load_config's own, inside the OSError guard: Path.exists() lets an EACCES
+    from stat through.
+    """
+    try:
+        if not path.exists():
+            return {}
+        text = path.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        raise _ConfigUnreadable("not valid UTF-8 text") from None
+    except OSError as exc:
+        raise _ConfigUnreadable(f"unreadable ({type(exc).__name__})") from None
+    try:
+        document = yaml.safe_load(text)
+    except Exception:  # any type, as the docstring says: PyYAML's constructors raise several besides YAMLError
+        raise _ConfigUnreadable("not valid YAML") from None
+    if document is None:
+        return {}
+    if not isinstance(document, dict):
+        raise _ConfigUnreadable("not a mapping of config sections")
+    return drop_null_sections(document)
+
+
 def _write_yaml_atomic(path: str, data: dict) -> None:
     p = Path(path)
     header = f"# Edited via HXI {time.strftime('%Y-%m-%d %H:%M:%S')} UTC\n"
-    body = yaml.safe_dump(data, sort_keys=False)
+    try:
+        body = yaml.safe_dump(data, sort_keys=False)
+    except Exception as exc:  # any type from the dump, and only from the dump: it runs before any file is opened
+        raise _ConfigUnreadable("holds a value that cannot be written back") from exc
     fd, tmp = tempfile.mkstemp(dir=str(p.parent), prefix=p.name, suffix=".tmp")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
@@ -263,8 +306,44 @@ async def post_config(req: Request, runtime: Any = Depends(get_runtime)) -> Any:
     if not cfg_path:
         return JSONResponse(status_code=503, content={"error": "config_path_unavailable"})
 
+    # #1414 item 3: merge onto the file as it is now, not onto the config this process booted with, so an
+    # edit made since boot (probos setup, a hand edit, an earlier save awaiting restart) is kept and no value
+    # the environment set (PROBOS_LLM_URL) is written. No await runs from this read to the write below, so
+    # two saves in this process cannot interleave.
     try:
-        _write_yaml_atomic(cfg_path, new_cfg.model_dump(mode="json"))
+        on_disk = _read_disk_mapping(Path(cfg_path))
+    except _ConfigUnreadable as exc:
+        logger.warning(
+            "AD-741 config save refused (cfg_path=%s): the file is %s; it is unchanged.", cfg_path, exc,
+        )
+        return JSONResponse(status_code=409, content={"error": "config_unreadable", "reason": str(exc)})
+    to_write = _deep_merge(on_disk, patch)
+    try:
+        SystemConfig.model_validate(to_write)
+    except ValidationError as e:
+        # loc and type only: a message can quote a value from the file, which may be a secret.
+        return JSONResponse(
+            status_code=409,
+            content={
+                "error": "config_invalid",
+                "errors": [{"loc": list(err["loc"]), "type": err["type"]} for err in e.errors()],
+            },
+        )
+    except OverflowError as exc:
+        # pydantic wraps only ValueError and AssertionError. A float field, or the math.isfinite of
+        # budget_awareness_thresholds, raises this for an integer too large for a float, with no loc;
+        # load_config raises the same on such a file at boot (#1820).
+        logger.warning(
+            "AD-741 config save refused (cfg_path=%s): validating the file raised %s; it is unchanged.",
+            cfg_path, type(exc).__name__,
+        )
+        return JSONResponse(
+            status_code=409,
+            content={"error": "config_invalid", "errors": [{"loc": [], "type": type(exc).__name__}]},
+        )
+
+    try:
+        _write_yaml_atomic(cfg_path, to_write)
     except OSError as ex:
         logger.error(
             "AD-741 config write failed (cfg_path=%s): %s; "
@@ -275,6 +354,19 @@ async def post_config(req: Request, runtime: Any = Depends(get_runtime)) -> Any:
         return JSONResponse(
             status_code=500,
             content={"error": "write_failed", "detail": str(ex)},
+        )
+    except _ConfigUnreadable as exc:
+        # _write_yaml_atomic raises this only for its dump, which runs before any file is opened. The dump refuses
+        # values the merged mapping can hold and load_config accepts: an integer of over 4,300 decimal digits (a YAML
+        # hex literal loads) and nesting deeper than the dump's recursion allows (from the file, or from the patch,
+        # which JSON nests as deep as it likes). Any other exception from the dump gets the same answer; an exception
+        # from a later step is not the dump's and is not answered here.
+        logger.warning(
+            "AD-741 config save refused (cfg_path=%s): the dump raised %s; the file is unchanged.",
+            cfg_path, type(exc.__cause__).__name__,
+        )
+        return JSONResponse(
+            status_code=409, content={"error": "config_unreadable", "reason": str(exc)},
         )
 
     changed_fields = _diff_paths(current, merged)

@@ -18,9 +18,11 @@ from pathlib import Path
 from typing import Any
 
 from probos.knowledge.records_store import (
+    FRONTMATTER_UNPARSED_KEY,  # BF-940 slice 4 (L19): owned by the store
     _CLASSIFICATION_LEVELS,
     _IDENTITY_GATED_CLASSIFICATIONS,  # BF-679: owned by the store
     _UNRESTRICTED_READER,  # BF-679: owned by the store
+    effective_classification,  # BF-966 (#1797): owned by the store; the index applies the keyword readers' rule
 )
 
 logger = logging.getLogger(__name__)
@@ -32,7 +34,7 @@ _RECORD_FRONTMATTER_CHARS = 4000  # Cap on the serialised frontmatter sidecar.
 _RECORDS_BACKFILL_LIMIT = 500     # Bound on a single backfill pass.
 
 # AD-1138: level assumed when a scope label is unknown. Matches the
-# ``_CLASSIFICATION_LEVELS.get(scope, 2)`` default in RecordsStore.search.
+# ``_CLASSIFICATION_LEVELS.get(scope, 2)`` default in ``record_is_readable``.
 _DEFAULT_SCOPE = "ship"
 
 
@@ -66,8 +68,9 @@ def build_records_scope_filter(
 
     BF-679: ``reader_id`` is tri-state and the distinction is load-bearing.
     ``None`` means *identity not specified* and applies the scope level only;
-    ``""`` means an **anonymous** reader and runs the identity layer with an
-    empty author, so the identity-gated classifications are withheld. Before
+    ``""`` means an **anonymous** reader: it is nobody's author, so it gets no
+    author clause (BF-969, #1800), and the identity-gated classifications are
+    withheld but for a ``department`` record of its own department. Before
     BF-679 an empty string took the ``None`` branch, which is how
     ``build_records_scope_filter("ship")`` came to hand every agent's
     ``private`` notebook to every other agent through Oracle Tier 2.
@@ -79,6 +82,13 @@ def build_records_scope_filter(
     the installed version): a flat multi-key ``where`` raises ``Expected where
     to have exactly one operator``, and ``$and``/``$or`` require **at least
     two** expressions. So a lone predicate is always emitted flat.
+
+    BF-966 (#1797): the index holds only the four labels, because
+    :meth:`SemanticKnowledgeLayer.index_record` normalises through
+    ``effective_classification``. A stored odd label would match none of the
+    ``$in`` lists below and so be withheld from every reader, stricter than
+    ``private``. No ``$nin`` clause is added: behind the normalisation it is
+    dead code, and it could only loosen.
 
     Returns:
         A ``where`` dict, or ``None`` when the scope admits nothing — callers
@@ -109,7 +119,9 @@ def build_records_scope_filter(
     clauses: list[dict[str, Any]] = []
     if open_labels:
         clauses.append({"classification": {"$in": open_labels}})
-    if gated_labels:
+    # BF-969 (#1800): the anonymous reader "" is nobody's author, so it gets no author clause; a note stored with
+    # author "" then matches no reader by authorship, as record_is_readable and read_entry read it.
+    if gated_labels and reader_id:
         clauses.append({"$and": [
             {"classification": {"$in": gated_labels}},
             {"author": reader_id},
@@ -378,11 +390,11 @@ class SemanticKnowledgeLayer:
 
         ``classification`` travels into ChromaDB metadata so retrieval can
         enforce scope in the query itself (see
-        :func:`build_records_scope_filter`). An unrecognised classification is
-        normalised to ``\"private\"`` \u2014 level 0, matching the
-        ``_CLASSIFICATION_LEVELS.get(doc_class, 0)`` default in
-        ``RecordsStore.search`` \u2014 so an odd label is never silently treated as
-        broadly readable.
+        :func:`build_records_scope_filter`). BF-966 (#1797): a classification
+        that is not exactly one of the four labels, of any type, is indexed as
+        ``private`` through ``records_store.effective_classification``, the rule
+        the keyword readers apply, with a WARNING. So the index holds only the
+        four labels, and an odd label is never treated as broadly readable.
 
         The document ID is derived from ``path``, so re-writing a record
         upserts in place rather than accumulating stale copies.
@@ -391,19 +403,24 @@ class SemanticKnowledgeLayer:
         if col is None:
             return
 
-        if classification not in _CLASSIFICATION_LEVELS:
+        # BF-966 (#1797): the keyword readers' rule. It never raises, so a list or a mapping is indexed as
+        # private instead of raising out of the backfill (which left the note keyword-only). The helper returns
+        # the input itself for an exact label and the literal "private" otherwise, so identity tells them apart
+        # without calling the input's own comparison (a str subclass's __ne__ may raise).
+        effective = effective_classification(classification)
+        if effective is not classification:
             logger.warning(
                 "AD-1138: record %s has unknown classification %r; indexing it as "
                 "'private' so scope filtering stays conservative",
                 path, classification,
             )
-            classification = "private"
+        classification = effective
 
         header = path
         if topic:
             header += f" \u2014 {topic}"
         if tags:
-            header += f" [{', '.join(tags)}]"
+            header += f" [{', '.join(str(tag) for tag in tags)}]"  # BF-940 slice 2 (L27): a tag may be a number
         doc = f"{header}\n{content[:_RECORD_DOC_CHARS]}"
 
         try:
@@ -681,6 +698,10 @@ class SemanticKnowledgeLayer:
         honest-degrades per entry: one unreadable record does not abort the
         pass.
 
+        BF-940 slice 4 (L19): a record whose frontmatter did not load (its listing entry carries ``FRONTMATTER_UNPARSED_KEY``) is
+        left out, so a note that is private on disk is never indexed as ``ship``. It stays pending: the next pass indexes it once its
+        frontmatter loads, and the boot logs how many were left out and the first five paths, never a value.
+
         BF-684: **resumable.** The pass skips records the collection already
         holds and spends its budget on ones it does not, so successive boots
         converge on full coverage instead of re-walking the same prefix.
@@ -714,7 +735,15 @@ class SemanticKnowledgeLayer:
             )
             return 0
 
-        paths = [e.get("path", "") for e in entries if e.get("path", "")]
+        # BF-940 slice 4 (L19): a record whose frontmatter did not load reads as {}, so it would be indexed as ``ship`` whatever its text
+        # says. It is left out and the boot says so, by path and never by value; the next pass indexes it once its frontmatter loads.
+        unparsed = [e["path"] for e in entries if e.get("path", "") and e.get(FRONTMATTER_UNPARSED_KEY)]
+        if unparsed:
+            logger.warning(
+                "BF-940 slice 4 (L19): %d record(s) are not indexed because their frontmatter does not load, so their classification "
+                "is unknown; the next pass indexes each once it loads: %s", len(unparsed), ", ".join(unparsed[:5]),
+            )
+        paths = [e.get("path", "") for e in entries if e.get("path", "") and not e.get(FRONTMATTER_UNPARSED_KEY)]
         already = self._indexed_record_paths(paths)
         pending = [p for p in paths if p not in already]
 

@@ -97,6 +97,7 @@ class BuildPipeline:
             builder_source=builder_source,
             runtime=self._runtime,
             specialty=specialty,
+            admission_service=getattr(self._runtime, "admission_service", None),  # AD-1346 M3e2b: the targeted-test sink's service; None checks nothing
         )
 
     @staticmethod

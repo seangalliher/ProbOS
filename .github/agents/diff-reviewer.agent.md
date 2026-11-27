@@ -78,12 +78,28 @@ Work through these explicitly and report each one.
 - If the change is gated by a flag or config, does the documented combination of
   flags actually work?
 
+**Size**
+- Is there code the issue and prompt do not need: an option or setting nobody
+  asked for, a helper with one caller, handling for a case that cannot occur, a
+  change to neighbouring code, or something this change made unused and left
+  behind? Name the lines to delete and label the finding **size**. It is not a P1
+  unless the extra code itself breaks something.
+- Structure the Engineering Principles require (Protocol interfaces, abstract
+  storage interfaces, validation at every boundary, the exception-handling tiers)
+  is never a size finding.
+
+**Assumptions**
+- Does each reading in the Builder's report fit the prompt and the code? A
+  reading that changes what the prompt asks for, or settles a design choice, is a
+  finding.
+
 ## Output
 
 Order findings by severity: what breaks on the next run first.
 
 For each: **what** is wrong, **the evidence** (command run, output, file:line),
 **why it matters** in terms of observable behaviour, and **the smallest fix**.
+Tag each size finding **size**, so the orchestrator can apply its Size findings rule.
 
 Separate what must be fixed before this commit from what should be filed and
 scheduled. Say which findings you verified by execution and which by reading —

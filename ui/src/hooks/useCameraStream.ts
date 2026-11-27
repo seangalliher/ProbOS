@@ -5,7 +5,9 @@
  *   - visibilitychange → hidden: pause loop, keep stream alive.
  *   - beforeunload: stop unconditionally.
  *   - 503 from server: stop + surface error.
- *   - 429 from server: pass-through (token bucket throttles naturally).
+ *   - 429 from server: honour Retry-After, else back off 1 s, 2 s, 4 s ... up to 30 s;
+ *     ticks inside the pause return without capturing (BF-933).
+ *   - a start that overlaps a pending start shares it; a stop cancels a pending start (BF-933).
  *   - 413 from server: log + continue (current frame dropped).
  *
  * AD-731: frames POSTed as multipart JPEG; server returns a SHA — client
@@ -31,6 +33,17 @@ let _forceNext = false;
 // capture loop derives agent_ids from the multiplexer bindings that match
 // this device. ``null`` = legacy single-stream behavior (zero-arg call).
 let _activeDeviceId: string | null = null;
+// BF-933: the loop's guards. A start is one shared promise; every stop bumps the epoch, which is how a start that
+// is still waiting on the camera or the video learns it was cancelled; an upload in flight holds the next tick
+// off; a 429 holds it off until _resumeAtMs.
+const FRAME_UPLOAD_TIMEOUT_MS = 10_000;
+const BACKOFF_BASE_MS = 1_000;
+const RETRY_AFTER_MAX_MS = 30_000;
+let _startInFlight: Promise<void> | null = null;
+let _epoch = 0;
+let _uploading = false;
+let _resumeAtMs = 0;
+let _rateLimited = 0;
 // AD-742c-6: future-proofing for true multi-stream capture. v1 keeps the
 // single-video / single-canvas loop; the map currently holds at most one
 // stream keyed by deviceId (or "default" when no deviceId is bound).
@@ -67,6 +80,14 @@ function _stopTracks() {
   _sessionId = null;
   _activeDeviceId = null;
   _streams.clear();
+  // BF-933: every stop is also a cancel. A start still waiting on the camera sees a new epoch and releases what it
+  // was given; a call after a stop is not held to the cancelled start; the old call's upload guard and 429 pause
+  // do not outlive it. _testReset goes through here, so a test resets all of it.
+  _epoch += 1;
+  _startInFlight = null;
+  _uploading = false;
+  _resumeAtMs = 0;
+  _rateLimited = 0;
 }
 
 /**
@@ -95,7 +116,32 @@ function _computeAgentIds(): string {
   return agentIds.join(',');
 }
 
+/** BF-933: RFC 9110 Retry-After is delta-seconds or an HTTP-date; anything else is no advice. */
+function _parseRetryAfterMs(raw: string | null): number | null {
+  if (raw === null) return null;
+  const value = raw.trim();
+  if (/^\d+$/.test(value)) return Number(value) * 1000;
+  const at = Date.parse(value);
+  return Number.isNaN(at) ? null : Math.max(0, at - Date.now());
+}
+
+/** BF-933: one capture-and-upload at a time. A tick that finds the previous upload still in flight, or the loop
+ *  paused by a 429, returns at once. The flag belongs to the epoch that set it: an upload that settles after a
+ *  stop (and perhaps a new start) does not release a newer loop's guard. */
 async function _captureAndUpload() {
+  if (_uploading || Date.now() < _resumeAtMs) return;
+  const epoch = _epoch;
+  _uploading = true;
+  try {
+    await _captureAndUploadFrame();
+  } finally {
+    if (epoch === _epoch) _uploading = false;
+  }
+}
+
+async function _captureAndUploadFrame() {
+  // BF-933: the epoch this upload belongs to. Its answer is acted on only while that epoch is the current one.
+  const epoch = _epoch;
   if (!_video || !_canvas || !_sessionId) return;
   if (_video.videoWidth === 0 || _video.videoHeight === 0) return; // not ready yet
   if (document.visibilityState === 'hidden') return; // paused while tab is hidden
@@ -132,20 +178,37 @@ async function _captureAndUpload() {
     form.append('agent_ids', agentIds);
   }
 
+  // BF-933: bound the upload, so a request that never answers cannot hold the in-flight guard for good.
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), FRAME_UPLOAD_TIMEOUT_MS);
   try {
-    const resp = await fetch(FRAME_ENDPOINT, { method: 'POST', body: form });
+    const resp = await fetch(FRAME_ENDPOINT, { method: 'POST', body: form, signal: controller.signal });
+    if (epoch !== _epoch) return; // a stop came during the upload: the answer is not for the loop that runs now
     if (resp.status === 503) {
       const body = await resp.json().catch(() => ({}));
+      if (epoch !== _epoch) return; // a stop came while the body was read: the same
       useCameraStore.getState().setError(`camera disabled by server: ${body.error ?? 'unknown'}`);
       await stopCameraStream();
       return;
     }
     if (resp.status === 200) {
       useCameraStore.getState().incrementFramesSent();
+      _rateLimited = 0; // a 200 ends the doubling
     }
-    // 429 / 413: drop the frame, the next interval tick tries again.
+    if (resp.status === 429) {
+      // BF-933: the server's token bucket said slow down. Honour Retry-After; without a usable one back off
+      // 1 s, 2 s, 4 s ... The interval keeps its period; ticks inside the pause return without capturing.
+      _rateLimited += 1;
+      const advised = _parseRetryAfterMs(resp.headers.get('Retry-After'));
+      const waitMs = advised ?? BACKOFF_BASE_MS * 2 ** (_rateLimited - 1);
+      _resumeAtMs = Date.now() + Math.min(waitMs, RETRY_AFTER_MAX_MS);
+    }
+    // 413: drop the frame, the next interval tick tries again.
   } catch {
     // Network blip — keep the loop alive; the next frame will retry.
+  } finally {
+    // BF-933: the deadline covers the answer's body too (a 503 whose body never arrives is cut by it).
+    window.clearTimeout(timeout);
   }
 }
 
@@ -158,7 +221,19 @@ export async function startCameraStream(opts?: {
   // the agent_ids form field per binding (see ``_computeAgentIds``).
   deviceId?: string;
 }): Promise<void> {
+  // BF-933: concurrent callers share the one pending start (the guard below only sees a camera that has already
+  // been granted); a call after a stop starts afresh, because the stop dropped the pending start.
+  if (_startInFlight) return _startInFlight;
   if (_stream) return; // idempotent
+  const attempt: Promise<void> = _startCamera(opts).finally(() => {
+    if (_startInFlight === attempt) _startInFlight = null;
+  });
+  _startInFlight = attempt;
+  return attempt;
+}
+
+async function _startCamera(opts: Parameters<typeof startCameraStream>[0]): Promise<void> {
+  const epoch = _epoch;
   _fps = opts?.fps ?? 1;
   _jpegQuality = opts?.jpegQuality ?? 0.6;
   _maxDim = opts?.maxDimension ?? 512;
@@ -166,6 +241,7 @@ export async function startCameraStream(opts?: {
   useCameraStore.getState().setFps(_fps);
   useCameraStore.getState().setError(null);
 
+  let stream: MediaStream;
   try {
     const videoConstraints: MediaTrackConstraints = {
       width: { ideal: 640 },
@@ -174,15 +250,24 @@ export async function startCameraStream(opts?: {
     if (_activeDeviceId) {
       videoConstraints.deviceId = { exact: _activeDeviceId } as ConstrainDOMString;
     }
-    _stream = await navigator.mediaDevices.getUserMedia({
+    stream = await navigator.mediaDevices.getUserMedia({
       video: videoConstraints,
       audio: false,
     });
   } catch (err) {
-    useCameraStore.getState().setError(`getUserMedia failed: ${String(err)}`);
-    _activeDeviceId = null;
+    // BF-933: a start that a stop has cancelled reports nothing and touches nothing of a newer start.
+    if (epoch === _epoch) {
+      useCameraStore.getState().setError(`getUserMedia failed: ${String(err)}`);
+      _activeDeviceId = null;
+    }
     return;
   }
+  if (epoch !== _epoch) {
+    // BF-933: a stop arrived while the camera was being opened; release what was granted and start no loop.
+    stream.getTracks().forEach((t) => t.stop());
+    return;
+  }
+  _stream = stream;
   // AD-742c-6: register in the multiplex map alongside the legacy _stream
   // singleton. v1 only ever has one entry; the map is plumbing for the
   // forward-marker true-multi-stream variant.
@@ -199,6 +284,8 @@ export async function startCameraStream(opts?: {
   } catch {
     /* play promise sometimes rejects on hidden tabs; the capture loop will skip until visible */
   }
+  // BF-933: a stop that arrived during play() has already released the stream; do not start a loop.
+  if (epoch !== _epoch) return;
   _canvas = document.createElement('canvas');
 
   useCameraStore.getState().setActive(true, _sessionId);

@@ -59,7 +59,11 @@ class _Bus:
 
     async def drain(self):
         while self.tasks:
-            await asyncio.gather(*tuple(self.tasks))
+            pending = tuple(self.tasks)
+            try:
+                await asyncio.gather(*pending)
+            finally:
+                self.tasks.difference_update(task for task in pending if task.done())
 
 
 class _Credentials:

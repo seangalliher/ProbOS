@@ -14,13 +14,15 @@ enforce flag (BF-926, #1656): it only emits MEMORY_LEAK_SUSPECTED.
 from __future__ import annotations
 
 import logging
+import math
 import re
 import time as _time
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
-from probos.types import Episode
+from probos.cycle_trace import VERDICT_EMPTY, VERDICT_RESOLVED, VERDICT_UNRESOLVED
+from probos.types import Episode, MemorySource
 
 logger = logging.getLogger(__name__)
 
@@ -48,11 +50,28 @@ class StoreSecurityDecision:
     matched_pattern: str = ""
 
 
-# AD-607b: known MemorySource enum values (mirrors AD-541 MemorySource).
-KNOWN_MEMORY_SOURCES: frozenset[str] = frozenset({
+# AD-607b: the episode sources the provenance check knows. BF-938 (#1680): the set claimed to mirror AD-541's
+# MemorySource, lacked four of its five values and every label production writes outside that enum, so
+# enforce_provenance would have dropped every reflection, cross-agent recall, chat and rebuilt episode ProbOS writes.
+# tests/test_bf938_episode_source_guard.py fails when an Episode( construction under src/probos writes a source that
+# is not here.
+_AD607_ORIGINAL_SOURCES: frozenset[str] = frozenset({
     "direct", "introspection", "designed", "federated", "imported",
     "consolidated_thought", "seeded",
 })
+# The sources production writes outside MemorySource, each with its writer (BF-938, amendment A-5).
+_PRODUCTION_EPISODE_SOURCES: frozenset[str] = frozenset({
+    "action_dispatch",     # cognitive/dm/reply_pipeline.py
+    "captain_chat",        # routers/chat.py, the Captain's chat
+    "crew_collaboration",  # cognitive/crew_synth.py, crew synthesis
+    "group_chat_fanout",   # routers/thread_fanout.py, AD-933a
+    "multi_agent_chat",    # routers/chat.py, AD-719
+    "qualification_test",  # cognitive/memory_probes.py, probe episodes seeded into the live store and recalled
+    "wardroom_import",     # maintenance/rebuild_episodic.py, AD-819's rebuild from the Ward Room
+})
+KNOWN_MEMORY_SOURCES: frozenset[str] = (
+    _AD607_ORIGINAL_SOURCES | frozenset(source.value for source in MemorySource) | _PRODUCTION_EPISODE_SOURCES
+)
 
 
 # Pattern set scoped tightly to known prompt-injection shapes. Default-set
@@ -75,18 +94,53 @@ _DEFAULT_ANCHOR_WEIGHTS: dict[str, float] = {
 }
 
 
-def validate_provenance(episode: Episode) -> tuple[bool, str]:
+# AD-1360 (#1828): the reason AD-607b returns for a judged episode's recorded verdict. A verdict this map does not name
+# ("unchecked", or "" on an episode that has a store time) returns direct_source_unchecked_correlation_id.
+_CORRELATION_REASONS: dict[str, str] = {
+    VERDICT_EMPTY: "direct_source_missing_correlation_id",
+    VERDICT_UNRESOLVED: "direct_source_unresolved_correlation_id",
+}
+_UNCHECKED_CORRELATION_REASON = "direct_source_unchecked_correlation_id"
+
+
+def configured_correlation_cutoff(config: Any) -> float:
+    """AD-1360 (#1828): the ``correlation_cutoff`` a recall config sets, or 0.0, which judges nothing.
+
+    0.0 for no config, a config without the field (a test's namespace), a bool, or a value that is not a finite
+    positive number, so a mocked config never arms the rule.
+    """
+    value = getattr(config, "correlation_cutoff", 0.0)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return 0.0
+    cutoff = float(value)
+    return cutoff if math.isfinite(cutoff) and cutoff > 0.0 else 0.0
+
+
+def validate_provenance(episode: Episode, *, correlation_cutoff: float = 0.0) -> tuple[bool, str]:
     """AD-607b: provenance integrity check. Returns (ok, reason).
 
-    Reason is empty when provenance is intact.
+    Reason is empty when provenance is intact; otherwise ``missing_agent_ids``, ``unknown_source:<source>``, or, for a
+    ``direct`` episode stored strictly after ``correlation_cutoff`` (epoch seconds; the default 0.0 judges none),
+    ``direct_source_missing_correlation_id``, ``direct_source_unresolved_correlation_id`` or
+    ``direct_source_unchecked_correlation_id`` (AD-1360, #1828).
     """
     if not getattr(episode, "agent_ids", None):
         return False, "missing_agent_ids"
     source = getattr(episode, "source", "") or ""
     if source not in KNOWN_MEMORY_SOURCES:
         return False, f"unknown_source:{source}"
-    if source == "direct" and not getattr(episode, "correlation_id", "") :
-        return False, "direct_source_missing_correlation_id"
+    # BF-938 (#1680) retired the rule that a direct episode carries a correlation id (the Captain's decision of
+    # 2026-11-18): it checked only that the id was non-empty, and most direct producers set none. AD-1360 (#1828)
+    # restores it on the record EpisodicMemory.store() writes: the store time and whether the id resolved in the
+    # cycle-id registry then. Only a direct episode stored strictly after the cutoff is judged, so an episode with no
+    # record (stored before AD-1360, seeded or restored; stored_at 0.0) is never flagged, and with the cutoff at 0.0
+    # no episode is.
+    if correlation_cutoff > 0.0 and source == MemorySource.DIRECT.value:
+        stored_at = getattr(episode, "stored_at", 0.0)
+        if isinstance(stored_at, (int, float)) and stored_at > correlation_cutoff:
+            verdict = getattr(episode, "correlation_verdict", "")
+            if verdict != VERDICT_RESOLVED:
+                return False, _CORRELATION_REASONS.get(verdict, _UNCHECKED_CORRELATION_REASON)
     return True, ""
 
 
@@ -180,7 +234,7 @@ def validate_recall_result(
     anomalies: list[str] = []
     score = 0.0
 
-    ok, reason = validate_provenance(episode)
+    ok, reason = validate_provenance(episode, correlation_cutoff=configured_correlation_cutoff(config))
     if not ok:
         anomalies.append("missing_agent_ids" if reason == "missing_agent_ids" else "provenance_gap")
         score += 0.4

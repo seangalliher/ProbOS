@@ -23,7 +23,9 @@ from probos.cognitive.spine import CognitiveSpine
 from probos.cognitive.swe_harness.agentic_loop import AgenticLoop
 from probos.config import DmAgenticConfig
 from probos.config_models.agentic import EconomicJudgmentConfig
+from probos.tools.protocol import ToolPermission  # #1796: a dispatch run offers its granted tools.
 
+from tests.offered_tools import offer, offer_scripted  # #1796: the loop runs only offered tools.
 from tests.test_ad1320_agentic_budget_awareness import (
     Client, Resp, Tools, answer, fetch, state, run as run_ad1320, MARKER,
 )
@@ -65,7 +67,7 @@ async def _run(
         **extra, **kw,
     )
     result = await loop.run(
-        system_prompt="You are Ezri.", user_message="Go.", tools=[],
+        system_prompt="You are Ezri.", user_message="Go.", tools=[*offer_scripted(script)],  # #1796: the loop runs only offered tools, so the scripted calls' tools are offered.
         context={"agent_id": "counselor-ezri"},
     )
     return result, client, tools
@@ -114,7 +116,7 @@ async def test_block_appended_after_ad1320_note_on_structured_path() -> None:
         budget_awareness_state=awareness, inner_loop_hook=organ,
         structured_tool_messages=True,
     )
-    await loop.run(system_prompt="s", user_message="u", tools=[], context={"agent_id": "a"})
+    await loop.run(system_prompt="s", user_message="u", tools=[*offer("http_fetch")], context={"agent_id": "a"})  # #1796: the loop runs only offered tools, so the scripted calls' tool is offered.
     prompt = client.requests[2].system_prompt
     assert MARKER in prompt and ECONOMIC_MARKER in prompt
     assert prompt.index(MARKER) < prompt.index(ECONOMIC_MARKER)
@@ -246,9 +248,11 @@ async def test_seam_crew_child_real_work_item_value_stakes_reaches_next_llm_requ
     store = _WorkItemStore(SimpleNamespace(value_band="minor", stakes="high"))
     client = Client([Resp([_fetch_use()], tokens=900), answer(5, "Done.")])
     executor = agentic_dispatch.WorkItemAgenticExecutor(llm_client=client)
+    runtime = _runtime(store)
+    await runtime.tool_permission_store.issue_grant("counselor-ezri", "http_fetch", ToolPermission.READ)  # #1796: the loop runs only offered tools; a dispatch run offers its granted tools.
     outcome = await executor.run(
         agent_id="counselor-ezri", instructions="You are Ezri.", task_text="Go.",
-        runtime=_runtime(store), max_iterations=5, token_budget=1000,
+        runtime=runtime, max_iterations=5, token_budget=1000,
         extra_context={"_crew_work_item_id": "wi-1", "_crew_session_id": "s-1"},
         inner_loop_hook=organ,
     )
@@ -371,6 +375,7 @@ async def test_seam_dm_turn_organ_enabled_block_reaches_next_request_and_detach_
 
     agent = _DmAgent()
     agent._compose_economic_judgment_organ()
+    await runtime.tool_permission_store.issue_grant("agent-1", "http_fetch", ToolPermission.READ)  # #1796: the loop runs only offered tools; a dispatch run offers its granted tools.
     text = await agent._maybe_run_conversational_agentic(
         {"intent": "direct_message", "params": {}},
         system_prompt="You are Ezri.", user_message="Fetch two pages.",
@@ -577,9 +582,11 @@ async def test_crew_child_default_tier_priced_as_request_tier() -> None:
     seen: list[dict[str, Any]] = []
     client = Client([Resp([_fetch_use()], tokens=300), answer(5, "Done.")])
     executor = agentic_dispatch.WorkItemAgenticExecutor(llm_client=client)
+    runtime = _priced_runtime()
+    await runtime.tool_permission_store.issue_grant("counselor-ezri", "http_fetch", ToolPermission.READ)  # #1796: the loop runs only offered tools; a dispatch run offers its granted tools.
     outcome = await executor.run(
         agent_id="counselor-ezri", instructions="You are Ezri.", task_text="Go.",
-        runtime=_priced_runtime(), max_iterations=5, tier=None,
+        runtime=runtime, max_iterations=5, tier=None,
         inner_loop_hook=_spying_handle(seen),
     )
     assert outcome.stopped_reason == "complete"
@@ -654,6 +661,7 @@ async def test_dm_path_passes_ratio_not_multiplier(monkeypatch: Any) -> None:
 
     agent = _DmAgent()
     agent._compose_economic_judgment_organ()
+    await runtime.tool_permission_store.issue_grant("agent-1", "http_fetch", ToolPermission.READ)  # #1796: the loop runs only offered tools; a dispatch run offers its granted tools.
     text = await agent._maybe_run_conversational_agentic(
         {"intent": "direct_message", "params": {}},
         system_prompt="You are Ezri.", user_message="Fetch two pages.",
@@ -791,7 +799,7 @@ async def test_loop_notes_charge_before_first_await(tokens: int, source: str) ->
         llm_client=Client([first, answer(5, "ok.")]), tool_executor=_EvTools(),
         inner_loop_hook=rec, on_model_request_presented=presented,
     )
-    result = await loop.run(system_prompt="s", user_message="u", tools=[], context={"agent_id": "a"})
+    result = await loop.run(system_prompt="s", user_message="u", tools=[*offer("fetch")], context={"agent_id": "a"})  # #1796: the loop runs only offered tools, so the scripted call's tool is offered.
     assert result.token_source == {"measured": "measured", "estimated": "mixed"}[source]
     names = [e if isinstance(e, str) else e[0] for e in events]
     note_at = names.index("note_charge")
@@ -881,7 +889,7 @@ async def _cancel_scenario(where: str) -> tuple[_RecHook, EconomicJudgmentOrgan,
         tools = Tools()
     loop = AgenticLoop(llm_client=client, tool_executor=tools, inner_loop_hook=rec)
     task = asyncio.create_task(
-        loop.run(system_prompt="s", user_message="u", tools=[], context={"agent_id": "a"})
+        loop.run(system_prompt="s", user_message="u", tools=[*offer("fetch")], context={"agent_id": "a"})  # #1796: the loop runs only offered tools, so the scripted call's tool is offered.
     )
     await asyncio.wait_for(parked.wait(), 5)
     task.cancel()
@@ -1053,7 +1061,7 @@ async def _turn(organ: EconomicJudgmentOrgan, traces: list[dict[str, Any]], key:
     client = _YieldClient(spec["script"]())
     loop = AgenticLoop(llm_client=client, tool_executor=_TurnTools(tool_rv), inner_loop_hook=rec,
                        tier=spec["tier"], token_budget=spec["budget"], max_total_iterations=50)
-    result = await loop.run(system_prompt=f"You are {key}.", user_message="Go.", tools=[],
+    result = await loop.run(system_prompt=f"You are {key}.", user_message="Go.", tools=[*offer_scripted(spec["script"]())],  # #1796: the loop runs only offered tools, so the scripted calls' tools are offered.
                             context={"agent_id": f"agent-{key}"})
     return {
         "prompts": [_ID.sub("<id>", f"{r.system_prompt}|{r.prompt}|{r.messages}") for r in client.requests],

@@ -42,7 +42,7 @@ from probos.startup.finalize import (
 )
 from probos.substrate.registry import AgentRegistry
 from probos.tools.permissions import ToolPermissionStore
-from probos.tools.protocol import ToolResult, ToolType
+from probos.tools.protocol import ToolPermission, ToolResult, ToolType
 from probos.tools.registry import ToolRegistry
 from probos.types import LLMResponse
 from probos.workforce import WorkItemStore
@@ -176,6 +176,7 @@ async def board(root: Path, llm: ScriptedLLM, *, config: DmAgenticConfig | None 
     registry = AgentRegistry()
     await registry.register(agent)
     runtime.registry = registry
+    await runtime.tool_permission_store.issue_grant(AGENT, "http_fetch", ToolPermission.READ)  # #1796: the loop runs only offered tools; a dispatch run offers its granted tools.
     assert _wire_capability_gap_driver(runtime=runtime, config=system) is True
     assert _wire_continue_extension_reconciler(runtime=runtime) is True
     return Ship(runtime=runtime, bus=bus, items=items, requests=requests, permits=permits,

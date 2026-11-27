@@ -130,7 +130,11 @@ class _EventBus:
     async def drain(self) -> None:
         """Await every listener task, including ones they spawn in turn."""
         while self._tasks:
-            await asyncio.gather(*tuple(self._tasks))
+            pending = tuple(self._tasks)
+            try:
+                await asyncio.gather(*pending)
+            finally:
+                self._tasks.difference_update(task for task in pending if task.done())
 
 
 class _Runtime(SimpleNamespace):
@@ -723,7 +727,11 @@ class TestPromotionPublishesTheWorkItemId:
         )
         release.set()
         while hold:
-            await asyncio.gather(*tuple(hold), return_exceptions=True)
+            pending = tuple(hold)
+            try:
+                await asyncio.gather(*pending, return_exceptions=True)
+            finally:
+                hold.difference_update(task for task in pending if task.done())
 
         # Assert — one publication, and it names the item the ack names.
         assert started.is_set()
@@ -789,7 +797,11 @@ class TestPromotionPublishesTheWorkItemId:
         )
         release.set()
         while hold:
-            await asyncio.gather(*tuple(hold), return_exceptions=True)
+            pending = tuple(hold)
+            try:
+                await asyncio.gather(*pending, return_exceptions=True)
+            finally:
+                hold.difference_update(task for task in pending if task.done())
 
         # Assert — the Captain still gets the acknowledgement.
         assert "task" in ack

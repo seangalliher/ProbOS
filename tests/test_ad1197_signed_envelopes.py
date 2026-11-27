@@ -2050,6 +2050,7 @@ def _too_deep_body() -> dict[str, Any]:
     pytest.fail(f"premise: canonicalize must raise RecursionError for a body nested {_DEEP} deep in this process")
 
 
+@pytest.mark.usefixtures("gc_quiet_at_recursion_limit")  # BF-986 (#1754): _too_deep_body and the outbound seal overflow the Python stack
 @pytest.mark.parametrize("policy", [POLICY_SIGN, POLICY_REQUIRE])
 async def test_a_body_too_deep_for_rfc8785_is_never_signed(
     policy: str, tmp_path: Path, caplog: pytest.LogCaptureFixture,
@@ -2057,6 +2058,7 @@ async def test_a_body_too_deep_for_rfc8785_is_never_signed(
     await _send_an_unsignable_body(tmp_path, caplog, policy, _too_deep_body())
 
 
+@pytest.mark.usefixtures("gc_quiet_at_recursion_limit")  # BF-986 (#1754): _too_deep_body and the inbound check overflow the Python stack
 async def test_an_inbound_signed_body_too_deep_for_rfc8785_is_rejected(
     tmp_path: Path, caplog: pytest.LogCaptureFixture,
 ) -> None:

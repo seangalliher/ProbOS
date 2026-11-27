@@ -1,6 +1,8 @@
 /* Full Kanban — full-width kanban board for main viewer (AD-325) */
 
+import { useState } from 'react';
 import { useStore } from '../../store/useStore';
+import { approveQueuedBuild } from '../../store/buildQueueApprove';
 import type { MissionControlTask } from '../../store/types';
 
 const DEPT_COLORS: Record<string, string> = {
@@ -30,6 +32,8 @@ function elapsedTime(task: MissionControlTask): string {
 
 function KanbanCard({ task }: { task: MissionControlTask }) {
   const deptColor = DEPT_COLORS[task.department] || '#888';
+  // BF-937 (#1678): what the vessel answered to the last Approve click on this card.
+  const [note, setNote] = useState('');
 
   return (
     <div style={{
@@ -70,13 +74,7 @@ function KanbanCard({ task }: { task: MissionControlTask }) {
               color: '#50c878', fontSize: 10, fontWeight: 600, cursor: 'pointer',
             }}
             onClick={async () => {
-              try {
-                await fetch('/api/build/queue/approve', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ build_id: task.id }),
-                });
-              } catch { /* ignore */ }
+              setNote(await approveQueuedBuild(task.id));
             }}
           >
             Approve
@@ -100,6 +98,11 @@ function KanbanCard({ task }: { task: MissionControlTask }) {
           >
             Reject
           </button>
+        </div>
+      )}
+      {note && (
+        <div role="status" style={{ color: '#d0a030', fontSize: 9, marginTop: 4, marginLeft: 12 }}>
+          {note}
         </div>
       )}
       {task.status === 'failed' && task.error && (

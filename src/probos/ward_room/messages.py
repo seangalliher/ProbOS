@@ -9,6 +9,7 @@ import time
 import uuid
 from typing import Any, Callable
 
+from probos.cycle_trace import current_cycle_id  # AD-1360 (#1828)
 from probos.ward_room.models import (
     WardRoomCredibility,
     WardRoomPost,
@@ -129,6 +130,7 @@ class MessageStore:
             author_id=author_id, author_callsign=author_callsign,
             post_body=post_body, channel_id=channel_id,
             peer_matches=peer_matches,
+            identity_registry=self._identity_registry,
         )
 
     async def _check_echo_trace(
@@ -354,9 +356,10 @@ class MessageStore:
                     }],
                     reflection=f"{author_callsign or author_id} replied in thread '{thread_title[:60]}': {body[:300]}",
                     source="direct",
+                    correlation_id=current_cycle_id(),  # AD-1360 (#1828): the cycle the post is made in; "" outside one
                     anchors=AnchorFrame(
                         channel="ward_room",
-                        channel_id=channel_name,
+                        channel_id=thread_channel_id,  # BF-963 (#1793): the channel's id, as a thread episode stores it
                         thread_id=thread_id,
                         trigger_type="ward_room_reply",
                         participants=[author_callsign or author_id],
@@ -406,9 +409,10 @@ class MessageStore:
                         f"Similarity: {top_match['similarity']:.0%}."
                     ),
                     source="direct",
+                    correlation_id=current_cycle_id(),  # AD-1360 (#1828): the cycle the post is made in; "" outside one
                     anchors=AnchorFrame(
                         channel="ward_room",
-                        channel_id=channel_name,
+                        channel_id=thread_channel_id,  # BF-963 (#1793): the channel's id, not its name
                         thread_id=thread_id,
                         trigger_type="peer_repetition",
                         trigger_agent=top_match["author_callsign"],
@@ -527,7 +531,10 @@ class MessageStore:
     async def endorse(
         self, target_id: str, target_type: str, voter_id: str, direction: str,
     ) -> dict[str, Any]:
-        """Up/down/unvote. Returns {"net_score": int, "voter_direction": str}."""
+        """Up/down/unvote. Returns {"net_score": int, "voter_direction": str, "changed": bool}.
+
+        BF-934: ``changed`` is True when the stored vote differs afterwards (a new vote, a flip, an unvote that removed one) and False when it is the
+        vote the voter already held, so a caller that rewards a vote can tell a repeat from a new one."""
         if not self._db:
             raise ValueError("Ward Room not initialized")
 
@@ -564,6 +571,7 @@ class MessageStore:
 
         score_delta = 0
         cred_delta = 0
+        changed = True
 
         if direction == "unvote":
             if existing_direction == "up":
@@ -577,6 +585,7 @@ class MessageStore:
                 (target_id, voter_id),
             )
             final_direction = "none"
+            changed = existing_direction is not None  # BF-934: an unvote with no vote to remove changes nothing
         else:
             new_val = 1 if direction == "up" else -1
             if existing_direction is None:
@@ -589,7 +598,7 @@ class MessageStore:
                     (target_id,),
                 ) as cursor:
                     row = await cursor.fetchone()
-                    return {"net_score": row[0] if row else 0, "voter_direction": final_direction}
+                    return {"net_score": row[0] if row else 0, "voter_direction": final_direction, "changed": False}  # BF-934: the vote already held
             else:
                 old_val = 1 if existing_direction == "up" else -1
                 score_delta = new_val - old_val
@@ -632,7 +641,7 @@ class MessageStore:
             "net_score": net_score,
         })
 
-        return {"net_score": net_score, "voter_direction": final_direction}
+        return {"net_score": net_score, "voter_direction": final_direction, "changed": changed}
 
     # ------------------------------------------------------------------
     # Credibility

@@ -6,7 +6,7 @@ file side and the check side of that approval, and nothing else:
 
 * ``file_candidate_approval`` files one ``kind="action"`` request in the existing
   ``CapabilityRequestStore`` (tool ``repair``, action ``approve_candidate``) whose params carry the
-  candidate digest, the authority class and the campaign id. AD-1213 reserves every ``action``
+  candidate digest, the authority class and the campaign id. AD-1213 reserves a ``repair``
   request to the Captain (``delegated_approvals.classify_capability_request``). Filing runs nothing.
 * ``check_candidate_approval`` (pure) and ``authorize_candidate_execution`` (one durable read, then
   the check) answer one question: is that request the Captain's current approval of exactly this

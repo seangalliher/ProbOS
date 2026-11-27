@@ -41,7 +41,7 @@ from probos.execution.long_runs import (
 from probos.security.audit import AuditLog
 from probos.startup.shutdown import shutdown
 from probos.tools.permissions import ToolPermissionStore
-from probos.tools.protocol import ToolResult
+from probos.tools.protocol import ToolPermission, ToolResult
 from probos.tools.registry import ToolRegistry
 
 _FINAL_TEXT = "LONG-RUN-DONE-7f3a"
@@ -409,6 +409,7 @@ async def test_m1_grant_reaches_the_tool_only_from_a_promotable_turn(
         runtime.chat_thread_store = None
     probe = _GrantProbe()
     runtime.tool_registry.register(probe)
+    await runtime.tool_permission_store.issue_grant("conversation-agent", "grant_probe", ToolPermission.READ)  # #1796: the loop runs only offered tools; a dispatch run offers its granted tools.
     agent = _conversational_agent(runtime, _ScriptedLLM("grant_probe", {}))
     try:
         await asyncio.wait_for(_conversation(agent, thread_id), timeout=15)
@@ -473,8 +474,11 @@ async def test_m2_bf733_cancel_kills_the_long_child_and_the_report_is_true(
     beat_file = tmp_path / "beats.txt"
     runtime = _run_python_runtime(
         scratch=tmp_path / "scratch", max_runtime_seconds=600.0,
+        # BF-981: the watchdog's 3.0 s (was 1.0 s) counts from the promotion, when the reporter arms
+        # _PromotedRunSupervisor; it leaves the premise below 2.5 s to see a beat and still ends the run long
+        # before its 50 beats (at least 4.9 s of sleeps) can finish.
         dm_agentic=DmAgenticConfig(
-            enabled=True, promote_to_task_after_seconds=0.6, promoted_run_deadline_seconds=1.0,
+            enabled=True, promote_to_task_after_seconds=0.6, promoted_run_deadline_seconds=3.0,
         ),
         work_items=store, threads=threads,
     )
@@ -489,9 +493,13 @@ async def test_m2_bf733_cancel_kills_the_long_child_and_the_report_is_true(
         promoted = items[0]
         assert ack == _ACK_TEMPLATE.format(work_item_id=promoted.id)
 
-        # Premise: the long child is still running after the acknowledgement.
-        await asyncio.sleep(0.5)
-        assert _beats(beat_file) > beats_at_ack
+        # Premise: the long child is still running after the acknowledgement. BF-981: polled, not read after a
+        # fixed 0.5 s (a loaded gate found no beat 1.1 s into the turn, 0 > 0). The 2.5 s limit ends before the
+        # watchdog's 3.0 s, so a child too slow to start fails here instead of passing the stop check vacuously.
+        try:
+            await _wait_until(lambda: _beats(beat_file) > beats_at_ack, timeout=2.5)
+        except asyncio.TimeoutError:
+            pytest.fail("premise: the long child wrote no beat after the acknowledgement")
 
         await _drain_owned_tasks_through_cancellation(agent._promoted_turn_tasks)
         beats_at_report = _beats(beat_file)
@@ -781,6 +789,7 @@ async def _run_with_extra_context(
     """The real ``WorkItemAgenticExecutor.run`` boundary, called the way a direct turn calls it."""
     from probos.cognitive.agentic_dispatch import WorkItemAgenticExecutor
 
+    await runtime.tool_permission_store.issue_grant("conversation-agent", "grant_probe", ToolPermission.READ)  # #1796: the loop runs only offered tools; a dispatch run offers its granted tools.
     return await asyncio.wait_for(
         WorkItemAgenticExecutor(llm_client=llm).run(
             agent_id="conversation-agent", instructions="Test instructions.",
@@ -879,9 +888,9 @@ async def test_m5_second_long_run_gets_the_inline_clock_when_slots_are_full(
 
     monkeypatch.setattr(service, "admit", _recording_admit)
     tool_runtime = SimpleNamespace(
-        # H-4: the validator refuses a 4 s reach, so this config is built without it.
+        # H-4: the validator refuses a 30 s reach, so this config is built without it.
         config=SimpleNamespace(execution=ExecutionConfig.model_construct(
-            enabled=True, scratch_dir=str(tmp_path / "scratch"), max_runtime_seconds=4.0,
+            enabled=True, scratch_dir=str(tmp_path / "scratch"), max_runtime_seconds=30.0,
             max_concurrent_long_runs=1,
         )),
         audit_log=AuditLog(),
@@ -889,9 +898,17 @@ async def test_m5_second_long_run_gets_the_inline_clock_when_slots_are_full(
     )
     tool = code_execution_tool.CodeExecutionTool(runtime=tool_runtime)
     started = tmp_path / "first-started.txt"
+    release = tmp_path / "first-release.txt"
+    # BF-981: the first run holds its slot until the second has run (the release file), not for a fixed 2 s sleep
+    # inside a 3.5 s budget, whose 1.5 s margin a gate-loaded start used (#1815). Its 25 s budget: the release comes
+    # at most 15 s (the start wait below) plus the second run (its 1.0 s clock, then its kill) after the gather
+    # starts. The child's own 20 s limit only ends a run the release never reached.
     first_code = (
         f"import pathlib, time\npathlib.Path({str(started)!r}).write_text('up')\n"
-        "time.sleep(2)\nprint('first done')\n"
+        "end = time.monotonic() + 20\n"
+        f"while not pathlib.Path({str(release)!r}).exists() and time.monotonic() < end:\n"
+        "    time.sleep(0.05)\n"
+        "print('first done')\n"
     )
     second_code = "import time\ntime.sleep(2)\nprint('second done')\n"
     context = {EXECUTION_LONG_RUN_GRANT_KEY: LongRunGrant(None), "agent_id": "a", "thread_id": ""}
@@ -901,16 +918,19 @@ async def test_m5_second_long_run_gets_the_inline_clock_when_slots_are_full(
     )
 
     async def _second_once_the_first_holds_the_slot() -> ToolResult:
-        await _wait_until(started.exists, timeout=15)
-        return await tool.invoke({"code": second_code, "timeout": 3.5}, context)
+        try:
+            await _wait_until(started.exists, timeout=15)
+            return await tool.invoke({"code": second_code, "timeout": 3.5}, context)
+        finally:
+            release.write_text("go", encoding="utf-8")  # the first run ends once the second has run, however it ended
 
     try:
         first, second = await asyncio.wait_for(
             asyncio.gather(
-                tool.invoke({"code": first_code, "timeout": 3.5}, context),
+                tool.invoke({"code": first_code, "timeout": 25.0}, context),
                 _second_once_the_first_holds_the_slot(),
             ),
-            timeout=30,
+            timeout=60,
         )
         # Premise: the second call planned while the first held the pool's only slot.
         assert active_at_admit == [0, 1]
@@ -930,7 +950,7 @@ async def test_m5_second_long_run_gets_the_inline_clock_when_slots_are_full(
         records = _code_execution_records(tool_runtime.audit_log)
         assert sorted(
             (record["timeout_seconds"], record["success"], record["timed_out"]) for record in records
-        ) == [(1.0, False, True), (3.5, True, False)]
+        ) == [(1.0, False, True), (25.0, True, False)]
         assert service.active_count == 0
     finally:
         await _close_service(service)

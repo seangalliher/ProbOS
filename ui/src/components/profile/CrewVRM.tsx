@@ -15,6 +15,7 @@ import { onSpeechEvent, getActiveAudioTimeMs } from '../../audio/voice';
 import { _attachAnalyserOrSchedule, type FakeAnalyser } from '../../audio/speechAmplitude';
 import {
   buildHeuristicTrack,
+  mouthClockMs,
   type LipSyncTrack,
   type VowelKey,
   type VisemeKey,
@@ -614,7 +615,10 @@ function ParticipantVRM({ vrmUrl, agentId, expressionOverrides, signals, onLoadE
         // every direct mesh in directVowelMeshesRef.
         const now = (typeof performance !== 'undefined'
           ? performance.now() : Date.now());
-        const elapsed = now - startedAtMsRef.current;
+        // BF-931 (#1669): the 'start' event fires when play() is requested, not when the voice is audible, so
+        // the wall clock runs ahead of the sound by however long the audio takes to start. Sample on the voice's
+        // own clock: closed until it plays, then its time (the rhubarb branch above does the same).
+        const elapsed = mouthClockMs(getActiveAudioTimeMs(), now - startedAtMsRef.current);
         const w = track.sample(elapsed);
         const vowelKeys: VowelKey[] = ['aa', 'ih', 'ou', 'ee', 'oh'];
         for (const v of vowelKeys) {

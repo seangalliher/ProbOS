@@ -36,6 +36,8 @@ from typing import TYPE_CHECKING, Any, AsyncIterator, Callable, Literal, Protoco
 import aiosqlite
 
 from probos import work_item_steps as owned_steps
+from probos.admission.seam import check_at
+from probos.admission.taxonomy import EFFECT_STORE_WRITE
 from probos.crew_execution_usage import CREW_EXECUTION_TOKEN_USAGE_KEY
 from probos.economic_calibration import (
     CompletionCalibrationEvidence,
@@ -2770,8 +2772,10 @@ class WorkItemStore(EventEmitterMixin):
         owned_steps_authorizer: owned_steps.OwnedStepsAuthorizer | None = None,
         owned_steps_ttl_owner: owned_steps.OwnedStepsTTLOwner | None = None,
         owned_steps_content: owned_steps.OwnedStepsContentReader | None = None,
+        admission: object = None,  # AD-1346 M3e4d8 (D336): the service _insert_work_item hands check_at; None checks nothing
     ) -> None:
         self.db_path = db_path
+        self._admission = admission  # AD-1346 M3e4d8 (D336): constructor-injected, as D322's capability request store is
         self._db: DatabaseConnection | None = None
         self._emit_event = emit_event
         self._tick_interval = tick_interval
@@ -7703,6 +7707,7 @@ class WorkItemStore(EventEmitterMixin):
 
     async def _insert_work_item(self, item: WorkItem) -> WorkItem:
         _reject_reserved_metadata(item.metadata)
+        check_at(self._admission, effect=EFFECT_STORE_WRITE, presented_id=item.created_by)  # AD-1346 M3e4d8 (D335): the work item's store-write check, in shadow, before its transaction; it blocks nothing
         if self._db:
             async with self._booking_transaction():
                 try:

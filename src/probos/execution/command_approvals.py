@@ -20,8 +20,8 @@ the authority for the ask. This store holds what the decision allows afterwards.
   partial unique index makes a second ``approved_run`` for one approval impossible.
 * A row admits nothing for another agent, scope, canonical key or digest; nothing at or
   past ``expires_at`` (``NOT NULL``); and nothing approved by anyone but the Captain
-  under the Captain's authority (every ``action`` request is Captain-reserved,
-  ``probos.delegated_approvals.classify_capability_request``). A change of who may
+  under the Captain's authority (``probos.delegated_approvals.classify_capability_request``
+  reserves a ``run_command`` request to the Captain). A change of who may
   approve is a change of ``approver_authority``, which strands every older row.
 * Whether a work item is still open is the caller's question (it holds the work-item
   store); this module reads no other store and imports nothing from the runtime.

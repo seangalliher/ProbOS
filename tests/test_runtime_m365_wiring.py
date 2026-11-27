@@ -89,8 +89,6 @@ def config_m365_disabled():
     config.holodeck_scenarios.enabled = False
     config.team_simulations = MagicMock()
     config.team_simulations.enabled = False
-    config.holodeck_birth_chamber = MagicMock()
-    config.holodeck_birth_chamber.enabled = False
     return config
 
 
@@ -170,8 +168,6 @@ def config_m365_enabled():
     config.holodeck_scenarios.enabled = False
     config.team_simulations = MagicMock()
     config.team_simulations.enabled = False
-    config.holodeck_birth_chamber = MagicMock()
-    config.holodeck_birth_chamber.enabled = False
     return config
 
 

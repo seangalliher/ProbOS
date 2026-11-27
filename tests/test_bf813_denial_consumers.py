@@ -386,7 +386,13 @@ def _fanout_runtime(bus: Any, data_dir: Path) -> Any:
     rt = _base_runtime(bus, data_dir)
     rt.chat_thread_store = _ThreadStore()
     rt.episodic_memory = _Episodic()
+    # #1794: the route no longer reads dream_adapter; it stays None only to
+    # keep this runtime's shape. The route now resolves each episode's owner
+    # through identity_registry, and a MagicMock registry is truthy and
+    # returns a mock certificate, so it is None here: the slot id is then the
+    # owner, which is what _episode_agents compares.
     rt.dream_adapter = None
+    rt.identity_registry = None
     rt.callsign_registry.resolve.side_effect = lambda cs: (
         {"agent_id": _CALLSIGNS[cs.lower()], "callsign": cs}
         if cs.lower() in _CALLSIGNS else None

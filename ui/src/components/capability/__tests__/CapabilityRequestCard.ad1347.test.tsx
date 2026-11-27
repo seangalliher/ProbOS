@@ -20,15 +20,15 @@ beforeEach(() => { useSettingsStore.setState({ loaded: true, loading: false }); 
 afterEach(() => { cleanup(); });
 
 describe('AD-1347 agent-work approval card', () => {
-  it('says an agent-work approval resumes its item and offers no standing approval; an ordinary action keeps both', () => {
+  it('says when an agent-work item runs again and offers no standing approval; an ordinary action keeps both', () => {
     render(<CapabilityRequestCard requestId={AGENT_WORK.id} request={AGENT_WORK} />);
     expect(screen.queryByText(/does not replay the original action/)).toBeNull();
-    expect(screen.getByText(/Approval resumes work item wi-agent-work-1\./)).toBeTruthy();
+    expect(screen.getByText(/Work item wi-agent-work-1 runs again when no other call its assignee filed for it awaits a decision or its fulfilment; if one was denied, it ends instead\./)).toBeTruthy();
     expect(screen.queryByRole('checkbox', { name: 'Grant standing approval' })).toBeNull();
     cleanup();
     render(<CapabilityRequestCard requestId={ORDINARY.id} request={ORDINARY} />);
     expect(screen.getByText(/does not replay the original action/)).toBeTruthy();
-    expect(screen.queryByText(/Approval resumes work item/)).toBeNull();
+    expect(screen.queryByText(/runs again when no other call/)).toBeNull();
     expect(screen.getByRole('checkbox', { name: 'Grant standing approval' })).toBeTruthy();
   });
 });

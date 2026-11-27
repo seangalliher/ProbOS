@@ -96,7 +96,7 @@ class TestRuntimeDiscovery:
     @pytest.mark.asyncio
     async def test_existing_nl_processing_unchanged(self, rt, tmp_path):
         """Full NL pipeline still works with dynamic discovery."""
-        test_file = tmp_path / "data" / "test_read.txt"
+        test_file = tmp_path / "test_read.txt"  # BF-944: outside the runtime's data directory (tmp_path / "data"), which the readers refuse
         test_file.parent.mkdir(parents=True, exist_ok=True)
         test_file.write_text("hello world")
 

@@ -53,7 +53,7 @@ export function CapabilityRequestCard({ requestId, request, inline = false, onDe
   const policy = standingApprovalPolicy(loaded && !loading ? snapshot?.config : null);
   const inspection = inspectActionPayload(expected?.payload);
   const ordinary = expected?.kind === 'action' && expected.payload?.tool_id !== 'repair';
-  // AD-1347 S3 A2 (F18): approving a validated agent-work call resumes its item, so it is not "decision only".
+  // AD-1347 S3 A2 (F18), BF-947: approving a validated agent-work call counts toward its item's next run, so it is not "decision only".
   const agentWork = expected !== undefined && isAgentWorkApproval(expected);
   const standingDisabled = !known || busy || sharedBusy || policy.issue !== null || !inspection.ok;
   const ttlValid = /^\d+$/.test(ttl) && Number.isSafeInteger(Number(ttl))
@@ -134,9 +134,10 @@ export function CapabilityRequestCard({ requestId, request, inline = false, onDe
       </>}
       {ordinary && !inspection.ok && <p>{inspection.issue} Approval and standing authority are disabled; Deny remains available.</p>}
       {ordinary && !agentWork && <p>Approval records this decision only; it does not replay the original action.</p>}
-      {agentWork && <p>Approval resumes work item {approvalDisplayText(expected.work_item_id ?? '')}. If its run makes this
-        call again, with this tool and exactly these parameters, that call is admitted once, subject to the remaining
-        guards; nothing runs from here.</p>}
+      {agentWork && <p>Work item {approvalDisplayText(expected.work_item_id ?? '')} runs again when no other call its
+        assignee filed for it awaits a decision or its fulfilment; if one was denied, it ends instead. If its run makes
+        this call again, with this tool and exactly these parameters, that call is admitted once, subject to the
+        remaining guards; nothing runs from here.</p>}
       {expected.kind === 'continue' && <p>Approval uses the existing linked-work continuation. Fulfilment alone does not confirm resumed execution.</p>}
       {expected.payload?.tool_id === 'repair' && <p>Only this repair request is authorized. Standing authority is not available.</p>}
       {!known && <p>Request state is unknown or stale; refresh before deciding.</p>}

@@ -39,6 +39,7 @@ from probos.cognitive.swe_harness.tool_call import (
 from probos.config import AgenticLoopConfig
 from probos.tools.protocol import ToolResult
 from probos.types import LLMRequest, LLMResponse
+from tests.offered_tools import offer_scripted  # #1796: the loop runs only offered tools.
 
 # A body long enough that head and tail slices cannot overlap, with distinct
 # sentinels at each end so DD-1 (head AND tail preserved) is provable.
@@ -140,7 +141,7 @@ async def _run_loop(
     result = await loop.run(
         system_prompt="sys",
         user_message="do it",
-        tools=[],
+        tools=[*offer_scripted(client.responses)],  # #1796: the loop runs only offered tools, so the scripted call's tool is offered.
         context={"agent_id": "agent-1"},
     )
     return client, result
@@ -454,7 +455,7 @@ async def test_bounded_run_retains_full_output_on_the_result_objects() -> None:
 
     loop._bound_tool_output = _spy  # type: ignore[method-assign]
     await loop.run(
-        system_prompt="sys", user_message="go", tools=[], context={"agent_id": "a"}
+        system_prompt="sys", user_message="go", tools=[*offer_scripted(client.responses)], context={"agent_id": "a"}  # #1796: the loop runs only offered tools, so the scripted call's tool is offered.
     )
 
     assert captured, "the legacy path must have bounded exactly one result"

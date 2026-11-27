@@ -1157,10 +1157,13 @@ def test_json_report_carries_the_categories_block(tmp_path: Path) -> None:
     # frozen srp-size row had to go with it or the symmetric-difference gate
     # fails on a stale row. Updated, not deleted -- the pair still pins that
     # `current` and `baseline` agree, which is what catches unreviewed drift.
+    # AD-1355 S1 (#1700) took it from 92 to 90: the BirthChamber row went with
+    # its class, and the EventType row with the six deleted members (the class
+    # fell from 508 to 500 lines; the trigger is more than 500).
     assert categories["srp-size"] == {
         "mode": "gating",
-        "current": 92,
-        "baseline": 92,
+        "current": 90,
+        "baseline": 90,
     }
     assert categories["layer-import"]["current"] == 0
     assert categories["private-access"]["mode"] == "report-only"

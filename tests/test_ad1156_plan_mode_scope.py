@@ -1221,6 +1221,10 @@ _READER_CALLS: dict[tuple[str, str], int] = {
     ("cognitive/turn_promotion.py", "PlanModeReplyGate"): 1,
     ("experience/commands/session.py", "open_plan_mode_session_gate"): 1,
     ("routers/agents.py", "open_plan_mode_reply_gate"): 1,
+    # #1794 A5: the @-mention fan-out marks its episode from the gate on the thread
+    # its agent reads: the main-chat thread, or the agent's own after a failed seed.
+    ("routers/chat.py", "open_plan_mode_reply_gate"): 1,
+    ("routers/chat.py", "open_plan_mode_session_gate"): 1,
     ("startup/finalize.py", "open_plan_mode_replay_gate"): 1,
 }
 

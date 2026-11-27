@@ -29,6 +29,8 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
+from probos.admission.seam import check_at
+from probos.admission.taxonomy import EFFECT_SUBPROCESS
 from probos.execution.command_env import trusted_command_env
 from probos.substrate.agent import BaseAgent
 from probos.substrate.file_walk import iter_files
@@ -159,9 +161,11 @@ class CodeSearchAgent(BaseAgent):
                 # BF-908 A4: a FRESH floor, built after the engine ran, decides what is returned:
                 # the engines' cached allows are not the final authorization (review round 2 of
                 # C1b returned a protected line through a link retargeted during the search).
-                return _within_floor(rg_result, _ReadFloor(getattr(self, "_runtime", None)))
+                # BF-972 (#1803): built and asked in a worker thread, off the event loop.
+                return await asyncio.to_thread(_final_check, rg_result, getattr(self, "_runtime", None))
             # Tier-2: rg failed -> fall through to the Python engine.
-        return _within_floor(self._search_python(plan, root, floor=floor), _ReadFloor(getattr(self, "_runtime", None)))
+        # BF-972 (#1803): the Python engine and the final check run in one worker thread, off the event loop.
+        return await asyncio.to_thread(self._search_python_checked, plan, root, floor)
 
     async def report(self, result: Any) -> dict[str, Any]:
         return result
@@ -193,6 +197,7 @@ class CodeSearchAgent(BaseAgent):
         if plan["glob"]:
             args += ["--glob", plan["glob"]]
         args += ["--regexp", plan["pattern"], str(root)]
+        check_at(getattr(getattr(self, "_runtime", None), "admission_service", None), effect=EFFECT_SUBPROCESS, presented_id=None)  # AD-1346 M3e1: the subprocess sink, in shadow; it blocks nothing (D164: no principal)
         try:
             proc = await asyncio.create_subprocess_exec(
                 *args,
@@ -209,40 +214,8 @@ class CodeSearchAgent(BaseAgent):
         # rg exit 0 = matches, 1 = no matches (both fine); 2 = error -> fall back.
         if proc.returncode not in (0, 1):
             return None
-        matches: list[dict] = []
-        parsed_lines = 0
-        # BF-895 (#1548): frame on LF only. str.splitlines() also splits at U+2028, U+2029,
-        # U+0085, form feed and others, which a file name or a match can hold: it cut a path
-        # short and minted a record from the tail of a match. One trailing CR (a CRLF file's
-        # line) is part of the terminator, as splitlines() treated it.
-        for line in stdout.decode("utf-8", errors="replace").split("\n"):
-            parsed = _parse_rg_line(line.removesuffix("\r"))
-            if parsed is None:
-                continue
-            parsed_lines += 1
-            # BF-908 A3: skipped before it is counted, so it never uses up max_results.
-            if floor is not None and not floor.permits(parsed["path"]):
-                continue
-            matches.append(parsed)
-            if len(matches) >= plan["max_results"]:
-                break
-        # BF-895 (#1548): exit 0 means rg found a match. If nothing parsed, the parser
-        # and rg disagree: report nothing rather than a false zero, so act() falls back.
-        # BF-908 A3: lines that parsed and that the floor refused are not that case.
-        if not parsed_lines and (proc.returncode == 0 or stdout):
-            logger.warning(
-                "BF-895: rg exited %s with %d output bytes but no parsable match under %s; "
-                "falling back to the Python engine",
-                proc.returncode, len(stdout), root,
-            )
-            return None
-        return {
-            "success": True,
-            "data": matches,
-            "count": len(matches),
-            "engine": "rg",
-            "truncated": len(matches) >= plan["max_results"],
-        }
+        # BF-972 (#1803): the parse and each line's read-floor check run in one worker thread, off the event loop.
+        return await asyncio.to_thread(_rg_result, stdout, proc.returncode, plan, root, floor)
 
     # ------------------------------------------------------------------
     # pure-Python engine (always available; ReDoS-guarded)
@@ -298,6 +271,54 @@ class CodeSearchAgent(BaseAgent):
             "engine": "python",
             "truncated": truncated,
         }
+
+    def _search_python_checked(self, plan: dict, root: Path, floor: _ReadFloor) -> dict:
+        """BF-972 (#1803): the Python engine, then BF-908 A4's final check with a fresh floor; run in one worker thread."""
+        return _final_check(self._search_python(plan, root, floor=floor), getattr(self, "_runtime", None))
+
+
+def _final_check(result: dict, runtime: Any) -> dict:
+    """BF-972 (#1803): BF-908 A4's final check, a fresh ``_ReadFloor`` built now, after the engine ran; run in a worker thread."""
+    return _within_floor(result, _ReadFloor(runtime))
+
+
+def _rg_result(stdout: bytes, returncode: int, plan: dict, root: Path, floor: _ReadFloor | None) -> dict | None:
+    """BF-972 (#1803): rg's output parsed, each line's file asked of *floor*, in a worker thread; ``None`` sends ``act``
+    to the Python engine. The body is ``CodeSearchAgent._search_rg``'s, with ``proc.returncode`` passed in as *returncode* (BF-895, BF-908 A3)."""
+    matches: list[dict] = []
+    parsed_lines = 0
+    # BF-895 (#1548): frame on LF only. str.splitlines() also splits at U+2028, U+2029,
+    # U+0085, form feed and others, which a file name or a match can hold: it cut a path
+    # short and minted a record from the tail of a match. One trailing CR (a CRLF file's
+    # line) is part of the terminator, as splitlines() treated it.
+    for line in stdout.decode("utf-8", errors="replace").split("\n"):
+        parsed = _parse_rg_line(line.removesuffix("\r"))
+        if parsed is None:
+            continue
+        parsed_lines += 1
+        # BF-908 A3: skipped before it is counted, so it never uses up max_results.
+        if floor is not None and not floor.permits(parsed["path"]):
+            continue
+        matches.append(parsed)
+        if len(matches) >= plan["max_results"]:
+            break
+    # BF-895 (#1548): exit 0 means rg found a match. If nothing parsed, the parser
+    # and rg disagree: report nothing rather than a false zero, so act() falls back.
+    # BF-908 A3: lines that parsed and that the floor refused are not that case.
+    if not parsed_lines and (returncode == 0 or stdout):
+        logger.warning(
+            "BF-895: rg exited %s with %d output bytes but no parsable match under %s; "
+            "falling back to the Python engine",
+            returncode, len(stdout), root,
+        )
+        return None
+    return {
+        "success": True,
+        "data": matches,
+        "count": len(matches),
+        "engine": "rg",
+        "truncated": len(matches) >= plan["max_results"],
+    }
 
 
 def _text_lines(fp: Path) -> Iterator[tuple[int, str]]:

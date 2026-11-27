@@ -21,13 +21,21 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 from probos import work_item_steps as owned_steps
-from probos.admission.seam import shadow_at  # AD-1346 M3c
+from probos.admission.seam import hold_at, shadow_at  # AD-1346 M3c; hold_at: AD-1346 M3d2
+from probos.cycle_trace import (  # AD-1360
+    CycleIdRegistry, bind_cycle, current_cycle_id, cycle_scope, is_cycle_registry, new_cycle_id, unbind_cycle,
+)
 from probos.events import EventType, SensoriumBudgetExceededEvent
 from probos.cognitive.agentic_disposition import AGENTIC_DISPOSITION  # AD-1180
 from probos.cognitive.concurrency_manager import ConcurrencyManager
 from probos.cognitive.attention import AttentionBid, ContextAssembler, estimate_tokens
+from probos.cognitive import context_manifest  # AD-1357
+from probos.cognitive.action_accounting import CATEGORY as INTENDED_ACTIONS_CATEGORY, intended_tags, record_declared  # BF-934
+from probos.cognitive.action_billets import decision_billet  # BF-934
+from probos.cognitive.proposal_block import parse_proposal_block  # BF-934
 from probos.cognitive.tiered_knowledge import TieredKnowledgeLoader
 from probos.dm_reply import ToolInvocations  # AD-1295 (#1087)
+from probos.recreation import history as game_history  # AD-1358 S1
 from probos.recreation.turns import RecreationTurnClaim, RecreationTurnOperations
 from probos.substrate.agent import BaseAgent
 from probos.types import (
@@ -264,8 +272,11 @@ def _build_result_metadata(
     rebuilds the decision. Report and decision are consulted first only so an
     explicitly-forwarded value still wins.
 
-    Empty on every non-agentic path, so an unchanged turn carries an unchanged
-    (empty) metadata dict.
+    Empty on every non-agentic path except a ``direct_message`` turn whose
+    prompt ``_build_user_message`` assembled, which carries its AD-1357 context
+    manifest; any other such turn carries an unchanged (empty) metadata dict.
+    AD-1360 (#1828): plus ``correlation_id`` whenever the observation carries
+    the cycle's AD-492 id.
     """
     sources = [s for s in (report, decision, observation) if isinstance(s, dict)]
 
@@ -304,7 +315,47 @@ def _build_result_metadata(
         if type(references) is list and references:
             metadata["owned_steps_view_references"] = references[:8]
             break
+    # BF-934 (#1673): the registry's tags among the actions the triage intended, each once: the list the decision record holds, so that the loop that executes the output
+    # accounts for the same actions (a cut of the raw list could drop a recognised tag the record kept).
+    intended = observation.get("_intended_actions") if isinstance(observation, dict) else None
+    if type(intended) is list and intended:
+        decided = intended_tags(intended)
+        if decided:
+            metadata["intended_actions"] = decided
+    # AD-1360 (#1828): the cycle's AD-492 id, for a caller that stores an episode after the cycle has ended. A fact
+    # about the result, bounded to 64 characters (AD-1248 DD-5); absent when the observation carries none.
+    cycle_id = observation.get("correlation_id") if isinstance(observation, dict) else None
+    if type(cycle_id) is str and cycle_id:
+        metadata["correlation_id"] = cycle_id[:64]
+    # AD-1357 (#1749): the reply's context manifest, LAST, so that BF-805's greedy
+    # fit check (``IntentBus._prune_metadata``, in iteration order) considers it
+    # after every key above and it never takes the room of one of them. It is not
+    # dropped first: a larger key above that does not fit is dropped, and the
+    # manifest can still be kept.
+    for source in sources:
+        manifest = source.get(context_manifest.MANIFEST_KEY)
+        if type(manifest) is dict and manifest:
+            metadata[context_manifest.CONTEXT_MANIFEST_METADATA_KEY] = manifest
+            break
     return metadata
+
+
+def _carry_cycle_id(result: IntentResult, cycle_id: str) -> None:
+    """AD-1360 (#1828): put the cycle's AD-492 id on a result that has none.
+
+    ``_build_result_metadata`` writes the id on the lifecycle's normal return. A result built by hand (the compound
+    replay's early return, a recreation turn that fails) never reaches it, and a caller that stores an episode after
+    the cycle reads the id from the result. The id goes before AD-1357's manifest, which stays last.
+    """
+    metadata = getattr(result, "metadata", None)
+    if type(metadata) is not dict or "correlation_id" in metadata:
+        return
+    manifest_key = context_manifest.CONTEXT_MANIFEST_METADATA_KEY
+    carried = {key: value for key, value in metadata.items() if key != manifest_key}
+    carried["correlation_id"] = cycle_id[:64]
+    if manifest_key in metadata:
+        carried[manifest_key] = metadata[manifest_key]
+    result.metadata = carried
 
 
 def _collect_owned_steps_tool_views(
@@ -350,6 +401,33 @@ _CHAIN_ELIGIBLE_INTENTS: frozenset[str] = frozenset({
     "ward_room_notification",
     "proactive_think",
 })
+
+# AD-643b / BF-934: the marker an output carries for each action the proactive loop executes, in the order they are reported.
+_ACTION_MARKERS: dict[str, re.Pattern[str]] = {
+    "notebook": re.compile(r'\[NOTEBOOK\s', re.IGNORECASE),
+    "endorse": re.compile(r'\[ENDORSE\s', re.IGNORECASE),
+    "proposal": re.compile(r'\[PROPOSAL\]', re.IGNORECASE),
+    "dm": re.compile(r'\[DM\s', re.IGNORECASE),
+    "ward_room_reply": re.compile(r'\[REPLY\s', re.IGNORECASE),
+    "note": re.compile(r'\[NOTE\s', re.IGNORECASE),  # AD-573c
+}
+
+
+def _action_markers_in(text: str) -> list[str]:
+    """AD-643b / BF-934: the action tags whose marker *text* carries, in ``_ACTION_MARKERS`` order."""
+    return [tag for tag, pattern in _ACTION_MARKERS.items() if pattern.search(text or "")]
+
+
+def _actions_lost(original: str, rewrite: str) -> list[str]:
+    """BF-934: the action tags *original* carries that *rewrite* does not keep, in ``_ACTION_MARKERS`` order.
+
+    A tag is lost when its marker is gone. A proposal is also lost when the extractor could file the original's block (``parse_proposal_block``) and cannot file the
+    rewrite's: a rewrite that keeps ``[PROPOSAL]`` and drops its Rationale, or writes the tags in lower case, has kept the marker and lost the block. The other tags
+    stay marker-level (L20): their extractors live in modules this one cannot import."""
+    kept = _action_markers_in(rewrite)
+    unfileable = parse_proposal_block(original).valid and not parse_proposal_block(rewrite).valid
+    return [tag for tag in _action_markers_in(original) if tag not in kept or (tag == "proposal" and unfileable)]
+
 
 # BF-922 (#1639): set on the observation while a single call answers for a chain
 # that returned no decision for a chain intent; ``_decide_via_llm`` then runs the
@@ -1029,6 +1107,24 @@ def _conversational_thread_id(
     return resolved
 
 
+def _notebook_block_lines(nb_content: Mapping[str, Any]) -> list[str]:
+    """BF-950: the ``<notebook>`` block a self-monitoring context reads back.
+
+    The opening tag carries the entry's ``updated`` and ``revision`` when the
+    pull supplied them (``proactive._notebook_read_back`` normalises both), so
+    the read-back is dated as the index line beside it is. Both renderers of the
+    block use this, so the two prompts cannot drift apart.
+    """
+    attributes = f'topic="{nb_content["topic"]}"'
+    updated = nb_content.get("updated")
+    if updated:
+        attributes += f' updated="{updated}"'
+    revision = nb_content.get("revision")
+    if revision is not None:
+        attributes += f' revision="{revision}"'
+    return [f"<notebook {attributes}>", nb_content["snippet"], "</notebook>"]
+
+
 class CognitiveAgent(BaseAgent):
     # AD-647b v1: agents that own a registered ProcessChainDefinition set
     # this to the chain_id ("name" of the definition). When set, the
@@ -1290,6 +1386,10 @@ class CognitiveAgent(BaseAgent):
         "_build_active_game_context": SensoriumEntry(
             layer=SensoriumLayer.EXTEROCEPTION,
             description="Active game board state (inventory; DM-side rendered inline; AD-723a-1)",
+        ),
+        "_build_head_to_head_context": SensoriumEntry(
+            layer=SensoriumLayer.EXTEROCEPTION,
+            description="Recorded games against the active game's opponent (inventory; DM-side rendered inline; AD-1358 S1)",
         ),
         "_build_user_message": SensoriumEntry(
             layer=SensoriumLayer.EXTEROCEPTION,
@@ -1712,6 +1812,21 @@ class CognitiveAgent(BaseAgent):
         if self._runtime and hasattr(self._runtime, 'cognitive_journal'):
             return self._runtime.cognitive_journal
         return None
+
+    @property
+    def _cycle_registry(self) -> CycleIdRegistry | None:
+        """AD-1360 (#1828): the runtime's cycle-id registry (Ship's Computer service), reached as the journal is.
+
+        Only a real ``CycleIdRegistry`` counts (``is_cycle_registry``): a test runtime's MagicMock attribute, spec'd or
+        not, would otherwise issue a MagicMock id.
+        """
+        registry = getattr(getattr(self, "_runtime", None), "cycle_registry", None)
+        return registry if is_cycle_registry(registry) else None
+
+    def _issue_cycle_id(self) -> str:
+        """AD-1360 (#1828): a new AD-492 id, recorded in the runtime's registry when there is one."""
+        registry = self._cycle_registry
+        return registry.issue(kind="cognitive_cycle") if registry is not None else new_cycle_id()
 
     @property
     def _procedure_store(self):
@@ -2233,12 +2348,19 @@ class CognitiveAgent(BaseAgent):
         # AD-1328 S2c (#1530): when this run began. A command escalation settled since then
         # still parks the item below (BF-878 resolves it); one settled before never does.
         _dispatch_started = time.time()
-        reply_text = await self._run_agentic_dispatch(
-            work_item_id=work_item_id,
-            task_text=task_text,
-            runtime=runtime,
-            failures_sink=_dispatch_failures,
-        )
+        # AD-1360 S2b (#1828): the agentic run is no cognitive cycle; the work item's id is its chain, adopted into the
+        # registry (as a promoted run's is, S2a D8) and bound while the run stores episodes (an MCP invoke's).
+        _work_registry = self._cycle_registry
+        _work_chain = work_item_id if type(work_item_id) is str and work_item_id.strip() else ""
+        if _work_registry is not None and _work_chain:
+            _work_registry.register(_work_chain, kind="work_item")
+        with cycle_scope(_work_chain if _work_registry is not None else ""):
+            reply_text = await self._run_agentic_dispatch(
+                work_item_id=work_item_id,
+                task_text=task_text,
+                runtime=runtime,
+                failures_sink=_dispatch_failures,
+            )
         _reply = None
         if reply_text is None:
             result = await self.handle_intent(dm)
@@ -2784,8 +2906,8 @@ class CognitiveAgent(BaseAgent):
 
         try:
             agent_type = getattr(self, "agent_type", "")
-            agent_id = getattr(self, "_agent_id", agent_type)
-            callsign = getattr(self, "_callsign", agent_type)
+            agent_id = self.id  # D5-R1 (#1754): the agent's own id; its type is not an id
+            callsign = self.callsign or agent_type  # the type only for an agent with no callsign
 
             # Post to appropriate channel
             department = ""
@@ -2904,8 +3026,8 @@ class CognitiveAgent(BaseAgent):
         preconditions_text = "\n".join(f"  - {p}" for p in procedure.preconditions) if procedure.preconditions else "  (none)"
         postconditions_text = "\n".join(f"  - {p}" for p in procedure.postconditions) if procedure.postconditions else "  (none)"
 
-        callsign = getattr(self, "_callsign", agent_type)
-        agent_id = getattr(self, "_agent_id", agent_type)
+        callsign = self.callsign or agent_type  # F-529 (#1523): as the promotion request reads it
+        agent_id = self.id  # F-529 (#1523): the agent's own id, not its type
 
         body = (
             f"**[TEACHING] Procedure: {procedure.name}**\n\n"
@@ -2946,8 +3068,9 @@ class CognitiveAgent(BaseAgent):
         AD-492: Generates a correlation_id at perception time to thread
         through the entire cognitive cycle (decide → act → episode → post).
         """
-        # AD-492: Generate correlation ID for this cognitive cycle
-        correlation_id = uuid.uuid4().hex[:12]
+        # AD-492: the correlation ID for this cognitive cycle. AD-1360 (#1828): the id the cycle bound
+        # (``_run_cycle_bound_lifecycle``); a perceive outside a bound cycle issues one of its own and binds nothing.
+        correlation_id = current_cycle_id() or self._issue_cycle_id()
         self._current_correlation_id = correlation_id
 
         if isinstance(intent, IntentMessage):
@@ -3704,6 +3827,7 @@ class CognitiveAgent(BaseAgent):
         Decision Distillation (AD-272): checks in-memory cache before
         calling LLM. Cache hits return instantly (<1ms, $0).
         """
+        observation.pop("_intended_actions", None)  # BF-934: the key holds this turn's triage or nothing; a dict that is decided on again never carries an older decision in
         if not self._llm_client:
             return {"action": "error", "reason": "No LLM client available"}
 
@@ -3984,6 +4108,10 @@ class CognitiveAgent(BaseAgent):
                 )
 
         user_message = await self._build_user_message(observation)
+        # AD-1357 (#1749): the ledger ``_build_user_message`` left for a
+        # direct_message prompt, or None. Text appended below is recorded by its
+        # name and length, never its content.
+        _ledger = context_manifest.ledger_of(observation)
 
         # Strategy advice (AD-384)
         applied_strategy_ids: list[str] = []
@@ -3996,6 +4124,8 @@ class CognitiveAgent(BaseAgent):
                 context = self._strategy_advisor.format_for_context(strategies)
                 if context:
                     user_message = user_message + "\n\n" + context
+                    if _ledger is not None:
+                        _ledger.note_appended("strategy_advice", len(context) + 2)
                 applied_strategy_ids = [
                     s["id"] for s in strategies if s.get("id")
                 ]
@@ -4005,10 +4135,13 @@ class CognitiveAgent(BaseAgent):
         )
         if owned_presentation is not None:
             owned_raw, _, _, _ = owned_presentation
+            _before_owned = len(user_message)
             user_message = (
                 f"{user_message}\n\n<owned_steps_view>\n"
                 f"{owned_raw}\n</owned_steps_view>"
             )
+            if _ledger is not None:
+                _ledger.note_appended("owned_steps_view", len(user_message) - _before_owned)
 
         from probos.cognitive.standing_orders import compose_instructions
 
@@ -4380,6 +4513,7 @@ class CognitiveAgent(BaseAgent):
         # Claude Cowork / Codex / Copilot parity. A no-tool turn is a single pass.
         # Honest-degrades to the single-pass path below on any miss/failure
         # (the helper returns None), so the flag never drops the Captain's turn.
+        _t_turn = time.monotonic()  # AD-1357: the DM-turn journal row's latency
         _agentic_output = await self._maybe_run_conversational_agentic(
             observation,
             system_prompt=composed,
@@ -4394,12 +4528,53 @@ class CognitiveAgent(BaseAgent):
             }
             # AD-1203 + AD-1248: provenance for the turn, set by the run above.
             _attach_run_provenance(decision, observation)
+            # AD-1357 (#1749): the loop's own model calls write no journal row
+            # (``journal_token_report``'s docstring), so the DM turn writes one
+            # under this id, which the reply's context manifest names. ``model``
+            # is "unknown", as BF-901 requires of a row that names no answering
+            # model, and the empty token source files it as uncharged. The manifest
+            # names the row only once ``record`` has returned: with no journal
+            # (``cognitive_journal.enabled`` false) or a write that raised, it
+            # names none.
+            _turn_row_id: str | None = None
+            if self._cognitive_journal:
+                _turn_entry_id = uuid.uuid4().hex
+                try:
+                    await self._cognitive_journal.record(
+                        entry_id=_turn_entry_id,
+                        timestamp=time.time(),
+                        agent_id=self.id,
+                        agent_type=self.agent_type,
+                        tier="agentic",
+                        model="unknown",
+                        latency_ms=(time.monotonic() - _t_turn) * 1000,
+                        intent=observation.get("intent", ""),
+                        success=True,
+                        prompt_hash=context_manifest.turn_hash(user_message),
+                        response_length=len(_agentic_output),
+                        intent_id=observation.get("intent_id", ""),
+                        dag_node_id=context_manifest.DM_TURN_DAG_NODE,
+                        response_hash=context_manifest.turn_hash(_agentic_output),
+                        correlation_id=observation.get("correlation_id", ""),
+                    )
+                    _turn_row_id = _turn_entry_id
+                except Exception:
+                    logger.debug("AD-1357: DM-turn journal recording failed", exc_info=True)
+            context_manifest.record_manifest(
+                observation,
+                path="agentic",
+                system_prompt=composed,
+                user_message=user_message,
+                response_text=_agentic_output,
+                journal_entry_id=_turn_row_id,
+            )
             if applied_strategy_ids:
                 decision["_applied_strategy_ids"] = applied_strategy_ids
             return decision
 
         room_input_context = None
         room_params = observation.get("params", {})
+        _before_room_inputs = len(user_message)  # AD-1357
         if (
             observation.get("intent") == "direct_message"
             and room_params.get("is_group_chat") is True
@@ -4435,6 +4610,8 @@ class CognitiveAgent(BaseAgent):
                 user_message += "\nRoom inputs unavailable; do not claim complete analysis."
             if room_params.get("room_inputs_omitted"):
                 user_message += "\nSome room inputs were omitted; do not claim complete analysis."
+        if _ledger is not None:  # AD-1357: room inputs are named and counted, never stored
+            _ledger.note_appended("room_inputs", len(user_message) - _before_room_inputs)
 
         # AD-730 (Wave 151): vision pipe-through for DM perception.
         # When the intent params carry vision_messages (Captain attached an
@@ -4551,6 +4728,7 @@ class CognitiveAgent(BaseAgent):
         }
 
         # AD-431: Record to Cognitive Journal (fire-and-forget)
+        _journal_row_id: str | None = None  # AD-1357: set once record returns
         if self._cognitive_journal:
             try:
                 _prompt_hash = hashlib.md5(user_message[:500].encode()).hexdigest()[:12]
@@ -4588,8 +4766,21 @@ class CognitiveAgent(BaseAgent):
                     level=str(observation.get("level", "")) if observation.get("intent") == "diagnose_system" else "",
                     level_rank=int(observation.get("level_rank", 0)) if observation.get("intent") == "diagnose_system" else 0,
                 )
+                _journal_row_id = request.id  # AD-1357
             except Exception:
                 logger.debug("Journal recording failed", exc_info=True)  # Non-critical — never block agent cognition
+
+        # AD-1357 (#1749): what this reply was given, naming the journal row above
+        # by ``request.id`` and its two hashes, or ``None`` when no row was handed
+        # to a journal (none configured, or the write raised).
+        context_manifest.record_manifest(
+            observation,
+            path="single_pass",
+            system_prompt=composed,
+            user_message=user_message,
+            response_text=response.content,
+            journal_entry_id=_journal_row_id,
+        )
 
         # BF-922 (#1639): a single call that answers for a chain that returned no
         # decision runs the chain's deterministic output checks on its reply.
@@ -5874,22 +6065,7 @@ class CognitiveAgent(BaseAgent):
             return []
 
         declared = set(intended_actions)
-        undeclared = []
-
-        markers = {
-            "notebook": re.compile(r'\[NOTEBOOK\s', re.IGNORECASE),
-            "endorse": re.compile(r'\[ENDORSE\s', re.IGNORECASE),
-            "proposal": re.compile(r'\[PROPOSAL\]', re.IGNORECASE),
-            "dm": re.compile(r'\[DM\s', re.IGNORECASE),
-            "ward_room_reply": re.compile(r'\[REPLY\s', re.IGNORECASE),
-            "note": re.compile(r'\[NOTE\s', re.IGNORECASE),  # AD-573c
-        }
-
-        for action_tag, pattern in markers.items():
-            if action_tag not in declared and pattern.search(compose_output):
-                undeclared.append(action_tag)
-
-        return undeclared
+        return [tag for tag in _action_markers_in(compose_output) if tag not in declared]
 
     def _build_chain_for_intent(self, observation: dict):
         """AD-632f: Build a SubTaskChain for the given intent type.
@@ -6217,6 +6393,9 @@ class CognitiveAgent(BaseAgent):
 
         intent = observation.get("intent", "")
 
+        # BF-934: the decision belongs to this triage; a dict that is used again never carries an older one forward.
+        observation.pop("_intended_actions", None)
+
         # --- Inject agent context (same keys as _execute_sub_task_chain) ---
         observation["_agent_id"] = self.id
         observation["_agent_type"] = self.agent_type
@@ -6371,6 +6550,8 @@ class CognitiveAgent(BaseAgent):
 
         # --- Extract intended_actions ---
         intended_actions = self._extract_intended_actions(triage_results)
+        # BF-934: whichever call writes this turn's output reads the decision from here (``decision_billet``).
+        observation["_intended_actions"] = intended_actions
 
         # AD-696: Agentic Oracle retrieval — once per chain (DLog #4)
         if "oracle_query" in intended_actions:
@@ -6406,6 +6587,13 @@ class CognitiveAgent(BaseAgent):
         # --- Determine if communication chain should fire ---
         _COMM_ACTIONS = frozenset({"ward_room_post", "ward_room_reply", "endorse", "dm"})
         has_comm_action = bool(_COMM_ACTIONS.intersection(intended_actions))
+
+        # BF-934: the decision record, written where the decision is made (a proactive think whose triage intends an action a block or a post carries out).
+        await record_declared(
+            _rt, agent_id=self.id, agent_type=self.agent_type, callsign=getattr(self, "callsign", "") or self.agent_type,
+            intent=intent, intent_id=observation.get("intent_id", ""), intended=intended_actions,
+            path="chain" if has_comm_action and execute_steps else "single_call",
+        )
 
         # AD-1347 S4: a Ward Room record by id, only when an action will use it; a
         # non-communication triage falls through to the single call, which would not render it.
@@ -6565,6 +6753,14 @@ class CognitiveAgent(BaseAgent):
                 if r.sub_task_type == SubTaskType.REFLECT and r.success and r.result:
                     new_output = r.result.get("output", "")
                     if new_output:
+                        # BF-934: a rewrite may refine an approved output, never remove an action it carries (silence included), nor leave a proposal it could file unfileable.
+                        lost = _actions_lost(original_result.get("llm_output", ""), new_output)
+                        if lost:
+                            logger.warning(
+                                "BF-934: AD-643b re-reflect for %s %s would have dropped %s from an approved output; the approved output is kept",
+                                self.agent_type, getattr(self, "callsign", "") or self.agent_type, lost,
+                            )
+                            return original_result
                         logger.info(
                             "AD-643b: Re-reflect updated output for %s",
                             self.agent_type,
@@ -7436,6 +7632,28 @@ class CognitiveAgent(BaseAgent):
                 exc_info=True,
             )
 
+    async def _run_cycle_bound_lifecycle(
+        self,
+        intent: IntentMessage,
+        cognitive_skill_instructions: str | None = None,
+        skill_entries: list | None = None,
+    ) -> IntentResult:
+        """AD-1360 (#1828): ``_run_cognitive_lifecycle`` with a newly issued AD-492 cycle id bound (``cycle_trace``).
+
+        ``perceive`` takes the bound id, so the journal, the events, the episode and ``IntentResult.metadata`` carry one
+        id the runtime's registry issued; a result the lifecycle built by hand (the compound replay's early return) gets
+        it from ``_carry_cycle_id``. Every cycle binds its own: an inline cycle of another agent binds its own and the
+        reset gives this one's back. The reset is in the ``finally``, so it runs on return, raise and cancellation.
+        """
+        cycle_id = self._issue_cycle_id()
+        token = bind_cycle(cycle_id)
+        try:
+            result = await self._run_cognitive_lifecycle(intent, cognitive_skill_instructions, skill_entries)
+            _carry_cycle_id(result, cycle_id)
+            return result
+        finally:
+            unbind_cycle(token)
+
     async def _run_cognitive_lifecycle(
         self,
         intent: IntentMessage,
@@ -7460,12 +7678,24 @@ class CognitiveAgent(BaseAgent):
             recreation_turn is None or recreation_turns is None
         ):
             return await self._run_recreation_turn(intent)
+        _t_perceive = time.perf_counter()  # BF-932: log-only stamps of the turn's start
         observation = await self.perceive(intent)
+        _t_recall = time.perf_counter()
         if recreation_turn is not None:
             observation["_recreation_turn"] = recreation_turn
 
         # AD-430c (Pillar 4): Enrich observation with relevant episodic memories
         observation = await self._recall_relevant_memories(intent, observation)
+        if intent.intent == "direct_message" and intent.params.get("from") == "hxi_profile":
+            # BF-932: one line per Captain DM (the HXI route's own marker), keyed by the id the route's line carries.
+            from probos.utils.step_timing import emit_line, ms_between
+
+            emit_line(
+                logger,
+                "BF-932: dm turn intent=%s agent=%s perceive_ms=%.0f recall_ms=%.0f",
+                intent.id[:8], self.id[:12], ms_between(_t_perceive, _t_recall),
+                ms_between(_t_recall, time.perf_counter()),
+            )
 
         # AD-596b: Inject cognitive skill instructions into observation context
         if cognitive_skill_instructions:
@@ -7671,10 +7901,12 @@ class CognitiveAgent(BaseAgent):
                 "error": outcome["reason"] or None,
             }
 
-        # AD-573: Record action to working memory (all pathways)
+        # AD-573: Record action to working memory (all pathways). BF-989 (#1838): not for a qualification interaction
+        # (the marker that skips its episode and its conclusion, AD-566a): a recall probe's reply is not an action
+        # the agent took, and the next turn would read it back as one.
         try:
             _wm = getattr(self, '_working_memory', None)
-            if _wm:
+            if _wm and not intent.params.get("_qualification_test"):
                 action_summary = self._summarize_action(intent, decision, result)
                 if action_summary:
                     _wm.record_action(
@@ -7684,10 +7916,11 @@ class CognitiveAgent(BaseAgent):
         except Exception:
             logger.debug("AD-573: Working memory action record failed", exc_info=True)
 
-        # AD-669: Record conclusion for cross-thread sharing
+        # AD-669: Record conclusion for cross-thread sharing. BF-989 (#1838): a qualification interaction leaves no
+        # conclusion, in working memory or as a thought episode (the marker that skips its episode, AD-566a).
         try:
             _wm = getattr(self, '_working_memory', None)
-            if _wm:
+            if _wm and not intent.params.get("_qualification_test"):
                 _conclusion_summary = self._extract_conclusion_summary(decision, result)
                 if _conclusion_summary:
                     _conclusion_type = self._classify_conclusion(intent, decision)
@@ -7710,10 +7943,14 @@ class CognitiveAgent(BaseAgent):
         except Exception:
             logger.debug("AD-669: Conclusion recording failed", exc_info=True)
 
-        # AD-645 Phase 3: Store composition brief as metacognitive memory
+        # AD-645 Phase 3: Store composition brief as metacognitive memory. BF-989 (#1838): not for a qualification
+        # interaction (the marker that skips its episode, AD-566a).
         try:
             _wm = getattr(self, '_working_memory', None)
-            if _wm and decision.get("sub_task_chain") and decision.get("_composition_brief"):
+            if (
+                _wm and not intent.params.get("_qualification_test")
+                and decision.get("sub_task_chain") and decision.get("_composition_brief")
+            ):
                 brief = decision["_composition_brief"]
                 if isinstance(brief, dict):
                     # Build a human-readable summary from the brief
@@ -7911,7 +8148,9 @@ class CognitiveAgent(BaseAgent):
             error=report.get("error"),
             confidence=self.confidence,
             # AD-1203: so the caller recording this turn can bind the claim to
-            # the calls behind it. Empty on every non-agentic path.
+            # the calls behind it. On a non-agentic path it holds the cycle's
+            # AD-492 id when the observation carries one (AD-1360), plus, on a
+            # direct_message, its AD-1357 context manifest.
             # AD-1248: plus the DM reply's attachments, bounded and versioned.
             # The BODY stays in ``result`` un-rendered -- duplicating it here
             # doubles a large reply and can fail the whole NATS request.
@@ -7983,6 +8222,16 @@ class CognitiveAgent(BaseAgent):
             if _stopped is not None:
                 return _stopped.refuse_intent(intent, self.id)
 
+        # AD-1346 M3d2 (D109): the intent's work ticket, in shadow, taken past the stop check above (which returns when
+        # it refuses): a root in the carrier when the registry issues one, ended on every path by the finally. It blocks nothing.
+        _intent_hold = hold_at(getattr(getattr(self, "_runtime", None), "admission_service", None), presented_id=self.id, work_kind="intent", seam=SEAM_INTENT, child=False)
+        try:
+            return await self._handle_admitted_intent(intent)
+        finally:
+            _intent_hold.end()
+
+    async def _handle_admitted_intent(self, intent: IntentMessage) -> IntentResult | None:
+        """``handle_intent``'s work past its stop check, moved here unchanged by AD-1346 M3d2 so that its ticket ends in one ``finally``."""
         # AD-397: always accept direct_message if targeted to this agent
         # AD-407b: always accept ward_room_notification if targeted to this agent
         is_direct = (
@@ -8099,7 +8348,7 @@ class CognitiveAgent(BaseAgent):
             priority = _classify_concurrency_priority(intent)
             try:
                 async with concurrency_manager.slot(intent.intent, priority):
-                    return await self._run_cognitive_lifecycle(
+                    return await self._run_cycle_bound_lifecycle(  # AD-1360: binds the cycle's id
                         intent, _cognitive_skill_instructions, _skill_entries,
                     )
             except ValueError:
@@ -8123,7 +8372,7 @@ class CognitiveAgent(BaseAgent):
                         _wm.remove_engagement(f"ward_room:{_bf239_thread_id}")
 
         try:
-            return await self._run_cognitive_lifecycle(
+            return await self._run_cycle_bound_lifecycle(  # AD-1360: binds the cycle's id
                 intent, _cognitive_skill_instructions, _skill_entries,
             )
         finally:
@@ -8507,6 +8756,52 @@ class CognitiveAgent(BaseAgent):
         except Exception:
             return None
 
+    async def _build_head_to_head_context(self) -> str | None:
+        """AD-1358 S1 (#1750): the recorded games against the active game's opponent.
+
+        Counted from the AD-526a game records in Ship's Records, read as this agent
+        (``records_reader_for``, BF-949's reader), so a record it may not read is not
+        counted. ``None`` with no active game, no records store or nothing recorded, and
+        on any failure: the prompt is then as before. The Oracle module is imported here,
+        not at module scope, as its import pulls in the knowledge package.
+        """
+        from probos.cognitive.oracle_service import records_reader_for
+
+        rt = getattr(self, '_runtime', None)
+        if not rt:
+            return None
+        rec_svc = getattr(rt, 'recreation_service', None)
+        store = getattr(rt, 'records_store', None)
+        callsign = self._resolve_callsign()
+        if not rec_svc or store is None or not callsign:
+            return None
+        try:
+            game = rec_svc.get_game_by_player(callsign)
+        except Exception:
+            logger.warning(
+                "AD-1358: the active game of %s could not be read for a head-to-head tally; none is shown",
+                callsign, exc_info=True,
+            )
+            return None
+        if type(game) is not dict:
+            return None
+        opponent = next(
+            (p for p in (game.get("challenger", ""), game.get("opponent", "")) if p != callsign),
+            "",
+        )
+        reader_id, reader_department = records_reader_for(rt, self.id)
+        tally = await game_history.read_head_to_head(
+            store,
+            game_type=game.get("game_type", ""),
+            me=callsign,
+            opponent=opponent,
+            reader_id=reader_id,
+            reader_department=reader_department,
+            # A3 (F1): if this game finishes while the records are read, its own record is not counted
+            current_game_id=game.get("game_id", ""),
+        )
+        return tally.render() if tally is not None else None
+
     def _summarize_action(self, intent, decision: dict, result: dict) -> str:
         """AD-573: Produce a one-line summary of what I just did."""
         intent_type = intent.intent
@@ -8692,6 +8987,20 @@ class CognitiveAgent(BaseAgent):
                     reasoning_summary=STOP_REASON_CODE,
                 )
 
+        # AD-1346 M3d2 (D109): the consultation's work ticket, in shadow, taken past the stop check above (which returns
+        # when it refuses): a root in the carrier when the registry issues one, ended on every path by the finally. It blocks nothing.
+        _consultation_hold = hold_at(getattr(getattr(self, "_runtime", None), "admission_service", None), presented_id=self.id, work_kind="consultation", seam=SEAM_CONSULTATION, child=False)
+        try:
+            return await self._answer_consultation(request)
+        finally:
+            _consultation_hold.end()
+
+    async def _answer_consultation(self, request: Any) -> Any:
+        """``handle_consultation_request``'s work past its stop check, moved here by AD-1346 M3d2, unchanged but for this
+        import, so that its ticket ends in one ``finally``. BF-983 (#1676) builds its LLM request with ``prompt`` (it raised
+        ``TypeError`` before) and answers the fallback for a response that carries an error or no text."""
+        from probos.cognitive.consultation import ConsultationResponse
+
         callsign = getattr(self, "callsign", None) or self.agent_type
         logger.info(
             "AD-594: %s handling consultation on '%s' from %s",
@@ -8729,8 +9038,8 @@ class CognitiveAgent(BaseAgent):
             try:
                 from probos.types import LLMRequest
                 llm_request = LLMRequest(
+                    prompt=user_message,  # BF-983 (#1676): LLMRequest's field; it has no user_message
                     system_prompt=system_prompt,
-                    user_message=user_message,
                     tier="fast",
                 )
                 llm_response = await llm.complete(llm_request)
@@ -8739,6 +9048,10 @@ class CognitiveAgent(BaseAgent):
                     if hasattr(llm_response, "content")
                     else str(llm_response)
                 )
+                # BF-983 (#1676): the client answers a refused or failed call (a rate limit, every tier unavailable) with
+                # ``error`` set and no text rather than raising, so that response takes the fallback below as well.
+                if getattr(llm_response, "error", None) or not str(answer).strip():
+                    raise RuntimeError(f"no usable answer: {getattr(llm_response, 'error', None) or 'empty content'}")
                 confidence = 0.6
                 reasoning = f"Consulted on {request.topic}"
             except Exception:
@@ -9391,9 +9704,7 @@ class CognitiveAgent(BaseAgent):
             )
         nb_content = self_mon.get("notebook_content")
         if nb_content:
-            sm_parts.append(f'<notebook topic="{nb_content["topic"]}">')
-            sm_parts.append(nb_content["snippet"])
-            sm_parts.append("</notebook>")
+            sm_parts.extend(_notebook_block_lines(nb_content))
         if not sm_parts:
             return ""
         return "\n".join(sm_parts)
@@ -10439,7 +10750,7 @@ class CognitiveAgent(BaseAgent):
         Chain path: cognitive state, situation awareness, sensorium budget tracking,
         then chain ANALYZE prompt rendering. DM path: temporal awareness, cognitive
         zone, telemetry, working memory, episodic memories, Oracle context, source
-        attribution, session history, active game context, then Captain message.
+        attribution, session history, active game context, the head-to-head record (AD-1358), then Captain message.
         WR path: channel/thread header, temporal awareness, cognitive zone, DM
         self-monitoring, telemetry, working memory, episodic memories,
         self-recognition, thread context, then author message.
@@ -10455,6 +10766,10 @@ class CognitiveAgent(BaseAgent):
             # ContextAssembler joins survivors with "\n" — byte-identical to the
             # prior ``"\n".join(parts)`` when nothing drops (default-OFF budget).
             _bids: list[AttentionBid] = []
+            # AD-1357 (#1749): each bid's renderer is the ledger's. It returns the
+            # same text and records that assembly kept the section, by name and
+            # length only, so the prompt is unchanged (the AD-1028 golden holds it).
+            _ledger = context_manifest.start_ledger(observation)
 
             def _emit(
                 source: str,
@@ -10467,7 +10782,7 @@ class CognitiveAgent(BaseAgent):
                 text = "\n".join(segments)
                 _bids.append(AttentionBid(
                     source=source,
-                    render=(lambda _t=text: _t),
+                    render=_ledger.renderer(source, text),
                     # AD-1030: an explicit salience (episodic/WM when scoring is
                     # ON) overrides the fixed insertion priority; default None ⇒
                     # float(idx) ⇒ byte-identical to the AD-1028/1029 path.
@@ -10705,6 +11020,11 @@ class CognitiveAgent(BaseAgent):
             active_game_ctx = self._build_active_game_context()
             if active_game_ctx:
                 _emit("active_game", [active_game_ctx, ""])
+                # AD-1358 S1 (#1750): the recorded games against this opponent, from the
+                # AD-526a game records; nothing is added when none is recorded.
+                head_to_head_ctx = await self._build_head_to_head_context()
+                if head_to_head_ctx:
+                    _emit("head_to_head", [head_to_head_ctx, ""])
 
             _emit("captain_message", [self._format_direct_message_trigger(params)])
 
@@ -11300,9 +11620,7 @@ class CognitiveAgent(BaseAgent):
                 # Notebook content (from semantic pull or explicit read)
                 nb_content = self_mon.get("notebook_content")
                 if nb_content:
-                    pt_parts.append(f'<notebook topic="{nb_content["topic"]}">')
-                    pt_parts.append(nb_content["snippet"])
-                    pt_parts.append("</notebook>")
+                    pt_parts.extend(_notebook_block_lines(nb_content))
 
                 pt_parts.append("</recent_activity>")
                 pt_parts.append("")
@@ -11313,12 +11631,18 @@ class CognitiveAgent(BaseAgent):
                 pt_parts.append("")
                 pt_parts.append(introspective_telemetry)
 
+            # BF-934: a triage that decided to file a proposal or write a notebook entry says so here, in place of the closing
+            # default of silence; any other turn keeps the closing it had.
+            _decided = decision_billet(observation.get("_intended_actions"))
             if duty:
                 pt_parts.append("Compose a Ward Room post with your findings (2-4 sentences).")
-                pt_parts.append("If nothing noteworthy to report, respond with exactly: [NO_RESPONSE]")
-            else:
+                if not _decided:
+                    pt_parts.append("If nothing noteworthy to report, respond with exactly: [NO_RESPONSE]")
+            elif not _decided:
                 pt_parts.append("If something genuinely warrants attention, compose a brief observation (2-4 sentences).")
                 pt_parts.append("Include your justification. Otherwise respond with exactly: [NO_RESPONSE]")
+            if _decided:
+                pt_parts.append(_decided)
             return "\n".join(pt_parts)
 
         parts = [f"Intent: {intent_name}"]
@@ -11404,6 +11728,23 @@ class CognitiveAgent(BaseAgent):
 
             if not query:
                 return observation
+            # AD-1357 (#1749): recall ran for this direct_message turn. Its query is
+            # kept only when it is the Captain's own words, BF-632's
+            # ``captain_message`` on a 1:1 turn. A group turn's query is the room's
+            # trigger, which can be another agent's message, and the ``text``
+            # fallback can lead with the camera scene (AD-733a); for those only
+            # the length is kept.
+            if intent.intent == "direct_message":
+                _captain_words = params.get("captain_message")
+                context_manifest.start_recall(
+                    observation,
+                    query=query,
+                    captain_words=(
+                        not params.get("is_group_chat")
+                        and isinstance(_captain_words, str)
+                        and bool(_captain_words)
+                    ),
+                )
 
             # AD-602: Classify query and select strategy
             _ad602_strategy = None
@@ -11690,12 +12031,15 @@ class CognitiveAgent(BaseAgent):
                 ):
                     try:
                         oracle = self._runtime._oracle_service
+                        _oracle_sources: list[tuple[str, str]] = []  # AD-1357
                         oracle_text = await oracle.query_formatted(
                             query_text=query,
                             agent_id=_mem_id,
                             k_per_tier=3,
                             max_chars=2000,
+                            sources_out=_oracle_sources,
                         )
+                        context_manifest.note_oracle(observation, "all", _oracle_sources)
                         if oracle_text:
                             observation["_oracle_context"] = oracle_text
                             logger.debug(
@@ -11706,6 +12050,7 @@ class CognitiveAgent(BaseAgent):
                             logger.debug("Oracle returned empty for %s", self.agent_type)
                     except Exception:
                         logger.warning("AD-568a: Oracle query failed, continuing without", exc_info=True)
+                        context_manifest.note_oracle(observation, "all", None)  # AD-1357
                 elif (
                     _recall_tier in (RecallTier.FULL, RecallTier.ENHANCED)
                     and hasattr(self, '_runtime')
@@ -11718,17 +12063,21 @@ class CognitiveAgent(BaseAgent):
                     # structure, not classified intelligence.
                     try:
                         oracle = self._runtime._oracle_service
+                        _graph_sources: list[tuple[str, str]] = []  # AD-1357
                         graph_text = await oracle.query_formatted(
                             query_text=query,
                             agent_id=_mem_id,
                             k_per_tier=3,
                             max_chars=1000,
                             tiers=["graph"],
+                            sources_out=_graph_sources,
                         )
+                        context_manifest.note_oracle(observation, "graph", _graph_sources)
                         if graph_text:
                             observation["_oracle_context"] = graph_text
                     except Exception:
                         logger.debug("BF-265: graph-only Oracle query failed, continuing without")
+                        context_manifest.note_oracle(observation, "graph", None)  # AD-1357
 
             # AD-568c: Compute source priority framing
             _framing = None
@@ -11842,6 +12191,7 @@ class CognitiveAgent(BaseAgent):
                             corroborating = await event_log.query(
                                 agent_id=ep.agent_ids[0],
                                 limit=1,
+                                exclude_category=INTENDED_ACTIONS_CATEGORY,  # BF-934: an intention or a drop is no record that an action happened
                             )
                             if corroborating:
                                 for evt in corroborating:
@@ -11861,6 +12211,7 @@ class CognitiveAgent(BaseAgent):
                     memory_list.append(mem)
 
                 observation["recent_memories"] = memory_list
+                context_manifest.note_episodes(observation, episodes)  # AD-1357
                 # BF-631 DIAG: surface what the per-message recall actually fed
                 # into the prompt for a Captain DM — so we can see whether the
                 # ANSWER (not just the Captain's repeated question-echoes) lands
@@ -11878,6 +12229,7 @@ class CognitiveAgent(BaseAgent):
                     )
         except Exception:
             logger.warning("BF-138: Failed to fetch episodic memory context — agent will respond without memory", exc_info=True)
+            context_manifest.note_recall_failed(observation)  # AD-1357
 
         # AD-979d slice 2: cross-agent associative recall. Gated ENTIRELY behind
         # the default-OFF flag -> when off this block does NOTHING (no extra
@@ -11889,10 +12241,13 @@ class CognitiveAgent(BaseAgent):
         if mem_cfg is not None and getattr(mem_cfg, "cross_agent_recall_enabled", False):
             try:
                 _peer_mems = await self._maybe_cross_agent_recall(query=query, mem_id=_mem_id, k=3)
+                # AD-1357: how many peer memories came back; never their ids or text.
+                context_manifest.note_cross_agent(observation, len(_peer_mems))
                 if _peer_mems:
                     observation.setdefault("recent_memories", []).extend(_peer_mems)
             except Exception:
                 logger.warning("AD-979d: cross-agent recall wiring failed; continuing", exc_info=True)
+                context_manifest.note_cross_agent(observation, None)  # AD-1357
 
         # AD-981b + AD-1038: one shared sovereign recall-confidence probe drives
         # BOTH the honest-absence band cue (AD-981b, recall_confidence_gating_enabled)
@@ -11906,6 +12261,7 @@ class CognitiveAgent(BaseAgent):
         if _band_on or _type_on:
             try:
                 _conf = await self._recall_confidence_probe(query=query, mem_id=_mem_id, k=5)
+                context_manifest.note_confidence(observation, _conf)  # AD-1357
                 if _conf is not None:
                     if _band_on and _conf.band:
                         observation["_recall_fok_band"] = _conf.band
@@ -11941,10 +12297,15 @@ class CognitiveAgent(BaseAgent):
                     _agent_ids = {
                         x for x in (self.id, getattr(self, "sovereign_id", None)) if x
                     }
+                    _tg_threads: list[str] = []  # AD-1357: the room the excerpt came from
                     _excerpt = consult_transcript(
                         _store, _agent_ids, _tg_query,
                         max_threads=getattr(_mem_cfg, "transcript_grounding_max_threads", 8),
                         max_chars=getattr(_mem_cfg, "transcript_grounding_max_chars", 1200),
+                        sources_out=_tg_threads,
+                    )
+                    context_manifest.note_transcript(
+                        observation, hit=bool(_excerpt), thread_ids=_tg_threads,
                     )
                     if _excerpt:
                         observation["_transcript_grounding"] = _excerpt

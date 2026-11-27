@@ -26,7 +26,11 @@ MAX_LINES = 500
 # BF-941 (#1324 slice 4d) deleted that row (count 1 -> 0): the Fresh Start announcement's
 # loop.create_task left dreaming.py for an awaited call at finalization. The pin before BF-941
 # was c2ee53af26ff8a4ca97a971a2e3f6b2aba7450213fc48bbd83036078d2aff70f.
-ARCHITECTURE_BASELINE_SHA256 = "59f090fd6c03496c17944ce05cbbd63ca5fc9bcfda0d8b6ac957c89ea7879098"
+# AD-1355 S1 (#1700) deleted two srp-size rows: the BirthChamber class went with its module, and
+# EventType's class span fell from 508 to 500 lines (the trigger is more than 500) once its six
+# AD-486 members were deleted; the architecture checker requires both rows to follow in the same
+# commit. The pin before AD-1355 S1 was 59f090fd6c03496c17944ce05cbbd63ca5fc9bcfda0d8b6ac957c89ea7879098.
+ARCHITECTURE_BASELINE_SHA256 = "d4fd33313f20075d3190850753db35a53993e1f7b1805075352b4a54c4e1d639"
 
 TARGETS = [
     ("swe_harness/agentic_loop.py", "AgenticLoop", 13),

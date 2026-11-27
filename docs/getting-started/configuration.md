@@ -70,4 +70,4 @@ Agent behavior is governed by a four-tier instruction hierarchy stored as Markdo
 
 ## Environment Variables
 
-A few settings can be overridden from the environment — for example `PROBOS_NATS_ENABLED=false` runs without NATS, and `PROBOS_LLM_URL` replaces the shared LLM base URL. ProbOS also loads a `.env` file at startup; see [`.env.example`](https://github.com/seangalliher/ProbOS/blob/main/.env.example). Use `--data-dir DIR` to choose the data directory.
+A few settings can be overridden from the environment: for example `PROBOS_NATS_ENABLED=false` runs without NATS, and `PROBOS_LLM_URL` replaces the shared LLM base URL (`cognitive.llm_base_url`). A tier that sets its own `llm_base_url_<tier>` keeps that URL, so `PROBOS_LLM_URL` reaches only the tiers without one; a config written by `probos init` sets one for the fast tier, and `probos setup` sets one for the fast, standard and deep tiers. ProbOS also loads a `.env` file at startup; see [`.env.example`](https://github.com/seangalliher/ProbOS/blob/main/.env.example). Use `--data-dir DIR` to choose the data directory.

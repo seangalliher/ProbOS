@@ -49,6 +49,7 @@ from probos.knowledge.records_snapshot import (
 )
 from probos.knowledge.records_store import RecordsStore
 from probos.storage.sqlite_factory import default_factory
+from tests.posix_stat import _posix_stat
 
 _SRC = Path(probos.__file__).resolve().parent
 _SHIP = "ship-did-alpha-0001"
@@ -897,19 +898,6 @@ def test_a_snapshot_is_written_only_into_the_snapshots_directory_itself(
 
 
 # --- A4: the round-2 repairs ---------------------------------------------------------------------------------------
-
-
-def _posix_stat() -> Any:
-    """A POSIX build's ``stat`` module, stricter: no ``IO_REPARSE_TAG_*`` (Windows-only) and no ``FILE_ATTRIBUTE_*``.
-
-    A5: ``Lib/stat.py`` defines the 17 ``FILE_ATTRIBUTE_*`` constants on every platform; they are removed here too,
-    and no S6 module reads either set (X18's scan), so no result depends on the difference (A4).
-    Swapped in for ``records_snapshot.stat`` only, never deleted from the interpreter's ``stat``: the standard library
-    reads those names itself on Windows (``ntpath.isjunction``)."""
-    return types.SimpleNamespace(**{
-        name: value for name, value in vars(stat).items()
-        if not name.startswith(("_", "IO_REPARSE_TAG_", "FILE_ATTRIBUTE_"))
-    })
 
 
 def test_an_erasure_removes_the_temporary_name_a_publish_could_not(

@@ -520,9 +520,11 @@ class TestDreamScheduler:
 
     @pytest.mark.asyncio
     async def test_full_dream_event_shape_has_no_reflection_outcome_fields(self):
-        report = SimpleNamespace(
+        # BF-1002 (#1820 bf-989 R6): a real DreamReport. The stand-in was a SimpleNamespace whose
+        # episodes_replayed was a list, a type the engine never returns, so len() on the int passed here.
+        report = DreamReport(
             duration_ms=1.0,
-            episodes_replayed=[],
+            episodes_replayed=7,
             clusters_found=0,
             notebook_consolidations=0,
             convergence_reports_generated=0,
@@ -551,6 +553,7 @@ class TestDreamScheduler:
             "notebook_consolidations",
             "convergence_reports_generated",
         }
+        assert events[0][1]["episodes_replayed"] == 7
 
 
 # ---------------------------------------------------------------------------

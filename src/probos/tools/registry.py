@@ -13,7 +13,7 @@ import logging
 import time
 from typing import TYPE_CHECKING, Any, Callable
 
-from probos.admission.seam import shadow_at
+from probos.admission.seam import check_at, shadow_at
 from probos.agent_stop import SEAM_TOOL, STOP_REASON_CODE, tool_refusal
 from probos.events import EventType
 from probos.tools.protocol import (
@@ -394,8 +394,8 @@ class ToolRegistry:
 
         # AD-1343: a stopped agent invokes nothing, whichever path called; refused before any lookup.
         stopped = tool_refusal(self._stop_gate, agent_id, tool_id)
-        # AD-1346 M3c: the shadow decision beside the check, with what the check did; it blocks nothing.
         shadow_at(self._admission, presented_id=agent_id, work_kind="tool_call", seam=SEAM_TOOL, origin="agent", origin_id=agent_id, refused=stopped is not None)
+        check_at(self._admission, effect=SEAM_TOOL, presented_id=agent_id)  # AD-1346 M3c, M3d3a: the shadow decision beside the check, then the carried work ticket's sink check; neither blocks.
         if stopped is not None:
             if effect_permit is not None:
                 from probos.execution.effect_broker import EffectDenied

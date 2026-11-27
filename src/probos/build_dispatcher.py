@@ -81,6 +81,12 @@ class BuildDispatcher:
         """BF-904b (#1585): whether the builds this dispatcher runs observe writes to sealed-core paths."""
         return self._enforce_sealed_core
 
+    _admission: object = None  # AD-1346 M3e2b (set_admission): None checks nothing
+
+    def set_admission(self, service: object) -> None:
+        """AD-1346 M3e2b: late-bind the service the targeted tests of the builds this dispatcher runs are checked with, in shadow; it blocks nothing."""
+        self._admission = service
+
     # -- lifecycle -----------------------------------------------------------
 
     async def start(self) -> None:
@@ -229,6 +235,7 @@ class BuildDispatcher:
                 builder_source="visiting",
                 expected_git_dir=expected_git_dir,
                 enforce_sealed_core=self._enforce_sealed_core,  # BF-904b (#1585): AD-481f's observation
+                admission_service=self._admission,  # AD-1346 M3e2b: the service ProbOSRuntime.start hands the dispatcher; None checks nothing
             )
             executor_branch = build_result.branch_name
 

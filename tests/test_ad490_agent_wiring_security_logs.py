@@ -33,7 +33,7 @@ class _FakeAgent:
 class _FakeRedTeamAgent:
     def __init__(
         self, *, pool: str, agent_id: str, command_env_passthrough: tuple[str, ...] = (),
-        command_policy_gate: object = None,
+        command_policy_gate: object = None, runtime: object = None,
     ) -> None:
         self.id = agent_id
         self.pool = pool

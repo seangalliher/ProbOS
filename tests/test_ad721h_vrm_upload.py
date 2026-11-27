@@ -208,7 +208,11 @@ def test_upload_vrm_dual_write_attachment_and_named_cache_have_identical_bytes(t
 
     from probos.routers import chat as _chat
     store = _chat._get_attachment_store(runtime)
-    stored = asyncio.new_event_loop().run_until_complete(store.read(sha))
+    loop = asyncio.new_event_loop()  # BF-986 (#1754): closed here; left open, a later test finalised it
+    try:
+        stored = loop.run_until_complete(store.read(sha))
+    finally:
+        loop.close()
     named = (tmp_path / "avatars" / "agent-007.vrm").read_bytes()
     assert stored == named == blob
 

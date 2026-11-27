@@ -1063,12 +1063,27 @@ def _held_turns(rig: SimpleNamespace) -> int:
     return len(rig.agent._promoted_turn_continuations)
 
 
-def _watchdog_config() -> DmAgenticConfig:
+# GATE-F3: the BF-733 deadline is read when a segment STARTS, from the rig's own DmAgenticConfig, so a
+# case gives each segment the deadline its role needs: this one to a segment the case needs alive (no
+# pause of the host can reach it), a short one only to the segment the real watchdog must stop.
+_LONG_SEGMENT_S = 600.0
+
+
+def _watchdog_config(deadline: float = 1.0) -> DmAgenticConfig:
     """A BF-733 deadline short enough to reach: the real watchdog stops the run."""
     return DmAgenticConfig(
         enabled=True, continue_or_ask_enabled=True, continue_or_ask_max_passes=1,
-        promote_to_task_after_seconds=0.05, promoted_run_deadline_seconds=1.0,
+        promote_to_task_after_seconds=0.05, promoted_run_deadline_seconds=deadline,
     )
+
+
+def _watchdog_lines(caplog: pytest.LogCaptureFixture) -> list[str]:
+    """One line per BF-733 watchdog that fired: it names the work item and the deadline it spent."""
+    return [
+        r.getMessage() for r in caplog.records
+        if r.levelno == logging.WARNING and "BF-733: promoted run" in r.getMessage()
+        and "made no return in" in r.getMessage()
+    ]
 
 
 async def test_l1_a_promoted_turn_whose_run_raises_holds_nothing(make_rig, scripted):
@@ -1115,12 +1130,24 @@ async def test_l3_a_promoted_run_the_watchdog_stops_holds_nothing(make_rig, scri
     assert _held_turns(rig) == 0
 
 
-async def test_l4_a_resumed_pass_the_watchdog_stops_holds_nothing(make_rig, scripted):
-    rig = await make_rig(dm=_watchdog_config())
+async def test_l4_a_resumed_pass_the_watchdog_stops_holds_nothing(make_rig, scripted, caplog):
+    # GATE-F3: the first segment is not what this case stops, so it gets a deadline no pause of the host can
+    # reach; the resumed pass gets the short one when the approval starts it, and only its watchdog can fire.
+    dm = _watchdog_config(deadline=_LONG_SEGMENT_S)
+    rig = await make_rig(dm=dm)
+    caplog.set_level(logging.WARNING, logger=_PROMOTION_LOG)
     gate = asyncio.Event()
     scripted.script = [_cut(PARTIAL), _done("never returned")]
     scripted.gates = {0: gate, 1: asyncio.Event()}  # the next pass outlives its deadline
     item, pending = await _promote_and_stop(rig, gate)
+    assert len(pending) == 1 and pending[0].work_item_id == item.id, "premise: the first pass filed its ask"
+    parked = await rig.work_items.get_work_item(item.id)
+    assert parked.status == "blocked" and parked.metadata["capability_request_id"] == pending[0].id, (
+        "premise: the first segment parked the item on its ask"
+    )
+    assert item.id in rig.agent._promoted_turn_continuations, "premise: and kept the turn's next pass"
+    assert len(scripted.calls) == 1 and not _watchdog_lines(caplog), "premise: no watchdog has fired yet"
+    dm.promoted_run_deadline_seconds = 1.0  # read when the next segment starts
 
     await _approve(rig, pending[0].id)
 
@@ -1128,6 +1155,9 @@ async def test_l4_a_resumed_pass_the_watchdog_stops_holds_nothing(make_rig, scri
     assert (await rig.work_items.get_work_item(item.id)).status == "failed", (
         "premise: BF-733's watchdog stopped it and its reporter closed the item"
     )
+    fired = _watchdog_lines(caplog)
+    assert len(fired) == 1, "premise: exactly one watchdog fired"
+    assert item.id in fired[0] and "(deadline 1.0s)" in fired[0], "premise: it was the resumed segment's"
     assert _held_turns(rig) == 0
 
 
@@ -1287,17 +1317,21 @@ def test_g3_the_agent_reports_and_bounds_the_resumed_run_exactly_as_the_first() 
 
 # -- O: a segment ends its item only while it is its own; the hand-off reads it now --
 
-# The older segment's deadline, and how long before it the newer segment starts:
-# the newer one's own deadline then falls a head start after the older one's.
+# O8's deadline for its older and its newer segment (O8 is unchanged; its budget is stated in the contract).
 _O_DEADLINE_S = 2.5
-_O_HEAD_START_S = 1.0
+# O1's older segment of the two watchdog cases: the one segment the real watchdog must stop, and only
+# after the approval has started the newer one. It outlasts a pause of the host of twice O1's earlier
+# deadline plus a second for the approval and a margin, and it leaves the doubles' own 10 s hang guards
+# (the older's hold, the newer's gate) room to outlast it. Every other segment of O1 is alive for the
+# whole case: _LONG_SEGMENT_S.
+_O_STOPPED_S = 6.0
 SCIENCE = "science_science_0_5d2e8f10"
 
 
-def _o_config() -> DmAgenticConfig:
+def _o_config(deadline: float) -> DmAgenticConfig:
     return DmAgenticConfig(
         enabled=True, continue_or_ask_enabled=True, continue_or_ask_max_passes=1,
-        promote_to_task_after_seconds=0.05, promoted_run_deadline_seconds=_O_DEADLINE_S,
+        promote_to_task_after_seconds=0.05, promoted_run_deadline_seconds=deadline,
     )
 
 
@@ -1345,7 +1379,13 @@ async def test_o1_an_older_segment_ending_under_a_newer_one_leaves_it_the_item(
     older one finishes, or the real BF-733 watchdog stops it. The newer segment
     owns the item: it stays in_progress under it, the newer pass parks it on its
     own ask, and approving that ask runs the turn to its end."""
-    rig = await make_rig(dm=_o_config())
+    # GATE-F3: the deadline is read when a segment starts, so each segment gets the one its role needs.
+    # Only the older segment of a watchdog case is stopped by its watchdog, and only after the approval
+    # has started the newer one; every other segment is alive for the whole case. A resumed older
+    # segment starts later (below).
+    older_s = _O_STOPPED_S if ending == "watchdog" else _LONG_SEGMENT_S
+    dm = _o_config(_LONG_SEGMENT_S if older == "resumed" else older_s)
+    rig = await make_rig(dm=dm)
     caplog.set_level(logging.INFO)
     newer = 1 if older == "first" else 2  # the newer segment's pass, by index
     scripted.script = [
@@ -1369,6 +1409,12 @@ async def test_o1_an_older_segment_ending_under_a_newer_one_leaves_it_the_item(
     if older == "resumed":
         await _settle(rig)
         (first_ask,) = await rig.requests.list_pending()
+        first = await rig.work_items.get_work_item(item.id)
+        assert first.status == "blocked" and first.metadata["capability_request_id"] == first_ask.id, (
+            "premise: the first segment parked the item on its ask"
+        )
+        assert item.id in rig.agent._promoted_turn_continuations, "premise: and kept the turn's next pass"
+        dm.promoted_run_deadline_seconds = older_s  # read when the approval starts the resumed older one
         await _approve_now(rig, first_ask.id)
         scripted.gates[1].set()
     await asyncio.wait_for(hold.entered.wait(), timeout=_SETTLE_S)
@@ -1378,7 +1424,9 @@ async def test_o1_an_older_segment_ending_under_a_newer_one_leaves_it_the_item(
     assert len(scripted.calls) == newer, "premise: the older segment parked and is inside its park"
     older_tasks = {t for t in rig.agent._promoted_turn_tasks if not t.done()}
     assert hold.task in older_tasks and len(older_tasks) == 2, "premise: the older run and reporter"
-    await asyncio.sleep(_O_HEAD_START_S)
+    assert item.id in rig.agent._promoted_turn_continuations, "premise: the older still holds the next pass"
+    assert not _watchdog_lines(caplog), "premise: no watchdog has fired before the approval"
+    dm.promoted_run_deadline_seconds = _LONG_SEGMENT_S  # the newer segment must outlive the older one's end
 
     await _approve_now(rig, older_ask.id)
     await _until(lambda: len(scripted.calls) == newer + 1)
@@ -1386,10 +1434,19 @@ async def test_o1_an_older_segment_ending_under_a_newer_one_leaves_it_the_item(
     assert len(newer_tasks) == 2, "premise: the approval started the newer run and its reporter"
     if ending == "finished":
         hold.release.set()
-    await asyncio.wait(older_tasks, timeout=_SETTLE_S)
+    # A watchdog case waits for the older segment's own deadline; no other clock bounds it.
+    await asyncio.wait(older_tasks, timeout=_SETTLE_S + (_O_STOPPED_S if ending == "watchdog" else 0.0))
     assert all(t.done() for t in older_tasks), "premise: the older segment has ended"
     assert hold.task.cancelled() is (ending == "watchdog"), "premise: by the real watchdog, or not"
     assert not any(t.done() for t in newer_tasks), "premise: the newer segment is still running"
+    fired = _watchdog_lines(caplog)
+    if ending == "watchdog":
+        assert len(fired) == 1, "premise: exactly one watchdog fired"
+        assert item.id in fired[0] and f"(deadline {_O_STOPPED_S:.1f}s)" in fired[0], (
+            "premise: it was the older segment's, not the newer one's"
+        )
+    else:
+        assert fired == [], "premise: no watchdog fired"
 
     assert (await rig.work_items.get_work_item(item.id)).status == "in_progress", (
         "the newer segment owns the item, and the older one did not end it"

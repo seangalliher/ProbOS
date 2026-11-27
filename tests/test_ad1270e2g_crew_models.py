@@ -7,6 +7,8 @@ permissions and memory security, the three holodeck models, skill requests,
 naming, utility agents, SWE specialists, assignments, visiting officers, the
 content firewall, risk tiers, duty definitions and policy windows -- now live
 in ``probos.config_models.crew`` and are re-exported from ``probos.config``.
+AD-1355 S1 (#1700) later deleted ``HolodeckBirthChamberConfig`` with the AD-486
+Birth Chamber, so the tables below hold the twenty-four that remain.
 
 What is preserved is the PUBLIC FACADE and every value behind it. What
 deliberately CHANGES is the declaration site: ``config.py`` loses 346 lines and
@@ -68,7 +70,6 @@ MOVED_MODELS: tuple[str, ...] = (
     "DutyDefinition",
     "EPSDepartmentConfig",
     "FirewallConfig",
-    "HolodeckBirthChamberConfig",
     "HolodeckScenarioConfig",
     "HolodeckTeamSimulationConfig",
     "MemorySecurityConfig",
@@ -111,7 +112,6 @@ MODEL_TO_PATH: dict[str, str] = {
     "DutyDefinition": "proactive_cognitive.duty_schedule.schedules",
     "EPSDepartmentConfig": "eps.departments",
     "FirewallConfig": "firewall",
-    "HolodeckBirthChamberConfig": "holodeck_birth_chamber",
     "HolodeckScenarioConfig": "holodeck_scenarios",
     "HolodeckTeamSimulationConfig": "team_simulations",
     "MemorySecurityConfig": "security.memory",
@@ -157,18 +157,7 @@ EXPECTED_DUMPS: dict[str, dict[str, object]] = {   'AssignmentConfig': {'enabled
                           'fabricated_metrics_threshold': 3,
                           'flag_window_seconds': 3600.0,
                           'quarantine_threshold': 3},
-    'HolodeckBirthChamberConfig': {   'enabled': False,
-                                      'bypass_for_existing_agents': True,
-                                      'department_order': [   'security',
-                                                              'operations',
-                                                              'engineering',
-                                                              'science',
-                                                              'medical'],
-                                      'calibration_min_episodes': 5,
-                                      'affective_baseline_check_enabled': True,
-                                      'auto_advance_enabled': True,
-                                      'auto_advance_poll_interval_seconds': 2.0,
-                                      'max_self_discovery_probe_attempts': 3},
+    # AD-1355 S1 (#1700) deleted HolodeckBirthChamberConfig with the AD-486 Birth Chamber.
     'HolodeckScenarioConfig': {   'enabled': False,
                                   'auto_register_with_harness': True,
                                   'default_threshold': 0.6,
@@ -188,7 +177,9 @@ EXPECTED_DUMPS: dict[str, dict[str, object]] = {   'AssignmentConfig': {'enabled
                                 # BF-926 (#1656): enforce_leak_guard is deleted; it promised redaction nothing performed.
                                 'enforce_store': False,
                                 'anchor_mismatch_threshold': 0.7,
-                                'dp_min_cohort_size': 3},
+                                'dp_min_cohort_size': 3,
+                                # AD-1360 (#1828): added after the move; 0.0 judges no episode.
+                                'correlation_cutoff': 0.0},
     'NamingConfig': {   'enabled': True,
                         'captain_ship_override': '',
                         'extra_banned_words': []},
@@ -264,7 +255,7 @@ CONSTRUCTIBLE: tuple[str, ...] = tuple(
 
 
 #: Numeric bounds (Ge/Gt/Le/Lt) declared per model. Pinning the exact count is
-#: what keeps the case below non-vacuous: sixteen of the twenty-five carry no
+#: what keeps the case below non-vacuous: seventeen of the twenty-four carry no
 #: bound at all, so "at least zero were checked" would pass even if a model
 #: that DOES carry bounds silently lost every one.
 EXPECTED_BOUND_COUNTS: dict[str, int] = {
@@ -275,10 +266,9 @@ EXPECTED_BOUND_COUNTS: dict[str, int] = {
     "DutyDefinition": 0,
     "EPSDepartmentConfig": 4,
     "FirewallConfig": 0,
-    "HolodeckBirthChamberConfig": 4,
     "HolodeckScenarioConfig": 4,
     "HolodeckTeamSimulationConfig": 4,
-    "MemorySecurityConfig": 3,
+    "MemorySecurityConfig": 4,  # AD-1360 (#1828): correlation_cutoff (ge 0.0)
     "NamingConfig": 0,
     "OrdersConfig": 4,
     "PermissionsConfig": 0,
@@ -360,7 +350,7 @@ def config_schema() -> dict[str, Any]:
 
 def test_the_batch_tables_are_consistent_and_exhaustive() -> None:
     """Guard the guards: a model dropped from a table must fail, not vanish."""
-    assert len(MOVED_MODELS) == len(set(MOVED_MODELS)) == 25
+    assert len(MOVED_MODELS) == len(set(MOVED_MODELS)) == 24  # AD-1355 S1 (#1700): HolodeckBirthChamberConfig deleted
     assert set(EXPECTED_DUMPS) == set(CONSTRUCTIBLE)
     assert set(MODEL_TO_PATH) == set(MOVED_MODELS)
     assert set(REQUIRES_ARGUMENTS) <= set(MOVED_MODELS)
@@ -368,7 +358,7 @@ def test_the_batch_tables_are_consistent_and_exhaustive() -> None:
     # The partitions must actually partition, or a model could be excluded from
     # every case at once and still satisfy each individual assertion.
     assert set(PLAIN_SUBMODELS) | set(NOT_A_PLAIN_SUBMODEL) == set(MOVED_MODELS)
-    assert len(PLAIN_SUBMODELS) == 22
+    assert len(PLAIN_SUBMODELS) == 21  # AD-1355 S1 (#1700)
 
 
 # ---------------------------------------------------------------------------
@@ -592,8 +582,9 @@ def test_every_declared_bound_is_still_enforced(name: str) -> None:
 def test_the_bound_table_is_exhaustive_and_not_all_zero() -> None:
     """Premise on both halves: exhaustive, and not trivially satisfiable."""
     assert set(EXPECTED_BOUND_COUNTS) == set(MOVED_MODELS)
-    assert sum(EXPECTED_BOUND_COUNTS.values()) == 30
-    assert sum(1 for c in EXPECTED_BOUND_COUNTS.values() if c) == 8
+    # AD-1355 S1 (#1700) deleted HolodeckBirthChamberConfig and its four bounds: 31 -> 27, 8 -> 7.
+    assert sum(EXPECTED_BOUND_COUNTS.values()) == 27  # AD-1360 (#1828): MemorySecurityConfig 3 -> 4
+    assert sum(1 for c in EXPECTED_BOUND_COUNTS.values() if c) == 7
 
 
 def test_the_required_field_fillers_actually_satisfy_their_models() -> None:

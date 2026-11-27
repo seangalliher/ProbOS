@@ -481,23 +481,28 @@ class ExecutionRenderer:
         if self.runtime.episodic_memory and dag.nodes:
             try:
                 t_end = time.monotonic()
-                if self.runtime.dream_adapter:
-                    self.runtime.dream_adapter._last_shapley_values = getattr(self.runtime, '_last_shapley_values', {})
-                    episode = self.runtime.dream_adapter.build_episode(
-                        text, execution_result, t_start, t_end,
-                    )
-                else:
-                    from probos.types import AnchorFrame, Episode
-                    episode = Episode(
-                        timestamp=time.time(),
-                        user_input=text,
-                        dag_summary={},
-                        outcomes=[],
-                        agent_ids=[],
-                        duration_ms=(t_end - t_start) * 1000,
-                        source="direct",
-                        anchors=AnchorFrame(channel="dag", trigger_type="dag_execution"),
-                    )
+                # AD-1360 S2b (#1828): the shell request's own id (the cycle's when one reached it), bound while the
+                # episode is built; the dream adapter's builder and the inline episode read it.
+                from probos.cycle_trace import current_cycle_id, entry_scope
+                with entry_scope(getattr(self.runtime, "cycle_registry", None), kind="nl_request"):
+                    if self.runtime.dream_adapter:
+                        self.runtime.dream_adapter._last_shapley_values = getattr(self.runtime, '_last_shapley_values', {})
+                        episode = self.runtime.dream_adapter.build_episode(
+                            text, execution_result, t_start, t_end,
+                        )
+                    else:
+                        from probos.types import AnchorFrame, Episode
+                        episode = Episode(
+                            timestamp=time.time(),
+                            user_input=text,
+                            dag_summary={},
+                            outcomes=[],
+                            agent_ids=[],
+                            duration_ms=(t_end - t_start) * 1000,
+                            source="direct",
+                            correlation_id=current_cycle_id(),
+                            anchors=AnchorFrame(channel="dag", trigger_type="dag_execution"),
+                        )
                 await self.runtime.episodic_memory.store(episode)
             except Exception as e:
                 logger.warning("Episode storage failed: %s: %s", type(e).__name__, e)

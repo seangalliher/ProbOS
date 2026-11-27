@@ -32,12 +32,13 @@ import probos.capability_request as request_module
 import probos.routers.capability_requests as route_module
 from probos.agent_stop import AgentStopService
 from probos.agent_work import AgentWorkCreated, AgentWorkOrigin, AgentWorkService, open_agent_work_service
-from probos.agent_work_runner import AGENT_WORK_READ_TOOL_IDS, AgentWorkRunner
+from probos.agent_work_runner import AgentWorkRunner
 from probos.api_models import CapabilityRequestDecideRequest
 from probos.capability_request import CapabilityRequest, CapabilityRequestStore, agent_work_call
 from probos.cognitive import agentic_dispatch
 from probos.cognitive.agent_mode import PLAN_MODE_TOOL_IDS
 from probos.cognitive.agentic_dispatch import (
+    CONFINED_CALL_ANSWERED,
     CONFINED_CALL_FILED,
     CONFINED_CALL_NOT_FILED,
     ToolCallConfinement,
@@ -59,6 +60,7 @@ from probos.routers.capability_requests import decide_capability_request, list_a
 from probos.runtime import ProbOSRuntime
 from probos.startup.communication import _register_event_log_query_tool, _register_work_item_pull_tools
 from probos.substrate.event_log import EventLog
+from probos.tools.effect_tiers import ROUTINE_TOOL_IDS, routine_tool_ids
 from probos.tools.permissions import ToolPermissionStore
 from probos.tools.protocol import ToolPermission, ToolResult, ToolResultPresentation, ToolType
 from probos.tools.registry import ToolRegistry
@@ -365,11 +367,13 @@ async def test_a_chain_request_is_announced_claimed_run_and_reported_in_its_orig
 
 # X2
 async def test_a_call_outside_the_read_set_parks_the_item_and_an_approval_runs_it_exactly_once(tmp_path: Path) -> None:
-    """Acceptance 4: filed, nothing run; approved, the item resumes and the call runs once; a repeat is filed; denied,
-    the item ends and the Captain's reason reaches the origin thread."""
+    """Acceptance 4: filed, nothing run; approved, the item resumes and the call runs once; BF-947: a repeat in that run
+    is answered and does not run (before BF-947 it was filed), and a new call is filed; denied, the item ends and the
+    Captain's reason reaches the origin thread."""
     script = [
         _call("hull_survey", {}), _final("Waiting for the Captain."),
-        _call("hull_survey", {}, "c1"), _call("hull_survey", {}, "c2"), _final("Surveyed once."),
+        _call("hull_survey", {}, "c1"), _call("hull_survey", {}, "c2"), _call("hull_survey", {"deck": "2"}, "c3"),
+        _final("Surveyed once."),
     ]
     async with _rig(tmp_path, script) as rig:
         origin = await _thread_in(rig, "engineering", "laforge-1")
@@ -394,9 +398,11 @@ async def test_a_call_outside_the_read_set_parks_the_item_and_an_approval_runs_i
         await _pump(rig)
         again = await rig.store.get_work_item(item_id)
         assert rig.survey.calls == 1, "the approval admits the call it was asked for, once"
+        assert _seen(rig, CONFINED_CALL_ANSWERED), "BF-947: the repeat is answered, not filed"
         assert again is not None and again.status == "blocked"
         second_id = again.metadata["capability_request_id"]
-        assert second_id != first_id and (await rig.requests.get(second_id)).status == "pending"
+        second = await rig.requests.get(second_id)
+        assert second_id != first_id and second.status == "pending" and second.payload["params"] == {"deck": "2"}
         denied = await decide_capability_request(
             second_id, CapabilityRequestDecideRequest(approve=False, reason="once is enough"), runtime=captain,
         )
@@ -566,7 +572,10 @@ async def test_a_failing_gate_refuses_and_every_refusal_is_a_never_ran_policy_ou
         assert text in agentic_dispatch._NEVER_RAN_REFUSALS
         assert not is_capability_gap(text)
         assert classify_tool_fault_error(text) == "permission_denied"
-    for tool_ids, gate in ((frozenset(), broken), ({"x"}, broken), (frozenset({"x"}), "not callable")):
+    # AD-1356 S4: an empty set is valid (the runner builds one when neither routine nor elevated is auto); a set that is
+    # not a frozenset of non-empty str, or a gate that is not callable, is not.
+    assert ToolCallConfinement(frozenset(), broken).tool_ids == frozenset()
+    for tool_ids, gate in (({"x"}, broken), (frozenset({""}), broken), (frozenset({"x"}), "not callable")):
         with pytest.raises(ValueError, match="tool_call_confinement_invalid"):
             ToolCallConfinement(tool_ids, gate)  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="tool_call_confinement_invalid"):
@@ -574,8 +583,9 @@ async def test_a_failing_gate_refuses_and_every_refusal_is_a_never_ran_policy_ou
             agent_id="forge-1", instructions="", task_text="x", runtime=SimpleNamespace(),
             plan_mode_tool_ids=frozenset({"event_log_query"}), confinement=ToolCallConfinement(frozenset({"x"}), broken),
         )
-    assert AGENT_WORK_READ_TOOL_IDS <= PLAN_MODE_TOOL_IDS
-    assert not AGENT_WORK_READ_TOOL_IDS & {"web_search", "read_page", "http_fetch", "discover_work_items"}
+    # AD-1356 S2: the routine tier draws on the plan-mode read set plus three code readers, and never leaves the ship.
+    assert ROUTINE_TOOL_IDS - {"codebase_query", "codebase_read_source", "read_file"} <= PLAN_MODE_TOOL_IDS
+    assert not ROUTINE_TOOL_IDS & {"web_search", "read_page", "http_fetch", "discover_work_items"}
 
 
 # X10
@@ -722,7 +732,7 @@ async def test_an_admitted_confined_call_is_not_parked_again_by_the_approval_inb
 
     try:
         session_id = await _open_session(executor, tool, _TIER_3_URL)
-        executor.confine_calls(ToolCallConfinement(AGENT_WORK_READ_TOOL_IDS, gate))
+        executor.confine_calls(ToolCallConfinement(routine_tool_ids(reads_confined=False), gate))
         await _invoke(executor, {"action": "click", "index": 0, "session_id": session_id})
         assert len(tool.invocations) == 1 and await store.list_pending() == []
         credential = await _invoke(executor, {"action": "fill_credential", "session_id": session_id})

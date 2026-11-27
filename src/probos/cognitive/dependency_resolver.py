@@ -13,6 +13,8 @@ import sys
 from collections.abc import Awaitable, Callable
 from typing import Any, Literal
 
+from probos.admission.seam import check_at
+from probos.admission.taxonomy import EFFECT_SUBPROCESS
 from probos.execution.command_env import build_command_env
 
 logger = logging.getLogger(__name__)
@@ -71,6 +73,12 @@ class DependencyResolver:
         self._approval_fn = approval_fn
         self._policy = policy
         self._deny_imports = set(deny_imports or [])
+
+    _admission: object = None  # AD-1346 M3e2a (set_admission): None checks nothing
+
+    def set_admission(self, service: object) -> None:
+        """AD-1346 M3e2a: late-bind the service ``_install_package``'s subprocess sink checks with, in shadow; it blocks nothing."""
+        self._admission = service
 
     def detect_missing(self, source_code: str) -> list[str]:
         """Parse imports from source code and find missing-but-allowed packages.
@@ -212,6 +220,7 @@ class DependencyResolver:
         if self._install_fn:
             return await self._install_fn(package_name)
 
+        check_at(self._admission, effect=EFFECT_SUBPROCESS, presented_id=None)  # AD-1346 M3e2a: the install's subprocess sink, in shadow, once before its fallback chain; it blocks nothing (D176: no principal)
         loop = asyncio.get_running_loop()
         # BF-892 (#1543): a package's build step runs third-party code. It gets the
         # command allowlist plus VIRTUAL_ENV (so uv targets the same venv), never

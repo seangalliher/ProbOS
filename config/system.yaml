@@ -851,20 +851,6 @@ onboarding:
   enabled: true
   activation_trust_threshold: 0.65
   naming_ceremony: true
-holodeck_birth_chamber:
-  enabled: false
-  bypass_for_existing_agents: true
-  department_order:
-  - security
-  - operations
-  - engineering
-  - science
-  - medical
-  calibration_min_episodes: 5
-  affective_baseline_check_enabled: true
-  auto_advance_enabled: true
-  auto_advance_poll_interval_seconds: 2.0
-  max_self_discovery_probe_attempts: 3
 holodeck_scenarios:
   enabled: false
   auto_register_with_harness: true
@@ -1944,7 +1930,6 @@ orientation:
   warm_boot_orientation: true
   proactive_supplement: true
   populate_watch_section: true
-  populate_ward_room_department: true
   populate_event_log_window: true
 social_verification:
   enabled: true
@@ -1996,7 +1981,7 @@ self_improvement:
   iteration_cap: 5
   evolution_half_life_seconds: 2592000.0
   evolution_collection_name: self_improvement_lessons
-  persistence_root_dir: src/probos/agents/designed
+  persistence_root_dir: ""  # BF-937 (#1678): empty = {data_dir}/promoted-agents; a directory inside the source checkout is refused
 # BF-926 (#1656): inert. No production code acts on this section; enabled: true turns nothing on (#1324).
 memory_budget:
   enabled: true

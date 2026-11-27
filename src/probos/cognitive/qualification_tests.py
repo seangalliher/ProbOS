@@ -17,6 +17,7 @@ import asyncio
 import logging
 import math
 import time
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from probos.cognitive.qualification import TestResult
@@ -40,12 +41,11 @@ def _safe_llm_response_text(response: Any) -> str:
     return str(response).strip()
 
 
-async def _send_probe(agent: Any, message: str) -> str:
-    """Send a probe message to an agent via handle_intent() with episode suppression.
+async def _probe_intent_result(agent: Any, message: str) -> Any:
+    """Send a probe message to an agent via handle_intent() with episode suppression; return its reply as is.
 
-    BF-140: Added exception handling. Captures and logs exceptions instead of
-    propagating them to the probe's outer handler (which returns score=0.0
-    with no diagnostic info).
+    BF-989 round 1 (#1838): split out of ``_send_probe`` so guided reminiscence reads the whole ``IntentResult``
+    (success, error, the stop metadata) on the same path and marker. Exceptions propagate.
     """
     from probos.types import IntentMessage
 
@@ -54,8 +54,18 @@ async def _send_probe(agent: Any, message: str) -> str:
         params={"text": message, "_qualification_test": True},  # BF-109: was "message", but perceive() reads "text"
         target_agent_id=agent.id,
     )
+    return await agent.handle_intent(intent)
+
+
+async def _send_probe(agent: Any, message: str) -> str:
+    """Send a probe message to an agent via handle_intent() with episode suppression.
+
+    BF-140: Added exception handling. Captures and logs exceptions instead of
+    propagating them to the probe's outer handler (which returns score=0.0
+    with no diagnostic info).
+    """
     try:
-        result = await agent.handle_intent(intent)
+        result = await _probe_intent_result(agent, message)
         if result and result.result:
             return str(result.result)
         return ""
@@ -68,6 +78,58 @@ async def _send_probe(agent: Any, message: str) -> str:
             exc_info=True,
         )
         return ""
+
+
+def _checked_recall(result: Any) -> str:
+    """BF-989 round 1 (#1838): an agent's reply as recall text, or ``RecallUnavailable`` naming why it is not one.
+
+    ``_send_probe`` keeps any truthy ``result``; a recall cannot. Not a recall: no ``IntentResult`` (the agent did
+    not handle the intent); the Captain's stop (``AgentStopService.refuse_intent``: ``success`` False, the refusal
+    text in ``result``, ``STOP_METADATA_KEY`` in ``metadata``); any other failed reply (``success`` False or an
+    ``error``); a reply holding ``[NO_RESPONSE]``, the agent's silence (AD-672's queue-full shed, BF-239's
+    engagement gate, or the model choosing silence). A successful reply with no text is returned as "", which the
+    engine records as an empty recall.
+    """
+    from probos.agent_stop import STOP_METADATA_KEY
+    from probos.cognitive.guided_reminiscence import RecallUnavailable
+    from probos.types import IntentResult
+
+    if not isinstance(result, IntentResult):
+        raise RecallUnavailable("no reply")
+    if STOP_METADATA_KEY in result.metadata:
+        raise RecallUnavailable("agent stopped")
+    if not result.success or result.error:
+        raise RecallUnavailable("agent reply failed")
+    text = "" if result.result is None else str(result.result)
+    if "[NO_RESPONSE]" in text:
+        raise RecallUnavailable("no response")
+    return text
+
+
+def agent_recall_fn(
+    registry: Any, *, resolve_slot: Callable[[str], str | None] | None = None,
+) -> Callable[[str, str], Awaitable[str]]:
+    """The agent's own recall for guided reminiscence (BF-989, #1838), on ``_send_probe``'s path and marker.
+
+    The intent is marked ``_qualification_test``, which suppresses episode, working-memory conclusion, action,
+    reasoning entry and thought storage (``CognitiveAgent``'s episode hook and its AD-573, AD-669 and AD-645 blocks,
+    BF-989 rounds 2 and 3), so a recall attempt never becomes an episode that a later session could select as ground
+    truth, and the agent's next turn never reads its own earlier reply back.
+    BF-989 round 1: ``resolve_slot`` maps the memory key the engine holds (the sovereign UUID episodes carry) to the
+    slot id the registry keys by (BF-907); a key it does not resolve is looked up as given. A key with no live agent,
+    and a reply that is not a recall (``_checked_recall``), raise ``RecallUnavailable``; the engine records the reason.
+    """
+
+    async def _recall(agent_id: str, prompt: str) -> str:
+        slot_id = (resolve_slot(agent_id) if resolve_slot is not None else None) or agent_id
+        agent = registry.get(slot_id)
+        if agent is None:
+            from probos.cognitive.guided_reminiscence import RecallUnavailable
+
+            raise RecallUnavailable("no live agent")
+        return _checked_recall(await _probe_intent_result(agent, prompt))
+
+    return _recall
 
 
 async def _llm_extract_float(llm_client: Any, prompt: str) -> float | None:
@@ -379,8 +441,11 @@ class EpisodicRecallProbe:
                 details={"skipped": True, "reason": "no_episodic_memory"},
             )
 
-        # Check sufficient episodes
-        episode_count = await runtime.episodic_memory.count_for_agent(agent_id)
+        # Check sufficient episodes. BF-992: agent_id is the registry's key (the slot id, as the lookup
+        # below uses it); the agent's episodes carry its sovereign id, so both episode reads use that.
+        from probos.cognitive.episodic import resolve_sovereign_id_from_registry
+        memory_id = resolve_sovereign_id_from_registry(agent_id, getattr(runtime, "registry", None))
+        episode_count = await runtime.episodic_memory.count_for_agent(memory_id)
         if episode_count < 3:
             return TestResult(
                 agent_id=agent_id,
@@ -409,7 +474,7 @@ class EpisodicRecallProbe:
             )
 
         # Get 3 episodes
-        episodes = await runtime.episodic_memory.recent_for_agent(agent_id, k=3)
+        episodes = await runtime.episodic_memory.recent_for_agent(memory_id, k=3)
         if len(episodes) < 3:
             return TestResult(
                 agent_id=agent_id,
@@ -433,6 +498,7 @@ class EpisodicRecallProbe:
         # Test recall on each episode
         per_episode = []
         total_accuracy = 0.0
+        unmeasured: list[str] = []  # BF-711: a judge that failed or answered no number measured nothing
 
         for episode in episodes:
             # Build expected summary for scoring comparison
@@ -449,26 +515,32 @@ class EpisodicRecallProbe:
             recalled_text = await _send_probe(agent, probe_msg)
 
             # Score
-            accuracy = await engine.score_recall(recalled_text, expected_summary)
+            scored = await engine.score_recall_outcome(recalled_text, expected_summary)
+            accuracy = scored.score
             classification = engine.classify_recall(
                 recalled_text, expected_summary, episode, accuracy,
             )
 
-            per_episode.append({
+            entry = {
                 "episode_id": str(episode_id),
                 "accuracy": accuracy,
                 "classification": classification.value,
-            })
+            }
+            if scored.inconclusive:
+                entry["judge"] = scored.inconclusive
+                unmeasured.append(scored.inconclusive)
+            per_episode.append(entry)
             total_accuracy += accuracy
 
         avg_accuracy = total_accuracy / len(per_episode) if per_episode else 0.0
+        inconclusive = bool(unmeasured)
 
         return TestResult(
             agent_id=agent_id,
             test_name=self.name,
             tier=self.tier,
             score=avg_accuracy,
-            passed=avg_accuracy >= self.threshold,
+            passed=not inconclusive and avg_accuracy >= self.threshold,
             timestamp=time.time(),
             duration_ms=(time.time() - t0) * 1000,
             details={
@@ -476,6 +548,8 @@ class EpisodicRecallProbe:
                 "per_episode": per_episode,
                 "skipped": False,
             },
+            error=f"{len(unmeasured)}/{len(per_episode)} episodes: {unmeasured[0]}" if inconclusive else None,
+            inconclusive=inconclusive,
         )
 
 

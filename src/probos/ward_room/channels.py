@@ -7,6 +7,8 @@ import time
 import uuid
 from typing import Any, Callable, Awaitable, Iterable
 
+from probos.admission.seam import check_at
+from probos.admission.taxonomy import EFFECT_STORE_WRITE
 from probos.ward_room.models import WardRoomChannel
 
 logger = logging.getLogger(__name__)
@@ -64,6 +66,12 @@ class ChannelManager:
         self._ontology = ontology
         self._subscribe_fn = subscribe_fn
         self._channel_cache: list[dict[str, Any]] = []
+
+    _admission: object = None  # AD-1346 M3e4d5 (D315, set_admission): None checks nothing
+
+    def set_admission(self, service: object) -> None:
+        """AD-1346 M3e4d5 (D315): the service ``create_channel`` and ``get_or_create_dm_channel`` hand ``check_at``; ``WardRoomService.set_admission`` calls it; None checks nothing."""
+        self._admission = service
 
     async def _ensure_default_channels(self) -> None:
         """Create 'All Hands' + one channel per department if they don't exist."""
@@ -205,6 +213,7 @@ class ChannelManager:
             department=department, created_by=created_by, created_at=now,
             description=description,
         )
+        check_at(self._admission, effect=EFFECT_STORE_WRITE, presented_id=created_by)  # AD-1346 M3e4d5 (D314): the channel's store-write check, in shadow, before its row's INSERT; it blocks nothing
         await self._db.execute(
             "INSERT INTO channels (id, name, channel_type, department, created_by, created_at, description) "
             "VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -262,6 +271,7 @@ class ChannelManager:
             department="", created_by=agent_a_id, created_at=now,
             description=f"DM: {label_a} \u2194 {label_b}",
         )
+        check_at(self._admission, effect=EFFECT_STORE_WRITE, presented_id=agent_a_id)  # AD-1346 M3e4d5 (D314): the DM channel's store-write check, in shadow, before its row's INSERT; it blocks nothing
         await self._db.execute(
             "INSERT INTO channels (id, name, channel_type, department, created_by, created_at, description) "
             "VALUES (?, ?, ?, ?, ?, ?, ?)",

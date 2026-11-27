@@ -98,7 +98,11 @@ EXPECTED_DUMPS: dict[str, dict[str, object]] = {
                                'captain_unavailable_max_ttl_hours': 72,
                                'decision_pre_clearance_enabled': False,
                                'decision_pre_clearance_default_ttl_hours': 24,
-                               'decision_pre_clearance_max_ttl_hours': 168},
+                               'decision_pre_clearance_max_ttl_hours': 168,
+                               # AD-1356 S4 appended three fields after the move; the move changed none.
+                               'agent_work_routine_decider': 'auto',
+                               'agent_work_elevated_decider': 'chief',
+                               'agent_work_critical_decider': 'captain'},
     'BaselineVRMManifest': {   'ensign': '',
                                'lieutenant': '',
                                'commander': '',

@@ -313,6 +313,92 @@ def test_build_command_resume_passes_session(bridge):
     assert "sess-9" not in _allowed(command)  # not swallowed by the variadic tool list
 
 
+def test_build_command_read_dirs_only_for_read_only_runs(bridge, tmp_path):
+    folder = tmp_path / "files"
+    read_only = bridge.build_command("claude", read_only=True, resume="sess-9", read_dirs=(folder,))
+    assert read_only[read_only.index("--add-dir") + 1] == str(folder)
+    assert _allowed(read_only) == _READ_ONLY_ALLOWED  # the folder adds no tool
+    start = read_only.index("--disallowedTools") + 1
+    assert read_only[start:start + 4] == ["Bash(git *--output*)", "Bash(git grep:*)", "--add-dir", str(folder)]
+    assert read_only[read_only.index("--resume") + 1] == "sess-9"
+    assert "--add-dir" not in bridge.build_command("claude", read_only=False, resume=None, read_dirs=(folder,))
+    assert "--add-dir" not in bridge.build_command("claude", read_only=True, resume=None)
+
+
+def test_session_files_dir_is_the_request_files_folder_only(bridge, tmp_path):
+    home = tmp_path / "home"
+    files = home / ".copilot" / "session-state" / "c0314129" / "files"
+    (files / "next" / "adq").mkdir(parents=True)
+    assert bridge.session_files_dir(files / "next" / "adq" / "req.md", home) == files.resolve()
+    assert bridge.session_files_dir(files / "req.md", home) == files.resolve()
+    # Never the session folder itself (its events.jsonl), another folder in it, or anything outside.
+    assert bridge.session_files_dir(home / ".copilot" / "session-state" / "c0314129" / "events.jsonl", home) is None
+    assert bridge.session_files_dir(home / ".copilot" / "session-state" / "c0314129" / "other" / "r.md", home) is None
+    assert bridge.session_files_dir(files / ".." / ".." / ".." / "x.md", home) is None
+    assert bridge.session_files_dir(files / "next" / ".." / "req.md", home) is None  # any `..` is refused
+    assert bridge.session_files_dir(tmp_path / "prompts" / "req.md", home) is None
+    assert bridge.session_files_dir(None, home) is None
+
+
+def test_session_files_dir_refuses_a_link_into_another_session(bridge, tmp_path):
+    home = tmp_path / "home"
+    state = home / ".copilot" / "session-state"
+    (state / "a" / "files").mkdir(parents=True)
+    other = state / "b" / "files"
+    other.mkdir(parents=True)
+    (other / "req.md").write_text("x", encoding="utf-8")
+    link = state / "a" / "files" / "req.md"
+    try:
+        link.symlink_to(other / "req.md")
+    except OSError:
+        pytest.skip("symlinks need privileges on this machine")
+    assert bridge.session_files_dir(link, home) is None
+
+
+def test_session_files_dir_refuses_a_linked_files_folder(bridge, tmp_path):
+    home = tmp_path / "home"
+    state = home / ".copilot" / "session-state"
+    other = state / "b" / "files"
+    other.mkdir(parents=True)
+    (other / "req.md").write_text("x", encoding="utf-8")
+    (state / "j").mkdir()
+    linked = state / "j" / "files"
+    if sys.platform == "win32":  # a junction needs no privilege
+        subprocess.run(["cmd", "/c", "mklink", "/J", str(linked), str(other)], check=True, capture_output=True)
+    else:
+        linked.symlink_to(other, target_is_directory=True)
+    assert bridge.session_files_dir(linked / "req.md", home) is None
+    assert bridge.session_files_dir(other / "req.md", home) == other.resolve()  # the real folder still works
+
+
+def test_run_architect_logs_read_dirs_and_drops_them_for_edit_runs(bridge, tmp_path):
+    folder = tmp_path / "files"
+    fake = _FakeRun(auth=_PLAN_LOGIN, agent_stdout=_agent_json())
+    result = bridge.run_architect("x", root=_checkout(tmp_path), cli="claude", read_only=True,
+                                  resume=None, timeout=60, env={}, run=fake, read_dirs=(folder,))
+    command, _ = fake.calls[-1]
+    assert command[command.index("--add-dir") + 1] == str(folder)
+    assert json.loads(result.log_path.read_text(encoding="utf-8"))["read_dirs"] == [str(folder)]
+    result = bridge.run_architect("x", root=_checkout(tmp_path / "edit"), cli="claude", read_only=False,
+                                  resume=None, timeout=60, env={}, run=fake, read_dirs=(folder,))
+    assert "--add-dir" not in fake.calls[-1][0]
+    assert json.loads(result.log_path.read_text(encoding="utf-8"))["read_dirs"] == []
+
+
+def test_main_passes_the_task_files_folder_on_read_only_runs(bridge, monkeypatch, tmp_path):
+    calls = _main_env(bridge, monkeypatch, tmp_path, context=None)
+    files = tmp_path / "home" / ".copilot" / "session-state" / "sid" / "files"
+    files.mkdir(parents=True)
+    request = files / "req.md"
+    request.write_text("Rank these options.", encoding="utf-8")
+    assert bridge.main(["--task-file", str(request), "--read-only"]) == 0
+    assert calls[-1]["read_dirs"] == (files.resolve(),)
+    outside = tmp_path / "req.md"
+    outside.write_text("Rank these options.", encoding="utf-8")
+    assert bridge.main(["--task-file", str(outside), "--read-only"]) == 0
+    assert calls[-1]["read_dirs"] == ()
+
+
 def test_build_command_grants_no_state_changing_shell(bridge):
     allowed = _allowed(bridge.build_command("claude", read_only=False, resume=None))
     gh_rules = {rule for rule in allowed if rule.startswith("Bash(gh ")}

@@ -1,4 +1,4 @@
-"""AD-1346 M3c (#1604): the one statement a stop-check site adds beside its own check.
+"""AD-1346 M3c, M3d2 and M3d3a (#1604): the statements a site adds beside its own stop check, and at an effect point.
 
 ``shadow_at`` hands the site's work to ``AdmissionService.shadow`` with what the site's own check
 did (``refused``) and returns None, so the site has no result to act on. It calls only an exact
@@ -6,10 +6,33 @@ did (``refused``) and returns None, so the site has no result to act on. It call
 It raises no ``Exception``: its own work is one type check and
 one call with the keywords ``shadow`` takes, and ``shadow`` lets no ``Exception`` out (D59); a
 ``BaseException`` that is not an ``Exception`` propagates.
+
+``hold_at`` (AD-1346 M3d2) hands one entry's admitted unit to ``AdmissionService.hold`` for an exact
+``AdmissionService`` and returns its ``TicketHold``; for anything else it returns ``NO_HOLD``. The entry's only use of
+the hold is its ``end()`` in a ``finally`` (``tests/test_ad1346_admission_ticket_issue.py``, I10). It awaits nothing
+and raises no ``Exception``: ``hold`` lets none out.
+
+``check_at`` (AD-1346 M3d3a) hands one effect point's call to ``AdmissionService.check_ticket`` for an exact
+``AdmissionService``; for anything else it does nothing. The tool sink and the model gateway call it
+(``tests/test_ad1346_admission_ticket_sinks.py``, SK7), and from AD-1346 M3e1 the subprocess sinks, seven from AD-1346
+M3e2a and eight from AD-1346 M3e2b (``tests/test_ad1346_admission_effect_census.py``, EC3), and from AD-1346 M3e3b two
+egress sinks and the image endpoint (``tests/test_ad1346_admission_egress_sinks.py``, ES1), and from AD-1346 M3e3c
+the browser engine's start and its CDP connect (ES1), and from AD-1346 M3e4b the Ward Room's four content-write
+entries and the episodic store (``tests/test_ad1346_admission_store_writes.py``, WM1), and from AD-1346 M3e4d1 the
+clinical notes store's ``write_note`` and the skill request store's ``file_request`` and ``decide`` (WM1), and from
+AD-1346 M3e4d2 the persistent task store's ``create_task`` (WM1), and from AD-1346 M3e4d3 the chat thread store's
+``create_thread`` and ``append_message_once`` (WM1), and from AD-1346 M3e4d4 the assignment service's
+``create_assignment`` (WM1), and from AD-1346 M3e4d5 the Ward Room channel manager's ``create_channel`` and
+``get_or_create_dm_channel`` (WM1), and from AD-1346 M3e4d6 the capability request store's ``file_request`` and
+``decide`` (WM1), and from AD-1346 M3e4d7 the artifact store's ``add_version`` and ``reconcile_exact_version``
+(WM1), and from AD-1346 M3e4d8 the work item store's ``_insert_work_item`` (WM1). It returns
+None, awaits nothing and raises only what ``check_ticket`` raises:
+``check_ticket`` lets none out.
 """
 
 from __future__ import annotations
 
+from probos.admission.carrier import NO_HOLD, TicketHold
 from probos.admission.service import AdmissionService
 from probos.admission.taxonomy import TODAY_ADMIT, TODAY_REFUSE
 
@@ -24,4 +47,18 @@ def shadow_at(
         presented_id=presented_id, work_kind=work_kind, seam=seam, origin=origin, origin_id=origin_id,
         today_outcome=TODAY_REFUSE if refused is True else TODAY_ADMIT,
     )
+    return None
+
+
+def hold_at(service: object, *, presented_id: str, work_kind: str, seam: str, child: bool) -> TicketHold:
+    """The ticket hold of one unit an entry's own stop check admitted: ``AdmissionService.hold`` for an exact service, else ``NO_HOLD``."""
+    if type(service) is AdmissionService:
+        return service.hold(presented_id=presented_id, work_kind=work_kind, seam=seam, child=child)
+    return NO_HOLD
+
+
+def check_at(service: object, *, effect: str, presented_id: object) -> None:
+    """The sink check of one effect point, in shadow: ``AdmissionService.check_ticket`` for an exact service, else nothing."""
+    if type(service) is AdmissionService:  # an exact service; None, a double or any other object is passed over
+        service.check_ticket(effect=effect, presented_id=presented_id)
     return None

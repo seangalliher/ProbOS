@@ -82,8 +82,9 @@ _NOT_LESSON_TEXT = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f\ud800-\udff
 # A2: what cannot stand in one line of an exit note: every control character, the line and paragraph separators (each
 # ends a line for str.splitlines), and lone surrogates.
 _NOT_ONE_LINE = re.compile(r"[\x00-\x1f\x7f-\x9f\u2028\u2029\ud800-\udfff]")
-# A4 (R2-F3): Ship's Records splits a document's frontmatter at the first two "---" it finds, inside a value too
-# (records_store._parse_document, register R25), so an envelope value holding one would come back cut short.
+# A4 (R2-F3): Ship's Records split a document's frontmatter at the first two "---" it found, inside a value too
+# (register R25), so an envelope value holding one came back cut short. BF-940 (#1686) ends the frontmatter at a line
+# of its own, so that no longer happens; this rule still refuses "---" (AD-1341 S4's decision, left as it was).
 _FRONTMATTER_DELIMITER = "---"
 
 
@@ -222,11 +223,11 @@ def is_exit_note_text(value: object, max_chars: int) -> bool:
     A string of at most ``max_chars`` characters that is not blank and is one line: no control character, no line or
     paragraph separator, no lone surrogate. SQLite stores the value as UTF-8 and a NUL would end its ``length()`` and
     keyword search; a line break in a callsign would put another heading into the origin line. A4 (R2-F3): and no
-    ``---``, which Ship's Records would take for the end of the frontmatter, so the value would come back cut short.
+    ``---``, which Ship's Records once took for the end of the frontmatter (BF-940, #1686, ended that); the rule stays.
     """
     return (
         type(value) is str and bool(value.strip()) and len(value) <= max_chars and _NOT_ONE_LINE.search(value) is None
-        and _FRONTMATTER_DELIMITER not in value  # A4 (R2-F3): Ship's Records cuts a frontmatter value at "---"
+        and _FRONTMATTER_DELIMITER not in value  # A4 (R2-F3): kept since BF-940 (#1686); the store no longer cuts at "---"
     )
 
 

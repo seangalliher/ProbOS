@@ -21,6 +21,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from probos.admission.seam import check_at
+from probos.admission.taxonomy import EFFECT_SUBPROCESS
 from probos.cognitive.builder_paths import (
     builder_write_refusal,
     fix_loop_path,
@@ -139,6 +141,7 @@ class BuildResult:
     fix_attempts: int = 0
     review_result: str = ""
     review_issues: list[str] = field(default_factory=list)
+    review_suggestions: list[str] = field(default_factory=list)  # AD-1359 follow-up (#1769): the review's suggestions, approved or not
     builder_source: str = "native"  # "native" | "visiting" | "native_harness" (AD-353/546)
     # AD-549: Structured execution metadata. Populated by NativeBuilderHarness with
     # builder_type / iterations / tools_used / compactions / stopped_reason / total_tokens.
@@ -172,6 +175,7 @@ class BuildFailureReport:
     # Review
     review_result: str = ""
     review_issues: list[str] = field(default_factory=list)
+    review_suggestions: list[str] = field(default_factory=list)  # AD-1359 follow-up (#1769): copied from the build result
 
     # Resolution options
     resolution_options: list[dict[str, str]] = field(default_factory=list)
@@ -195,6 +199,7 @@ class BuildFailureReport:
             "fix_descriptions": self.fix_descriptions,
             "review_result": self.review_result,
             "review_issues": self.review_issues,
+            "review_suggestions": self.review_suggestions,
             "resolution_options": self.resolution_options,
         }
 
@@ -216,6 +221,7 @@ def classify_build_failure(result: BuildResult, spec: BuildSpec) -> BuildFailure
         fix_attempts=result.fix_attempts,
         review_result=result.review_result,
         review_issues=list(result.review_issues),
+        review_suggestions=list(result.review_suggestions),
         raw_error=result.error or result.test_result or "",
         cleanup_errors=list(result.metadata.get("cleanup_errors", [])),  # BF-904a A3 (D28)
     )
@@ -3241,6 +3247,41 @@ def _check_sealed_path(change_path: str, sealed_globs: tuple[str, ...]) -> None:
 BuilderAgent = SoftwareEngineerAgent
 
 
+#: AD-1359 follow-up (#1769): what the review's suggestions may put into an event. The HXI stream drops a whole event for
+#: one string that is not valid UTF-8 or is over 65,536 characters, for a list over 4,096 items and for a frame over 262,144
+#: bytes (ws_event_stream.py). A suggestion is a sentence: 20 of at most 500 characters are at most 60,083 bytes of JSON
+#: (a control character is six), under a quarter of the frame, so the event's other fields keep room for three strings of
+#: 65,536 characters.
+_SUGGESTION_MAX_ITEMS = 20
+_SUGGESTION_MAX_CHARS = 500
+
+
+def _review_suggestions(raw: object) -> list[str]:
+    """AD-1359 follow-up (#1769): the code review's ``suggestions`` as a short list of short, wire-safe strings.
+
+    ``CodeReviewAgent._parse_review`` copies the model's JSON as given, so the value may be null, a string or a list
+    of anything: a bare string is one suggestion, a None or blank item is dropped, any other item is its text, and
+    any other value is no suggestion. What is kept is bounded by the two constants above: the first 20 items, each cut
+    to 500 characters with a closing ``...``, each unpaired surrogate (valid JSON text that no stream accepts) replaced
+    by ``?``. A list that is trimmed is logged with its counts. Never raises (the items are what ``json`` decodes).
+    """
+    items = [raw] if isinstance(raw, str) else raw
+    if not isinstance(items, (list, tuple)):
+        return []
+    texts = [text for text in (str(item).strip() for item in items if item is not None) if text]
+    if len(texts) > _SUGGESTION_MAX_ITEMS:
+        logger.warning(
+            "AD-1359 follow-up: the code review's suggestions were trimmed: kept %d of %d",
+            _SUGGESTION_MAX_ITEMS, len(texts),
+        )
+    kept: list[str] = []
+    for text in texts[:_SUGGESTION_MAX_ITEMS]:
+        if len(text) > _SUGGESTION_MAX_CHARS:
+            text = text[:_SUGGESTION_MAX_CHARS - 3] + "..."
+        kept.append(text.encode("utf-8", "replace").decode("utf-8"))
+    return kept
+
+
 async def execute_approved_build(
     file_changes: list[dict[str, Any]],
     spec: BuildSpec,
@@ -3254,6 +3295,7 @@ async def execute_approved_build(
     specialty: str = "general",
     expected_git_dir: str | None = None,
     enforce_sealed_core: bool | None = None,
+    admission_service: object = None,
 ) -> BuildResult:
     """Execute an approved build: write files, run tests, create git branch.
 
@@ -3273,6 +3315,11 @@ async def execute_approved_build(
             are observed (AD-481f: a warning per write, never a refusal). None
             reads ``runtime``'s config (``BuildPipeline``); the /api/build routes
             and the dispatcher pass the flag, because they pass no runtime.
+        admission_service: AD-1346 M3e2b. The service the targeted-test sink
+            checks each attempt's run with, in shadow (``check_at``); anything
+            but an exact ``AdmissionService``, None by default, checks nothing.
+            The /api/build resolve route and ``BuildPipeline`` read it from their
+            runtime; the dispatcher passes the one ``ProbOSRuntime.start`` hands it.
     """
     result = BuildResult(success=False, spec=spec)
     identity_lost = False
@@ -3536,6 +3583,8 @@ async def execute_approved_build(
                     llm_client=llm_client,
                 )
                 result.review_result = review.summary
+                # AD-1359 follow-up (#1769): set here, above the rejected branch, so nothing there can skip it.
+                result.review_suggestions = _review_suggestions(review.suggestions)
                 if not review.approved:
                     logger.warning(
                         "CodeReviewAgent: review REJECTED -- %s",
@@ -3562,6 +3611,7 @@ async def execute_approved_build(
             for attempt in range(1 + max_fix_attempts):
                 # BF-904b (#1585): read at the start of each attempt, so a file an earlier repair created is targeted.
                 all_changed_files = written + modified_files
+                check_at(admission_service, effect=EFFECT_SUBPROCESS, presented_id=None)  # AD-1346 M3e2b: the targeted-test sink, in shadow, in the awaiting task before each attempt's run; it blocks nothing (D188: no principal)
                 # Targeted tests only (AD-344). BF-897: there is no full-suite phase here.
                 passed, test_output, _targeted_files = await _run_targeted_tests(
                     work_dir, all_changed_files, timeout=TARGETED_TEST_TIMEOUT_S,

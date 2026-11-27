@@ -11,6 +11,7 @@ from probos.capability_request import CapabilityRequestStore
 from probos.cognitive.swe_harness.agentic_loop import AgenticLoop, AgenticResult
 from probos.cognitive.tier_audit import TierAuditSink
 from probos.substrate.event_log import EventLog
+from tests.offered_tools import offer  # #1796: the loop runs only offered tools.
 from tests.test_ad1324_audit import _build
 from tests.test_ad1324_loop_tier_choice import DIRECTIVE, Client, Tools, answer, read
 from tests.test_ad1324_tier_choice_e2e import _drive, endpoint  # noqa: F401  (fixture)
@@ -141,7 +142,7 @@ async def _armed_run(event_log: EventLog, client: Any) -> tuple[AgenticResult, A
     ctl = _build(event_log, stakes="high")
     assert ctl is not None, "premise: the armed runtime builds a controller"
     loop = AgenticLoop(llm_client=client, tool_executor=Tools(), tier="fast", max_iterations=5, tier_controller=ctl)
-    result = await loop.run(system_prompt="s", user_message="u", tools=[], context={"agent_id": "ezri"})
+    result = await loop.run(system_prompt="s", user_message="u", tools=[*offer("http_fetch")], context={"agent_id": "ezri"})  # #1796: the loop runs only offered tools, so the scripted call's tool is offered.
     await ctl.drain_audit()
     return result, ctl
 
@@ -176,7 +177,7 @@ async def test_cancelled_error_on_redo_still_propagates_and_writes_no_terminal(e
     ctl = _build(event_log, stakes="high")
     loop = AgenticLoop(llm_client=client, tool_executor=Tools(), tier="fast", max_iterations=5, tier_controller=ctl)
     with pytest.raises(asyncio.CancelledError):
-        await loop.run(system_prompt="s", user_message="u", tools=[], context={"agent_id": "ezri"})
+        await loop.run(system_prompt="s", user_message="u", tools=[*offer("http_fetch")], context={"agent_id": "ezri"})  # #1796: the loop runs only offered tools, so the scripted call's tool is offered.
     await ctl.drain_audit()
     assert [r for r in await _records(event_log) if r["outcome"] in ("refused", "asked", "faulted")] == []
 

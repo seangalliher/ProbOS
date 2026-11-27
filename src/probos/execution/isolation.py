@@ -105,6 +105,8 @@ from enum import Enum, IntEnum
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
+from probos.admission.seam import check_at
+from probos.admission.taxonomy import EFFECT_SUBPROCESS
 from probos.execution.command_env import SANDBOX_ENV_PASSTHROUGH
 
 logger = logging.getLogger(__name__)
@@ -666,10 +668,12 @@ class SubprocessSandbox:
     def __init__(
         self, *, scratch_root: Path | str = "data/execution",
         executor: concurrent.futures.Executor | None = None,
+        admission_service: object = None,
     ) -> None:
         self._scratch_root = Path(scratch_root)
         # AD-1246: None is the loop's default executor; a long run brings its own.
         self._executor = executor
+        self._admission = admission_service  # AD-1346 M3e2a: the subprocess sink's service, from the code runner and the code execution tool; None checks nothing
 
     def available(self) -> bool:
         return True  # always available — pure stdlib + the running interpreter
@@ -702,6 +706,7 @@ class SubprocessSandbox:
                     error=f"invalid workdir: {exc}",
                     tier=int(self.tier),
                 )
+        check_at(self._admission, effect=EFFECT_SUBPROCESS, presented_id=None)  # AD-1346 M3e2a: the subprocess sink, in shadow, in the awaiting task before the executor hand-off; it blocks nothing (D176: no principal)
         try:
             return await loop.run_in_executor(self._executor, self._run_sync, request)
         except asyncio.CancelledError:

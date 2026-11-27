@@ -42,10 +42,12 @@ MAX_DAYS = 7
 _BUSY_TIMEOUT_S = 2.0
 _LEGEND = (
     "Spend is measured plus estimated. Replayed rows (cached) and the mock client are not spend; "
-    "uncharged rows made no model call, failed, or were recorded before BF-901."
+    "uncharged rows made no model call, failed, were recorded before BF-901, or summarise an agentic DM turn "
+    "(dag_node_id dm-turn) that succeeded but whose model calls are not metered."
 )
 _COVERAGE = (
-    "Journaled calls only (one-shot decisions and sub-task chain steps); the agentic loop writes no journal row."
+    "Journaled calls only (one-shot decisions and sub-task chain steps). The agentic loop's own model calls "
+    "write no journal row; an agentic DM turn adds one uncharged row (dm-turn), so its tokens are not counted."
 )
 #: Shown for a day no calendar date names: a timestamp out of range for SQLite's date functions or Python's.
 UNKNOWN_DAY = "(unknown day)"

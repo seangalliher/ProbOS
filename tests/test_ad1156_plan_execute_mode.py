@@ -536,10 +536,14 @@ def test_the_plan_mode_refusal_is_a_policy_outcome() -> None:
     assert not is_capability_gap(_REFUSAL)
     assert classify_tool_fault_error(_REFUSAL) == "permission_denied"
     never_ran = getattr(agentic_dispatch, "_NEVER_RAN_REFUSALS", frozenset())
-    # AD-1347 S3: a confined call that was filed or refused never ran either.
+    # AD-1347 S3: a confined call that was filed or refused never ran either; BF-947: nor one the gate answered;
+    # AD-1356 S1.1: nor one refused because its tool id is not registered; BF-965 (#1796): nor one the loop refused
+    # because its tool was not offered.
     assert never_ran == {
         _REFUSAL, agentic_dispatch._DEFERRED_SCHEMA_REFUSAL,
         agentic_dispatch.CONFINED_CALL_FILED, agentic_dispatch.CONFINED_CALL_NOT_FILED,
+        agentic_dispatch.CONFINED_CALL_ANSWERED, agentic_dispatch.UNREGISTERED_TOOL_REFUSAL,
+        agentic_dispatch.UNOFFERED_TOOL_REFUSAL,
     }
 
 
@@ -805,8 +809,11 @@ async def test_plan_mode_offers_the_allowlist_and_refuses_everything_else() -> N
 
     assert _offered(llm.requests[0]) == ["http_fetch"]
     assert (writer.calls, hidden.calls, len(fetch.calls)) == ([], [], 1)
-    assert _transcript(llm.requests[1]).count(_REFUSAL) == 1
-    assert _transcript(llm.requests[2]).count(_REFUSAL) == 2
+    # BF-965 (#1796): plan mode withholds both tools from the offer, so the loop refuses them before the executor's
+    # plan-mode guard is reached; test_the_executor_guard_refuses_before_resolving_the_tool drives that guard directly.
+    assert _transcript(llm.requests[1]).count(agentic_dispatch.UNOFFERED_TOOL_REFUSAL) == 1
+    assert _transcript(llm.requests[2]).count(agentic_dispatch.UNOFFERED_TOOL_REFUSAL) == 2
+    assert _REFUSAL not in _transcript(llm.requests[2])
     assert outcome.final_text == _PLAN_TEXT and outcome.denied_tools == []
 
 
@@ -835,6 +842,9 @@ async def test_repeated_plan_mode_refusals_are_not_a_tool_defect() -> None:
     failing_outcome = await _execute(runtime, failing, plan_mode_tool_ids=PLAN_MODE_TOOL_IDS)
 
     assert writer.calls == [] and refused_outcome.tool_defect is None
+    # BF-965 (#1796): plan mode withholds file_writer from the offer, so both refusals are the loop's; a never-ran
+    # refusal is not defect evidence (agentic_dispatch._NEVER_RAN_REFUSALS).
+    assert _transcript(refused.requests[2]).count(agentic_dispatch.UNOFFERED_TOOL_REFUSAL) == 2
     # Premise: the same two identical errors from a tool that RAN are a defect.
     assert failing_outcome.tool_defect is not None
     assert failing_outcome.tool_defect.tool_id == "http_fetch"
@@ -965,7 +975,8 @@ async def test_m1_the_mode_command_governs_the_next_real_dm_turn(store: ChatThre
     assert (planned["tier_used"], planned["llm_output"]) == ("agentic", _PLAN_TEXT)
     assert _offered(plan_llm.requests[0]) == ["http_fetch"]
     assert "## Conversation mode: plan\n" in plan_llm.requests[0].system_prompt
-    assert _REFUSAL in _transcript(plan_llm.requests[1])
+    # BF-965 (#1796): the plan-mode offer withholds file_writer, so the loop refuses it before the executor's guard.
+    assert agentic_dispatch.UNOFFERED_TOOL_REFUSAL in _transcript(plan_llm.requests[1])
     assert (writer.calls, len(fetch.calls)) == ([], 1)
 
     await _command(store, thread, "/mode execute", event_log=events)

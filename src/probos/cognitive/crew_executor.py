@@ -129,12 +129,16 @@ _ENTRY_ELISION = " ...[entry shortened]"
 # "black hole" and "slack" do not. Prove a match, never reason about one.
 _COMMONS_HEADER = "## What the ship already knows about this"
 
+# BF-950 Amendment 1: name only what ``_render_commons_entry`` emits. It shows an
+# age only for a result whose ``metadata["timestamp"]`` is a number, and it never
+# writes STALE; a BF-950 test holds the two together.
 _COMMONS_DISPOSITION: str = (
     "(These entries come from the ship's shared knowledge stores — work other "
     "crew recorded in earlier sessions. Treat them as reference material "
     "rather than as something you lived through. Each entry carries its source "
     "tier, a retrieval relevance score, an author where one was recorded, and "
-    "an age, so weigh a weakly-matching or STALE entry lightly. Relevance is "
+    "sometimes an age, so weigh a weakly-matching or old entry lightly. "
+    "Relevance is "
     "how closely the entry matched this subtask — it is a retrieval score, "
     "never a measure of how strongly its author holds the claim. Build on an "
     "entry and cite it; otherwise do not narrate this consultation.)"

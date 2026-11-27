@@ -835,8 +835,10 @@ class WriteClaimGuardConfig(BaseModel):  # AD-1285 (#1087 / BF-687)
     and a default-OFF control defends nothing -- which is the AD-1157 failure
     mode #1087 names. It is safe on because ``assess_write_claim`` abstains on
     an unpopulated ledger, so a ship with no durable-write channel wired is
-    byte-identical. The flag exists so the behaviour can be turned off without
-    a revert.
+    byte-identical for writes. AD-1358 S2 (#1750) puts its lookup-claim check
+    under the same flag; it abstains unless the turn's tool record is present
+    and holds no call. The flag exists so the behaviour can be turned off
+    without a revert.
     """
 
     enabled: bool = Field(
@@ -844,12 +846,15 @@ class WriteClaimGuardConfig(BaseModel):  # AD-1285 (#1087 / BF-687)
         description=(
             "AD-1285 (#1087): check a 1:1 reply against the turn's write "
             "ledger and append one honest sentence when a durable-write "
-            "channel ran and wrote nothing. Reads no reply text. Default ON "
+            "channel ran and wrote nothing; that verdict reads no reply text. "
+            "AD-1358 S2 (#1750): the same switch appends one sentence when the "
+            "reply's wording claims a search or lookup and the turn's tool "
+            "record holds no call. Default ON "
             "because this is a safety control rather than a capability, and a "
             "default-OFF control defends nothing (#13(a)) -- which is the "
-            "AD-1157 failure mode #1087 names. Safe on: the verdict abstains "
-            "unless a channel actually ran, so a turn with no write marker is "
-            "byte-identical."
+            "AD-1157 failure mode #1087 names. Safe on: each check abstains "
+            "unless its record shows the case (a channel that ran; a tool "
+            "record with no call)."
         ),
     )
 

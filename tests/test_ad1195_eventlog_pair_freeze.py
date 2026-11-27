@@ -103,6 +103,11 @@ _RESOLVED_PAIRS: frozenset[tuple[str, str]] = frozenset({
     ('consensus', 'mcp_invoke_failed'),
     ('consensus', 'write_committed'),
     ('consensus', 'write_failed'),
+    # BF-934 (#1673): a proactive think's triage decision and each intended action nothing carried out, through CATEGORY, DECLARED_EVENT and
+    # DROPPED_EVENT. Best effort: Improvement Proposals and Ship's Records are authoritative for what was posted, and a row that could not be
+    # written is logged at WARNING.
+    ('intended_actions', 'declared'),
+    ('intended_actions', 'dropped'),
     # BF-906 (#1594): crew commissioning, through COMMISSIONED_EVENT. Best effort:
     # ACM's commissioning_records is authoritative, so a missing row is never evidence.
     ('lifecycle', 'crew_commissioned'),
@@ -505,7 +510,7 @@ def test_census_resolves_only_static_strings_and_flags_what_it_cannot_classify()
 def test_owner_pairs_are_written_and_no_routed_value_is_a_written_event() -> None:
     """DRIFT-5: every owner pair has a writer, and the router never duplicates an owner's row."""
     assert _contract_problems(_tree_census(), OWNER_RECORDS, ROUTED_VALUES) == []
-    assert len(OWNER_RECORDS) == 8 and len(ROUTED_VALUES) == 29
+    assert len(OWNER_RECORDS) == 8 and len(ROUTED_VALUES) == 30
 
 
 def test_contract_problems_report_an_unwritten_owner_and_a_routed_collision() -> None:

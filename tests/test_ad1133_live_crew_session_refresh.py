@@ -437,12 +437,27 @@ class _BlockingAcceptWebSocket(_FakeWebSocket):
         await super().accept()
 
 
-async def _wait_until(predicate: Callable[[], bool]) -> None:
-    for _ in range(500):
-        if predicate():
-            return
+async def _wait_until(
+    predicate: Callable[[], bool], *, timeout_s: float | None = None,
+) -> None:
+    """Poll ``predicate`` every 2 ms until it is true.
+
+    With no ``timeout_s`` the wait ends after 500 polls. With ``timeout_s`` it
+    ends at a wall-clock deadline that many seconds after the call; the
+    predicate is read before each deadline check, so a value set during the
+    last sleep is seen.
+    """
+    if timeout_s is None:
+        for _ in range(500):
+            if predicate():
+                return
+            await asyncio.sleep(0.002)
+        raise AssertionError("condition did not become true")
+    deadline = time.monotonic() + timeout_s
+    while not predicate():
+        if time.monotonic() >= deadline:
+            raise AssertionError("condition did not become true")
         await asyncio.sleep(0.002)
-    raise AssertionError("condition did not become true")
 
 
 @pytest.mark.parametrize("event_type", [
@@ -617,6 +632,14 @@ async def test_ws_workforce_snapshot_ordinary_overflow_is_stable(
     tmp_path: Path,
     work_store: WorkItemStore,
 ) -> None:
+    # BF-997 (#1414 item 11) supersedes AD-1133's "Overflow closes 1013" for the
+    # workforce source: past the cap the snapshot keeps the first 100 rows in the
+    # store's order (newest first here). The HXI upserts snapshot rows and removes
+    # no record a snapshot omits; a snapshot marks its work-item cache stale, and
+    # while a surface shows work items the HXI re-reads them by REST, so an omitted
+    # row can arrive by a list read or by the read by ID a later live frame for it
+    # starts. Every other snapshot overflow still ends the socket with 1013
+    # (test_snapshot_source_overflow_closes_1013_without_partial_frame).
     for index in range(101):
         await work_store.create_work_item(
             id=f"ordinary-{index:03d}",
@@ -626,8 +649,11 @@ async def test_ws_workforce_snapshot_ordinary_overflow_is_stable(
         )
     runtime = _Runtime(tmp_path, work_items=work_store)
 
-    with pytest.raises(ValueError, match="^ws_workforce_source_overflow$"):
-        await build_ws_workforce_snapshot(runtime, limit=100)
+    snapshot = await build_ws_workforce_snapshot(runtime, limit=100)
+
+    assert [item["id"] for item in snapshot["work_items"]] == [
+        f"ordinary-{index:03d}" for index in range(100, 0, -1)
+    ]
 
 
 async def test_ws_workforce_snapshot_excluded_crew_rows_do_not_overflow(
@@ -2359,6 +2385,12 @@ async def test_snapshot_source_overflow_closes_1013_without_partial_frame(tmp_pa
         await hub.stop()
 
 
+# The over-1000-retired case of test_owned_replan_current_projection_chain
+# waits for a projection over 200 active and 1,003 retired children. A budget
+# of 500 polls (about 1.2 s on the gate host) ran out under gate load (#1861).
+_SEMANTIC_FRAME_TIMEOUT_S = 15.0
+
+
 class _ProjectionWebSocket(_FakeWebSocket):
     def __init__(self) -> None:
         super().__init__()
@@ -2385,7 +2417,9 @@ class _ProjectionWebSocket(_FakeWebSocket):
             raise asyncio.TimeoutError
         return await super().receive_text()
 
-    async def receive_semantic_frame(self) -> dict[str, Any]:
+    async def receive_semantic_frame(
+        self, *, timeout_s: float = _SEMANTIC_FRAME_TIMEOUT_S,
+    ) -> dict[str, Any]:
         semantic_frame: dict[str, Any] | None = None
 
         def receive() -> bool:
@@ -2407,8 +2441,8 @@ class _ProjectionWebSocket(_FakeWebSocket):
             self.pings_consumed += 1
             return False
 
-        # One existing budget covers all heartbeats and the first semantic frame.
-        await _wait_until(receive)
+        # One deadline covers all heartbeats and the first semantic frame.
+        await _wait_until(receive, timeout_s=timeout_s)
         assert semantic_frame is not None
         return semantic_frame
 
@@ -2424,18 +2458,19 @@ async def test_receive_semantic_frame_valid_heartbeats_share_one_budget(
     websocket.frames.put_nowait({"type": "ping", "timestamp": timestamp})
     websocket.frames.put_nowait(expected)
     wait_until = _wait_until
-    budgets = 0
+    budgets: list[float | None] = []
 
-    async def counted_wait(predicate: Callable[[], bool]) -> None:
-        nonlocal budgets
-        budgets += 1
-        await wait_until(predicate)
+    async def counted_wait(
+        predicate: Callable[[], bool], *, timeout_s: float | None = None,
+    ) -> None:
+        budgets.append(timeout_s)
+        await wait_until(predicate, timeout_s=timeout_s)
 
     monkeypatch.setattr(f"{__name__}._wait_until", counted_wait)
 
     assert await websocket.receive_semantic_frame() is expected
     assert websocket.pings_consumed == 2
-    assert budgets == 1
+    assert budgets == [_SEMANTIC_FRAME_TIMEOUT_S]
     assert websocket.frames.empty()
 
 
@@ -2508,13 +2543,75 @@ async def test_receive_semantic_frame_preserves_incorrect_first_semantic_frame(
     assert websocket.frames.get_nowait() is correct
 
 
-async def test_receive_semantic_frame_empty_queue_exhausts_existing_budget() -> None:
+async def test_receive_semantic_frame_empty_queue_fails_at_its_deadline() -> None:
     websocket = _ProjectionWebSocket()
+    started = time.monotonic()
+
+    # The outer bound turns a wait that never ends into a failure of this test.
+    with pytest.raises(AssertionError, match="condition did not become true"):
+        await asyncio.wait_for(
+            websocket.receive_semantic_frame(timeout_s=0.05), timeout=10.0,
+        )
+
+    # The deadline was 0.05 s; 0.01 s absorbs float rounding of the clock.
+    assert time.monotonic() - started >= 0.04
+    assert websocket.pings_consumed == 0
+
+
+class _LateFrames(asyncio.Queue[dict[str, Any]]):
+    """A frame queue that reads as empty for its first ``empty_reads`` reads."""
+
+    def __init__(self, empty_reads: int, *frames: dict[str, Any]) -> None:
+        super().__init__()
+        self.empty_reads = empty_reads
+        self.reads = 0
+        for frame in frames:
+            self.put_nowait(frame)
+
+    def get_nowait(self) -> dict[str, Any]:
+        self.reads += 1
+        if self.reads <= self.empty_reads:
+            raise asyncio.QueueEmpty
+        return super().get_nowait()
+
+
+async def test_receive_semantic_frame_receives_a_frame_later_than_500_polls() -> None:
+    websocket = _ProjectionWebSocket()
+    expected = {"type": "crew_session_projection", "data": {"parent_id": "parent"}}
+    frames = _LateFrames(501, {"type": "ping", "timestamp": 0}, expected)
+    websocket.frames = frames
+
+    assert await websocket.receive_semantic_frame() is expected
+    assert frames.reads == 503
+    assert websocket.pings_consumed == 1
+
+
+async def test_receive_semantic_frame_reads_a_queued_frame_at_a_zero_deadline() -> None:
+    websocket = _ProjectionWebSocket()
+    expected = {"type": "crew_session_projection", "data": {"parent_id": "parent"}}
+    websocket.frames.put_nowait(expected)
+
+    assert await websocket.receive_semantic_frame(timeout_s=0.0) is expected
+
+
+async def test_wait_until_without_a_deadline_keeps_its_500_polls() -> None:
+    polls = 0
+
+    def never() -> bool:
+        nonlocal polls
+        polls += 1
+        return False
 
     with pytest.raises(AssertionError, match="condition did not become true"):
-        await websocket.receive_semantic_frame()
+        await _wait_until(never)
 
-    assert websocket.pings_consumed == 0
+    assert polls == 500
+
+
+def test_the_semantic_frame_deadline_is_finite_and_above_the_poll_budget() -> None:
+    # 500 polls took about 1.2 s on the gate host (#1861); pytest-timeout is 180 s.
+    assert math.isfinite(_SEMANTIC_FRAME_TIMEOUT_S)
+    assert 5.0 <= _SEMANTIC_FRAME_TIMEOUT_S <= 30.0
 
 
 @pytest.mark.parametrize("large_history", [False, True], ids=["small", "over-1000-retired"])

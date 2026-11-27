@@ -7,6 +7,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 
+from probos.cycle_trace import entry_scope  # AD-1360 S2b (#1828)
 from probos.recreation.turns import RecreationConflict, RecreationTurns, canonical_text, validate_revision
 from probos.routers.deps import (
     WebSocketBroadcast,
@@ -115,12 +116,14 @@ async def make_move(
                 msg = f"Game over! Draw!\n```\n{board_text}\n```"
             else:
                 msg = f"Captain played position {position}.\n```\n{board_text}\n```\nNext: {state.get('current_player', '?')}"
-            await runtime.ward_room.create_post(
-                thread_id=thread_id,
-                author_id="captain",
-                body=msg,
-                author_callsign="Captain",
-            )
+            # AD-1360 S2b (#1828): the Captain's move is an HXI request; its own id is bound for the post's episode.
+            with entry_scope(getattr(runtime, "cycle_registry", None), kind="hxi_post"):
+                await runtime.ward_room.create_post(
+                    thread_id=thread_id,
+                    author_id="captain",
+                    body=msg,
+                    author_callsign="Captain",
+                )
         except Exception:
             logger.debug("Ward Room post failed for Captain move", exc_info=True)
 

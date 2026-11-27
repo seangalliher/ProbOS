@@ -167,7 +167,7 @@ AGENT_WORK_CALLS: dict[tuple[str, str, str], tuple[object, ...]] = {
     ("src/probos/activation/dispatcher.py", "Dispatcher.dispatch", "handle_intent"): ("sink", _INTENT_SINK),
     ("src/probos/agents/system_qa.py", "SystemQAAgent.run_smoke_tests", "handle_intent"): ("sink", _INTENT_SINK),
     ("src/probos/cognitive/communication_benchmarks.py", "_send_chain_probe", "handle_intent"): ("sink", _INTENT_SINK),
-    ("src/probos/cognitive/qualification_tests.py", "_send_probe", "handle_intent"): ("sink", _INTENT_SINK),
+    ("src/probos/cognitive/qualification_tests.py", "_probe_intent_result", "handle_intent"): ("sink", _INTENT_SINK),
     ("src/probos/cognitive/sandbox.py", "SandboxRunner.test_agent", "handle_intent"): ("sink", _INTENT_SINK),
     ("src/probos/experience/commands/commands_diagnostic.py", "cmd_diagnostic", "handle_intent"): ("sink", _INTENT_SINK),
     ("src/probos/experience/commands/commands_knowledge.py", "cmd_scout", "handle_intent"): ("sink", _INTENT_SINK),
@@ -256,8 +256,10 @@ SEAM_INDEX: dict[str, tuple[str, tuple[object, ...]]] = {
     ),
 }
 
-# Report only (never gated until #1601 M3): a hand classification of a model call outside the crew modules, keyed by
-# (file, enclosing function). Empty today; ``model_call_report()`` classifies the rest structurally.
+# Report only: a hand classification of a model call outside the crew modules, keyed by (file, enclosing function).
+# Empty today; ``model_call_report()`` classifies the rest structurally. AD-1346 M3d3a checks the work ticket at the
+# gateway, ``OpenAICompatibleClient.complete``, not at each call site (tests/test_ad1346_admission_ticket_sinks.py,
+# SK7 and SK8).
 MODEL_CALLS_OUTSIDE_CREW: dict[tuple[str, str], str] = {}
 
 # N1: every construction of the recovery loop's transient error, by (file, function, the code it is built with).
