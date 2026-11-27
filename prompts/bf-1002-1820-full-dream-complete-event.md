@@ -3,6 +3,7 @@
 **Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-26
 **Status:** ready to build. **Owning issue:** #1820 (checklist item bf-989 R6, part a; the item stays open for part b). Commits say `Refs #1820.`
 **Base:** origin/main after the AD-1337 R23/R7/R1 batch merges; drafted against `c3721a2d` (the files of 6.1 and 6.2 are byte-identical at `6539f04d`). Branch `fix/bf1002-1820-full-dream-complete-<date>`. **Number:** BF-1002 (ceiling BF-1001, #1861).
+**Mechanical edits (orchestrator, 2026-11-27, on `4d812803`):** the two `<date>` slots of 6.4 and 6.5 are filled with 2026-11-27, and P7 is anchored on the heading of the BF-1001 entry that #1865 added (now the newest entry of `DECISIONS.md`), in place of the AD-1337 follow-up heading the draft named, as P7's label allows. Nothing else changed; the draft's seven pairs and the new file applied once each on `4d812803` before the edit.
 **Line endings:** the working copies may be CRLF and the blocks below are LF; match after normalising. Every SEARCH starts at the beginning of a line and occurs once in its file at its turn. All new text is ASCII.
 **Estimated tests:** 5 new in a new file; 1 changed in place in `tests/test_dreaming.py`; 0 removed.
 **Scope:** one commit: `src/probos/cognitive/dreaming.py`, `tests/test_dreaming.py`, `tests/test_bf1002_full_dream_complete_event.py` (new), `PROGRESS.md`, `DECISIONS.md`, the regenerated ledger files.
@@ -409,18 +410,18 @@ REPLACE:
 ```markdown
 # ProbOS Progress
 
-**BF-1002 (<date>), #1820 item bf-989 R6, part a -- a full dream's `dream_complete` event reaches its listeners.** `DreamReport.episodes_replayed` is an `int`, and both full-dream emit sites of `DreamScheduler` (`force_dream` and the monitor loop) called `len()` on it while building the payload inside the emit's `try`, so each full-dream completion was lost to a `TypeError` logged at DEBUG; micro-dream completions were not affected. A module helper `_full_dream_complete_payload` (`cognitive/dreaming.py`) now builds the six-key payload for both sites from the report's own fields, and a payload failure at either site logs at WARNING with the site's name. A full completion now reaches the Counselor, so the AD-506a re-assessment of an agent that AD-505 sent to a forced dream runs on that dream's completion; at the base it ran only on a later micro completion that replayed episodes. The handler's reminiscence branch is unchanged and still unreachable (#1820 bf-989 R6 part b, open with R1 and R5). `tests/test_dreaming.py::test_full_dream_event_shape_has_no_reflection_outcome_fields` now builds a real `DreamReport` (its stand-in carried a list, a type the engine never returns). New `tests/test_bf1002_full_dream_complete_event.py` (5 tests). Contract `prompts/bf-1002-1820-full-dream-complete-event.md`.
+**BF-1002 (2026-11-27), #1820 item bf-989 R6, part a -- a full dream's `dream_complete` event reaches its listeners.** `DreamReport.episodes_replayed` is an `int`, and both full-dream emit sites of `DreamScheduler` (`force_dream` and the monitor loop) called `len()` on it while building the payload inside the emit's `try`, so each full-dream completion was lost to a `TypeError` logged at DEBUG; micro-dream completions were not affected. A module helper `_full_dream_complete_payload` (`cognitive/dreaming.py`) now builds the six-key payload for both sites from the report's own fields, and a payload failure at either site logs at WARNING with the site's name. A full completion now reaches the Counselor, so the AD-506a re-assessment of an agent that AD-505 sent to a forced dream runs on that dream's completion; at the base it ran only on a later micro completion that replayed episodes. The handler's reminiscence branch is unchanged and still unreachable (#1820 bf-989 R6 part b, open with R1 and R5). `tests/test_dreaming.py::test_full_dream_event_shape_has_no_reflection_outcome_fields` now builds a real `DreamReport` (its stand-in carried a list, a type the engine never returns). New `tests/test_bf1002_full_dream_complete_event.py` (5 tests). Contract `prompts/bf-1002-1820-full-dream-complete-event.md`.
 ```
 
 ### 6.5 `DECISIONS.md`
 
-**P7.** SEARCH (the newest entry once the AD-1337 batch has merged; if another entry is newer, anchor on that entry's heading instead):
+**P7.** SEARCH (the newest entry: the BF-1001 entry that #1865 added above the AD-1337 follow-up the draft named; anchored on its heading, as this label allows):
 ```markdown
-### AD-1337 follow-up -- the secret masker reads each LLM tier's API key from the running config; tests stand in for the credential CLI (2026-11-26, #1820)
+### BF-1001 -- The live crew-session projection test waits for its first semantic frame by a deadline (2026-11-27, #1861)
 ```
 REPLACE:
 ```markdown
-### BF-1002 -- a full dream's dream_complete event reaches its listeners; one helper builds the payload for both emit sites (<date>, #1820)
+### BF-1002 -- a full dream's dream_complete event reaches its listeners; one helper builds the payload for both emit sites (2026-11-27, #1820)
 
 - *Scope.* #1820 item bf-989 R6, part a. `cognitive/dreaming.py`: `_full_dream_complete_payload` (new), `DreamScheduler.force_dream`, `DreamScheduler._monitor_loop`. Contract `prompts/bf-1002-1820-full-dream-complete-event.md`.
 - *D1.* One module helper builds the full-dream payload for both sites and reads each `DreamReport` field directly. Not `getattr` with an int default at each site (it keeps the dict that held the defect twice), and not a typed `DreamCompleteEvent` (it declares 3 of the 6 keys; the producer-reader contract is part b).
@@ -429,7 +430,7 @@ REPLACE:
 - *Effect.* A full completion now reaches the Counselor, so the AD-506a re-assessment of an agent that AD-505 sent to a forced dream runs on that dream's completion.
 - *Reversal.* Revert the commit; no persisted format changes (`DREAM_COMPLETE` is grandfathered in `event_persistence.py`, so events.db holds no row of it). A revert loses each full-dream completion again.
 
-### AD-1337 follow-up -- the secret masker reads each LLM tier's API key from the running config; tests stand in for the credential CLI (2026-11-26, #1820)
+### BF-1001 -- The live crew-session projection test waits for its first semantic frame by a deadline (2026-11-27, #1861)
 ```
 
 ## 7. Consumers
