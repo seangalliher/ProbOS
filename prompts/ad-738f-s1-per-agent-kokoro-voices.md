@@ -1,11 +1,12 @@
 # AD-738f S1 (#1868): a distinct Kokoro voice for each crew member
 
 **Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-27
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-27: amendment A1, section 15 (review round 1 repairs; corrects the scope line, D4, D8, section 9, the issue text and acceptance 3 and 4 in place, and adds 2 tests)
 **Status:** ready to build. **Owning issue:** #1868 (stays open for S2). Commits say `Refs #1868.` No closing keyword anywhere.
 **Base:** the speech drafting tree `e26cc9eb` (AD-738g S1 candidate `2afff0e0` merged with BF-930's built slices). Branch `feat/ad738f-1868-per-agent-voices-<date>`. **Number:** AD-738f is a reserved name (roadmap row 826, renumbered from AD-738a in Wave 158); no number is allocated, so `ad_ceiling.py` was not run.
 **Line endings:** the working copies are CRLF and the blocks below are LF; match after normalising. Every SEARCH starts at the beginning of a line and occurs once in its file at its turn. All new text is ASCII.
 **Estimated tests:** 11 new Python (new file), 4 new Vitest (new file); changed in place: 2 Vitest (`voice.perEmotion.test.tsx`), 1 pin (`test_ad1270e1_config_facade.py`), 1 snapshot entry (`test_ad1270e2c_experience_models.py`); 0 removed.
-**Scope:** two commits (section 4). Off until the Captain sets `tts.backend: kokoro`; with every new field at its default, behaviour is byte-identical to AD-738g S1.
+**Scope:** two commits (section 4). The default config (`tts.backend: browser`) and Piper are unchanged. Selecting `tts.backend: kokoro` turns the built-in role table on even with `agent_voices: {}`: a crew role then speaks its table voice, not the ship voice (A1 correction; the earlier "byte-identical to AD-738g S1" held only for a body without a resolvable `agent_id`, which still makes AD-738g's call).
 
 ## 1. Problem (premise table)
 
@@ -43,11 +44,11 @@ Rejected, one line each:
 | D1 | The client sends `agent_id`; the server resolves it with `runtime.registry.get(agent_id)` (`substrate/registry.py`:58) and reads `agent.agent_type` (`substrate/agent.py`:32). Boundary: `isinstance(str)`, non-blank, `len <= 128` (the `voice_name` style, `avatars.py`:257); anything else, or an id the registry lacks, means no role, never an error | the registry is the one authority for role; a real runtime always has it (`runtime.py`:691); no existing test posts `agent_id` to the route (Absence Verified), so direct attribute access breaks no stand-in runtime |
 | D2 | `TTSBackend.synthesize` and the three backends gain `agent_type: str | None = None`; the route passes it **only when a role was resolved** (`**role_kwargs`) | without an id the backend call is the same call as before (off is off at the seam), and the 11 stand-ins with the old signature need no edit: `test_ad738e_1_per_emotion_prosody.py`:167, `test_ad738_piper_tts.py`:440, :468, :515, `test_bf291_piper_voice_catalog.py`:181, :207, :233, `test_bf918_tts_retention.py`:253, `test_bf918_tts_latency.py`:103, `test_bf930_speech_defers_idle_dream.py`:37, `test_bf930_voice_path_timing.py`:426. P1 pins that every real implementation accepts the keyword; T4 pins the call shape |
 | D3 | `KOKORO_ROLE_VOICES` (a read-only `MappingProxyType`) in `kokoro_backend.py`, the consult's table: counselor `af_bella`, security_officer `am_fenrir`, diagnostician `am_michael`, pathologist `bf_emma`, surgeon `af_sarah`, pharmacist `af_kore`, architect `af_nicole`, data_analyst `af_nova`, research_specialist `af_aoede`, systems_analyst `bf_isabella`, scout `am_puck`, builder `bm_george`, engineering_officer `bm_lewis`, operations_officer `bm_fable`, training_officer `am_liam` | gender follows the archetype comments (`voice_profile_defaults.py`:21-40); 15 distinct; none `af_heart`; keyed by `agent_type`, so a roster change keeps each voice |
-| D4 | `tts.kokoro.agent_voices: dict[str, KokoroVoiceId]`, default empty. Values are checked by the `Literal` at parse time. Keys are checked for shape only (`[a-z][a-z0-9_]{0,63}`), not against the 15 roles | a role the table lacks (a new crew type) must be nameable, since the override is how it gets a voice. A misspelt role matches no agent and changes nothing; the per-sentence log line (`role=... voice=...`) shows it at once. A bad voice id fails the parse, as `tts.kokoro.voice` does |
+| D4 | `tts.kokoro.agent_voices: dict[str, KokoroVoiceId]`, default empty. Values are checked by the `Literal` at parse time. Keys are checked for shape (`[a-z][a-z0-9_]{0,63}`), not against the 15 roles; A1: a key the AD-741 secret rule matches (`secret`, `token`, `password`, `api_key`, `private_key`) is refused at parse time | the config API would hide such a key on read and refuse a patch holding it; no current role contains those words. A role the table lacks (a new crew type) must be nameable, since the override is how it gets a voice. A misspelt role matches no agent and changes nothing; the per-sentence log line (`role=... voice=...`) shows it at once. A bad voice id fails the parse, as `tts.kokoro.voice` does |
 | D5 | Precedence as section 2 | the consult's order: an explicit per-call choice beats the Captain's per-role map, which beats the built-in table, which beats the ship voice |
 | D6 | A role in neither map speaks the ship voice; two agents of one role share the role's voice (a stated limit) | stability by role; a per-agent voice is the `voice_name` path (S2) |
 | D7 | Append ` role=%s` (`agent_type or "-"`) to the end of 738g's INFO line; nothing else in it changes | the only pins are substrings at `test_ad738g_kokoro_voice.py`:422 (`"AD-738g: kokoro voice=af_heart speed=1.00 chars=6"`) and :423 (`"result=ok"`), both still matched |
-| D8 | Audition first: training_officer (`am_liam`, grade D) and engineering_officer (`bm_lewis`, D+) | VOICES.md grades the male voices lowest; six male roles, and only five male voices grade C or better (`am_fenrir`, `am_michael`, `am_puck` C+; `bm_george`, `bm_fable` C). `agent_voices` is the answer, not a table change |
+| D8 | Audition first: training_officer (`am_liam`, grade D) and engineering_officer (`bm_lewis`, D+) | VOICES.md grades the male voices lowest; seven male roles (security_officer, diagnostician, scout, builder, engineering_officer, operations_officer, training_officer; A1 correction from "six"), and only five male voices grade C or better (`am_fenrir`, `am_michael`, `am_puck` C+; `bm_george`, `bm_fable` C). `agent_voices` is the answer, not a table change |
 | D9 | Captain conditions: none | off by default; no new dependency, process, network path or authority; no security, governance or audit control changes (orchestrator.agent.md, Delegated AD Execution Mode) |
 
 ## 4. Milestones and commits
@@ -1167,7 +1168,7 @@ Each locator is a whole stripped line of the candidate, unique in its file.
 
 ## 9. Diff Reviewer: properties to verify
 
-The change claims that a sentence spoken for a crew member reaches the Kokoro worker in that member's role voice, that the Captain can override a role's voice in config, and that with defaults nothing changes. The consumers that must accept it: `KokoroBackend.synthesize` through `POST /api/avatars/tts`, and every existing `TTSBackend` stand-in.
+The change claims that a sentence spoken for a crew member reaches the Kokoro worker in that member's role voice, that the Captain can override a role's voice in config, and that the default config and Piper are unchanged (selecting Kokoro turns the role table on by design). The consumers that must accept it: `KokoroBackend.synthesize` through `POST /api/avatars/tts`, and every existing `TTSBackend` stand-in.
 1. The route reads `agent_id` only as a non-blank `str` of at most 128 characters, resolves it only through `runtime.registry.get`, and never raises or returns an error status for a bad or unknown id.
 2. The backend call is byte-identical to the base when no role resolves (no `agent_type` keyword); with a role it adds exactly `agent_type=<str>`.
 3. `resolve_voice` applies exactly the precedence of section 2; `KOKORO_ROLE_VOICES` has 15 distinct catalogue ids, none `af_heart`, and is read-only.
@@ -1250,7 +1251,7 @@ S2: the catalogue route `GET /api/avatars/tts/voices` for Kokoro, the HXI picker
 ## 12. Issue text (#1868, on merge; the issue stays open for S2)
 
 Comment, ending `Refs #1868` and no closing keyword:
-> **S1 merged** (`<sha>`, contract `prompts/ad-738f-s1-per-agent-kokoro-voices.md`). With `tts.backend: kokoro`, each crew role speaks with its own voice: counselor `af_bella`, security_officer `am_fenrir`, diagnostician `am_michael`, pathologist `bf_emma`, surgeon `af_sarah`, pharmacist `af_kore`, architect `af_nicole`, data_analyst `af_nova`, research_specialist `af_aoede`, systems_analyst `bf_isabella`, scout `am_puck`, builder `bm_george`, engineering_officer `bm_lewis`, operations_officer `bm_fable`, training_officer `am_liam`. The Captain overrides any role in `system.yaml` (`tts.kokoro.agent_voices`). Precedence: per-call catalogue `voice_name`, the override, the table, `tts.kokoro.voice`. An unknown id speaks the ship voice; two agents of one role share a voice. Acceptance 1-6 of this issue: met for S1 (tests `tests/test_ad738f_per_agent_voices.py`, `ui/src/audio/__tests__/voice.agentVoice.test.tsx`). **Open: S2** (catalogue route, picker with licences, proposal prompt).
+> **S1 merged** (`<sha>`, contract `prompts/ad-738f-s1-per-agent-kokoro-voices.md`). With `tts.backend: kokoro`, each crew role speaks with its own voice: counselor `af_bella`, security_officer `am_fenrir`, diagnostician `am_michael`, pathologist `bf_emma`, surgeon `af_sarah`, pharmacist `af_kore`, architect `af_nicole`, data_analyst `af_nova`, research_specialist `af_aoede`, systems_analyst `bf_isabella`, scout `am_puck`, builder `bm_george`, engineering_officer `bm_lewis`, operations_officer `bm_fable`, training_officer `am_liam`. The Captain overrides any role in `system.yaml` (`tts.kokoro.agent_voices`). Precedence: per-call catalogue `voice_name`, the override, the table, `tts.kokoro.voice`. An unknown id speaks the ship voice unless the sentence carries a catalogue `voice_name`; two agents of one role share a voice. Selecting Kokoro turns the role table on even with no override. A role key containing secret, token, password, api_key or private_key is refused when parsed (the config API would hide it). Acceptance 1-6 of this issue: met for S1 (tests `tests/test_ad738f_per_agent_voices.py`, `ui/src/audio/__tests__/voice.agentVoice.test.tsx`). **Open: S2** (catalogue route, picker with licences, proposal prompt).
 
 ### 12.1 What the Captain does by hand, and what the orchestrator checks first
 
@@ -1273,8 +1274,186 @@ Comment, ending `Refs #1868` and no closing keyword:
 
 1. With `tts.backend: kokoro`, 15 crew roles speak with 15 distinct voices out of the box, and a role keeps its voice across restarts and roster changes (V1, V4, T1).
 2. A Captain override for one role changes that role's voice and no other (V3, T2).
-3. A missing, malformed or unknown agent id, role or voice never fails a request: the ship voice speaks (V2, T3).
-4. Off is off: defaults change nothing; a body without `agent_id` makes the same backend call (T4); Piper's request is the same with a role (P1); the browser path makes no POST (agentVoice 4).
+3. A missing, malformed or unknown agent id, role or voice never fails a request: the ship voice speaks, absent a catalogue per-call `voice_name` (V2, T3, B2).
+4. Off is off: the default config changes nothing (selecting Kokoro turns the role table on, by design); a body without `agent_id` makes the same backend call (T4); Piper's request is the same with a role (P1); the browser path makes no POST (agentVoice 4).
 5. The seam: `POST /api/avatars/tts` with an agent id resolves the role's voice, the real worker line carries it, the audio is stored under its hash, and the response reports `kokoro` (T1, T2).
 6. Every mutation row of 8.3 is killed; the A/B of 8.1 holds.
+
+## 15. Amendment A1: review round 1 repairs (2026-11-27)
+
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-27. Source: `review-738f-r1.md` (Diff Reviewer `gpt-6.1-sol`, candidate `f573a703`).
+
+**Base and order.** The batch branch at `f573a703`; CRLF working copies, LF blocks. Apply the AD-738g contract's section 16 first (G1 to G11 and the combined GF1 to GF3), then F1 to F4 here. **Combined pairs, text in the AD-738g contract section 16 only:** GF1 (the `is_secret_field_id` import in `experience.py`), GF2 (`_keys_are_role_names` refuses a secret-shaped key, beside 738g's path validator), GF3 (`KokoroBackend.synthesize` treats a non-string role, voice or emotion as none, beside 738g's early-INFO and path-guard restructure). One repair commit covers both sections (subject and staging list in the AD-738g contract, section 16).
+
+**Tests (A1, this slice):** 2 new in `tests/test_ad738f_per_agent_voices.py` (C2, B2); 1 changed in place (V3, reason inline); 0 removed. The file goes from 11 to 13 tests.
+
+### 15.1 Decisions, finding by finding
+
+| # | Finding | Decision | Reason |
+|---|---|---|---|
+| 1 | P2: a role key matching AD-741's secret rule (`tts.kokoro.agent_voices.secretary`) is redacted on read and makes a POST fail whole | **Fix at parse time (GF1, GF2): refuse such a key, with a message saying why.** Leave the redaction code alone | No current role contains the five words (the orchestrator's `agent_type` enumeration over `src`, and C2 asserts it for the 15 table roles). The reviewer's fix would change three paths of shared redaction code (`routers/config.py`:87, :103-104, :277-286) so that it tells dictionary keys from field names: a change to a security control's matching rule, outside the TTS scope, with its own tests (`test_ad741_config_api.py`). Narrowing D4 for names holding one of five words costs nothing today, weakens no control, and is within the envelope. The general case is AD-738g contract follow-up 4 |
+| 2 | P3: "defaults change nothing" and "unknown id selects the ship voice" are overstated | **Fix the claims, documentation only.** Corrected in place here (scope line, section 9, issue text, acceptance 3 and 4) and in the tree by F3 (`PROGRESS.md`) and F4 (`DECISIONS.md` D3). P27's text in 6.15 is history; F3 supersedes its two sentences | Selecting Kokoro activates the role table with `agent_voices: {}`; a catalogue `voice_name` beats the ship voice for an unknown id. No flag |
+| 3 | P4: "six" male roles, the table has seven | **Fix** in D8 (corrected in place). No code comment carries the count (Grep `six male|seven male`: the contract only) | Count |
+| 4 | P3 injected-only: a non-string `agent_type` raises `TypeError` before synthesis | **Fix inside GF3** (no extra pair): the role, the per-call voice and the emotion are each `None` unless a `str`; B2 tests it | GF3 already rewrites the start of `synthesize`; the three normalisations are one line each and make "NEVER raises" true for every argument type |
+| 5 | P4 injected-only: V3 passes over an empty table | **Fix (F2.1):** V3 asserts the table holds 15 roles before it loops | Test-only |
+
+**The reviewer's "M1-M14 do not cover" list.** Config read/write redaction: introduced by finding 1's repair, so C2 tests it through the API's own predicate and row M15 targets it. Invalid backend role types: introduced by finding 4's repair, so B2 tests it and row M16 targets it. Registry-key provenance, exact length-128 acceptance, registry authority with an id-prefix mismatch, and later prefetch refills and queued speakers: the reviewer executed each and found it correct (its section 9 items 1 and 7); A1 changes none of that code, so no row is added. M7's `<= 4096` mutant stays the bound's row; a `< 128` mutant would survive T3 and is a recorded gap, not a defect.
+
+### 15.2 The pairs
+
+**F1.** None: the import is GF1 (AD-738g contract, section 16), listed here so the id sequence is whole.
+
+**F2.** `tests/test_ad738f_per_agent_voices.py`.
+
+F2.1 (V3, changed in place: it now proves its premise; the reviewer showed it passed over an empty table). SEARCH:
+```python
+    plain = KokoroBackend(KokoroTTSConfig())
+    custom = KokoroBackend(KokoroTTSConfig(agent_voices={"counselor": "af_sky"}))
+
+    for role, voice in KOKORO_ROLE_VOICES.items():
+```
+REPLACE:
+```python
+    plain = KokoroBackend(KokoroTTSConfig())
+    custom = KokoroBackend(KokoroTTSConfig(agent_voices={"counselor": "af_sky"}))
+
+    assert len(KOKORO_ROLE_VOICES) == 15  # A1: the loop below proves nothing over an empty table
+    for role, voice in KOKORO_ROLE_VOICES.items():
+```
+
+F2.2 (C2, new, after C1). SEARCH:
+```python
+    assert parsed.tts.kokoro.agent_voices == {"counselor": "bf_lily"}
+    assert SystemConfig().tts.kokoro.agent_voices == {}
+```
+REPLACE:
+```python
+    assert parsed.tts.kokoro.agent_voices == {"counselor": "bf_lily"}
+    assert SystemConfig().tts.kokoro.agent_voices == {}
+
+
+def test_c2_a_role_key_the_config_api_would_treat_as_secret_is_refused_when_parsed() -> None:
+    from probos.settings.section_registry import is_secret_field_id
+
+    # AD-741: /api/config hides a field whose last dot segment names a secret and refuses a
+    # patch holding one, so such a role key could never be read back or saved there.
+    for role in ("secretary", "token_keeper", "password_clerk", "api_key_officer", "private_key_holder"):
+        assert is_secret_field_id(f"tts.kokoro.agent_voices.{role}")
+        with pytest.raises(ValueError, match="secret"):
+            KokoroTTSConfig(agent_voices={role: "af_sky"})
+
+    # Every built-in role, and a new role-shaped name, stays readable and writable there.
+    assert len(KOKORO_ROLE_VOICES) == 15
+    for role in [*KOKORO_ROLE_VOICES, "ensign"]:
+        assert not is_secret_field_id(f"tts.kokoro.agent_voices.{role}")
+        assert KokoroTTSConfig(agent_voices={role: "af_sky"}).agent_voices == {role: "af_sky"}
+```
+
+F2.3 (B2, new, after B1). SEARCH:
+```python
+    assert "AD-738g: kokoro voice=af_bella speed=1.00 chars=6" in caplog.text
+    assert "result=ok role=counselor" in caplog.text
+    assert "result=ok role=-" in caplog.text
+```
+REPLACE:
+```python
+    assert "AD-738g: kokoro voice=af_bella speed=1.00 chars=6" in caplog.text
+    assert "result=ok role=counselor" in caplog.text
+    assert "result=ok role=-" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_b2_a_role_voice_or_emotion_that_is_not_a_string_is_ignored_and_never_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.INFO)
+    caplog.set_level(logging.INFO, logger="probos.audio.tts")
+    svc = _RecordingService()
+    backend = KokoroBackend(_installed(tmp_path, monkeypatch), service=svc)
+
+    # The route sends only strings; a direct caller's list or dict is no role, voice or emotion.
+    result = await backend.synthesize(
+        "Hello.", emotion=["calm"], voice_override={"v": 1}, agent_type=["counselor"],  # type: ignore[arg-type]
+    )
+
+    assert result is not None
+    assert svc.calls[0][3] == {"voice": "af_heart", "speed": 1.0}
+    assert "result=ok role=-" in caplog.text
+```
+
+**F3.** `PROGRESS.md`, the AD-738f S1 paragraph (line 3). Tracker exception to "starts at the beginning of a line": each SEARCH is a substring occurring once in the file (counted).
+- SEARCH:
+  ```markdown
+  A missing, malformed or unknown id speaks the ship voice; two agents of one role share its voice.
+  ```
+  REPLACE:
+  ```markdown
+  A missing, malformed or unknown id resolves no role, so the sentence speaks the ship voice unless its per-call `voice_name` is a catalogue id; two agents of one role share its voice. A role key containing secret, token, password, api_key or private_key is refused when parsed, because the config API would hide it.
+  ```
+- SEARCH:
+  ```markdown
+  Off is off: with every new field at its default nothing changes, and a body without `agent_id` makes the same backend call as before.
+  ```
+  REPLACE:
+  ```markdown
+  The default config (`tts.backend: browser`) and Piper are unchanged, and a body without `agent_id` makes the same backend call as before; selecting `tts.backend: kokoro` turns the built-in role table on even with `agent_voices: {}`, so a vessel already set to Kokoro hears each crew role in its own voice instead of the ship voice.
+  ```
+- SEARCH `` `tests/test_ad738f_per_agent_voices.py` (11) `` REPLACE `` `tests/test_ad738f_per_agent_voices.py` (13) ``
+
+**F4.** `DECISIONS.md`, the AD-738f S1 entry (lines 18-19, whole lines). SEARCH:
+```markdown
+- *D3.* The default voice is keyed by role, so it survives restarts and roster changes; two agents of one role share a voice, and a role in no map speaks the ship voice.
+- *D4.* `agent_voices` keys are checked for shape, not against the 15 roles: a new crew type must be nameable. A misspelt role changes nothing and shows on the per-sentence log line (`role=`, `voice=`).
+```
+REPLACE:
+```markdown
+- *D3.* The default voice is keyed by role, so it survives restarts and roster changes; two agents of one role share a voice, and a role in no map speaks the ship voice unless the sentence carries a catalogue `voice_name`. Selecting `tts.backend: kokoro` turns the role table on even with `agent_voices: {}`.
+- *D4.* `agent_voices` keys are checked for shape, not against the 15 roles: a new crew type must be nameable. A misspelt role changes nothing and shows on the per-sentence log line (`role=`, `voice=`). A key containing secret, token, password, api_key or private_key is refused when parsed, because the config API (AD-741) would hide it on read and refuse it on write; the redaction rule itself is unchanged.
+```
+
+### 15.3 Regenerations and checks
+
+As the AD-738g contract, section 16.3 (one run for the batch). A1 adds no field: the `field_definitions` pin of 6.9 (P18) keeps its value; the 6.9 merge-order rule for BF-932 is unchanged.
+
+### 15.4 Mutation rows (A1; one at a time on the frozen A1 candidate)
+
+| ID | File | Line (stripped) | Becomes | Killed by |
+|---|---|---|---|---|
+| M4 (restated: GF3 rewrote the line) | kokoro_backend.py | `voice = self.resolve_voice(override, role)` | `voice = self.resolve_voice(override)` | B1, T1, T2 |
+| M5 (restated) | kokoro_backend.py | `"ok" if wav is not None else "degraded", role or "-",` | `"ok" if wav is not None else "degraded", "-",` | B1 |
+| M15 | experience.py | `if is_secret_field_id(role):` | `if False:` | C2 |
+| M16 | kokoro_backend.py | `role = agent_type if isinstance(agent_type, str) else None` | `role = agent_type` | B2 (unhashable `TypeError`) |
+| M17 | kokoro_backend.py | `override = voice_override if isinstance(voice_override, str) else None` | `override = voice_override` | B2 |
+| M18 | kokoro_backend.py | `MappingProxyType({` ... the whole table | `MappingProxyType({})` | V1, V3 (A1: V3 now fails on its own) |
+
+**Rerun from M1-M14.** `kokoro_backend.py`, `experience.py` and the test file change in A1: rerun M1 to M6, M10 and M11. M7 to M9 (`avatars.py`) and M12 to M14 (`voice.ts`) keep their earlier results: neither file nor their killing tests change. The A1 campaign, with each file's sha256 recorded, is the campaign of record for A1.
+
+### 15.5 Section 9 after A1
+
+Item 4 now also reads "and keys the AD-741 secret rule matches are refused" (C2, M15). Items 1-3 and 5-8 are unchanged in wording; item 6's "no agent id is logged" still holds (GF3 logs `role or "-"`). Item 2 (call shape) is untouched: the route is not edited.
+
+### 15.6 Verified Against Codebase (A1, 2026-11-27, tree `f573a703`)
+
+```text
+grep -n "_SECRET_RE = \|def is_secret_field_id\|terminal = field_id.rsplit" src/probos/settings/section_registry.py   508, 511, 518
+grep -n "is_secret_field_id" src/probos/routers/config.py                    44 (import), 87 (JSON redaction), 103 (YAML scrub), 277 (POST refusal)
+grep -n "agent_voices: dict\|def _keys_are_role_names\|_ROLE_NAME = " src/probos/config_models/experience.py   672, 682, 634
+grep -n "if agent_type in self._config.agent_voices\|role=%s\|agent_type or \"-\"" src/probos/audio/tts/kokoro_backend.py   92, 145, 147
+grep -n "def test_v3_\|for role, voice in KOKORO_ROLE_VOICES.items\|SystemConfig().tts.kokoro.agent_voices\|result=ok role=-" tests/test_ad738f_per_agent_voices.py   114, 118, 161, 183
+grep -n "unknown id speaks the ship voice\|Off is off: with every new field\|test_ad738f_per_agent_voices.py\` (11)" PROGRESS.md   3
+grep -n "^- \*D3\.\* The default voice is keyed by role\|^- \*D4\.\* \`agent_voices\` keys" DECISIONS.md   18, 19
+```
+
+Absence Verified (A1):
+```text
+CLAIM: no current crew role contains secret, token, password, api_key or private_key
+RUN:   the orchestrator's Grep -i -E 'agent_type\s*[:=]\s*["'][a-z0-9_]*(secret|token|password|api_key|private_key)' src; C2 asserts it for the 15 table roles
+FOUND: nothing                                                         HOLDS: yes
+CLAIM: no code comment states the male-role count
+RUN:   Grep "six male|seven male" (repo)
+FOUND: this contract only (D8)                                         HOLDS: yes
+CLAIM: the overstated claims live only in PROGRESS.md:3, DECISIONS.md:18 and this contract
+RUN:   Grep "byte-identical to AD-738g|nothing changes, and a body|unknown id speaks the ship voice|ship voice" over PROGRESS.md, DECISIONS.md, roadmap.md, src/probos/audio/tts, experience.py, avatars.py, voice.ts, the 738f test file
+FOUND: PROGRESS.md:3; DECISIONS.md:18; contract lines 8, 1170, 1253, 1276, 1277 (code docstrings say "a role in neither map", which is exact)   HOLDS: yes
+```
 7. Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.

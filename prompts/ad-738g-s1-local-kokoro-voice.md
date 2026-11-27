@@ -1,6 +1,7 @@
 # AD-738g S1 (#1662): a local Kokoro voice, on this machine's CPU, behind the TTS backend seam
 
 **Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-27
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-27: amendment A1, section 16 (review round 1 repairs; it supersedes 6.1, 6.2, 6.12, 6.13 and section 9 where they differ, and adds 4 tests)
 **Status:** ready to build. **Owning issue:** #1662 (stays open: S2 to S5 and the Captain's live acceptance remain). Commits say `Refs #1662.` and never a closing keyword.
 **Base:** main `63c536b3`. Branch `feat/ad738g-s1-local-kokoro-voice-20261127`. Built in parallel with BF-930's batch and merged with it before one gate (section 7.1). **Number:** AD-738g is the issue's own number; no new AD or BF number is allocated.
 **Design base:** the Architect consult of 2026-11-27 (`ref-738-consult-answer.md`), accepted, plus the orchestrator's first-hand measurements of the same day (real-time factor, install, hashes, API, the missing `duration` output, the GPL boundary). Where this contract departs from the consult it says so in section 3.
@@ -1890,3 +1891,604 @@ PR title: `A local Kokoro voice behind the TTS backend seam, off until configure
 5. One receipted broad gate on the committed head of the merged batch is green.
 6. The orchestrator's checks 1 to 3 of section 13 pass before the PR is opened; the Captain's live acceptance (section 13, his steps 1 to 5) is recorded on #1662, which stays open.
 7. Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.
+
+## 16. Amendment A1: review round 1 repairs (2026-11-27)
+
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-27. Source: `review-738g-r1.md` (Diff Reviewer `gpt-6.1-sol`, snapshot `2afff0e0`) and `review-738f-r1.md` (snapshot `f573a703`), with the orchestrator's first-hand reproductions of findings 1 to 4.
+
+**Base:** the batch branch `feat/ad738f-1868-per-agent-voices-20261127` at `f573a703` (this slice and AD-738f S1 stacked). Every SEARCH below is copied from the files **as AD-738f left them**; where it names a 738f line (the `role=` field, `resolve_voice(voice_override, agent_type)`, `agent_voices`) that is why. Working copies are CRLF, blocks LF: match after normalising. Each SEARCH occurs once in its file at its turn. All new hand-written text is ASCII.
+
+**Order.** Apply this section's pairs (G1 to G11 and the combined GF1 to GF3) first, then the AD-738f contract's section 15 pairs (F1 to F4). **Combined pairs:** GF1, GF2 and GF3 carry both a 738g repair and a 738f repair on the same lines; their text is here only, and the 738f contract's section 15 points to them. A pair written to a file that A1 does not name is a stop.
+
+**Tests (A1, this slice):** 4 new in `tests/test_ad738g_kokoro_voice.py` (W9, B7, B8, C4); 1 changed in place (S1, reason inline); 0 removed. The file goes from 28 to 32 tests.
+
+**Repair commit (the orchestrator commits; one for the batch, after both sections are applied).** Subject: `Speech: round-one repairs to the Kokoro voice: a timeout the timer can take, paths that degrade, a log line per attempt, an ASCII installer pipe, role keys the config API can show`. Body ends `Refs #1662.` and `Refs #1868.` Stage exactly: `src/probos/config_models/experience.py`, `src/probos/audio/tts/kokoro_backend.py`, `src/probos/audio/tts/piper_backend.py`, `src/probos/audio/tts/resident.py`, `scripts/kokoro_worker.py`, `scripts/kokoro-fetch.ps1`, `THIRD_PARTY_LICENSES.md`, `DECISIONS.md`, `PROGRESS.md`, `tests/test_ad738g_kokoro_voice.py`, `tests/test_ad738f_per_agent_voices.py`, `docs/development/config-facade-baseline.yaml`, `docs/development/config-reference.md`, and the two ledger files only if `gen_ad_ledger.py` changes them.
+
+### 16.1 Decisions, finding by finding (738g round 1)
+
+| # | Finding | Decision | Reason |
+|---|---|---|---|
+| 1 | P2 timeout: `inf`, `> TIMEOUT_MAX` accepted; `threading.Timer` overflows in its thread and the deadline never fires | **Fix (G1).** `Field(default=30.0, gt=0.0, le=600.0, allow_inf_nan=False)` | 600 s is twenty times the default and far under `threading.TIMEOUT_MAX` on every platform (4294967 s on Windows); `allow_inf_nan=False` refuses NaN and infinity explicitly instead of relying on how a NaN compares. The config bound alone closes ordinary reach; `resident.py` is not touched. Piper's unbounded `tts.timeout_seconds` (`experience.py`:715) has the same weakness: follow-up 2, out of scope |
+| 2 | P2 installer: PS 5.1 pipes ASCII, a non-ASCII destination reaches the worker as `?` | **Fix (G9).** The orchestrator's escape, plus a UTF-8 read of the answer | Escaping makes the line pure ASCII on 5.1 and 7. The answer comes back as UTF-8 bytes (`kokoro_worker.py`:129) and both PowerShell versions decode native output with `[Console]::OutputEncoding` (an OEM code page by default), so the comparison is made under a temporary UTF-8 console encoding, restored in `finally`. The reviewer's ASCII-escaped control matched on a host whose console was evidently UTF-8; this keeps it matching on one that is not |
+| 3 | P2 NUL path: accepted by config, then `ValueError` from `Path.resolve` crosses `synthesize` (route 500) | **Fix (GF2 config, GF3 backend, G4 docstrings).** Config refuses a blank path or one with a NUL; the backend's resolution block catches `OSError`/`ValueError`, warns and degrades; the two wrappers' docstrings stop promising "NEVER raises" | Belt and braces: the config closes ordinary reach, the guard keeps "NEVER raises" true for a config built in code (`model_copy`) and for any other path the OS refuses. `_anchor_path` and every other Piper line stay as they are |
+| 4 | P3 no INFO line on early degradation | **Fix (GF3).** Voice and speed are resolved first; `_speak` holds the guards; the one INFO line follows every attempt | D10 is "one INFO line per sentence"; blank text is not an attempt and still logs nothing |
+| 5 | P3 native fd-1 output reaches the protocol stdout (injected-only) | **Record** (follow-up 1) | No ordinary path writes natively to fd 1 (the real-model run was quiet), and the effect fails closed to the browser voice. A fix exists (keep `os.dup(1)` as the protocol stream, `os.dup2(2, 1)` before loading the engine: about four lines, plus a fake-engine mode that writes to fd 1 and one real-subprocess test), but it changes the protocol channel, which is a shared contract and would widen round 2. Not in A1 |
+| 6 | P4 docs attribute package isolation to `-I` | **Fix (G5, G6, G7, G8).** Four sites: `resident.py`:162-163, `kokoro_worker.py`:5-6, `THIRD_PARTY_LICENSES.md`:174, and `DECISIONS.md`:31 (the same claim, found by search) | The property comes from the separate venv that `kokoro-fetch.ps1`:76-79 checks; `-I` only keeps `PYTHON*` variables, the user site and the script and working directories out |
+| Tests | W1 survives a non-atomic write; S1 survives a dropped service injection; K-rows miss R1, R4, R7, W5, W8, B1, B4-B6, C1-C3, T2, UI case 2 | **W9 new** (an interrupted write leaves neither output nor `.part`); **S1 changed in place** (the built backend speaks through the injected service); **rows K20 to K36** in 16.5; R1, T2 and UI case 2 are compatibility tests that pass on the base by design (16.5) | Strengthens what a claim rests on; the campaign is extended, not rewritten |
+| Exc. | Milestone tests landed in M3 (6.15/6.19); generated `config-reference.md` holds non-ASCII | **Record** (16.6) | No code change |
+
+### 16.2 The pairs
+
+**G1.** `src/probos/config_models/experience.py`. SEARCH:
+```python
+    timeout_seconds: float = Field(default=30.0, gt=0.0)
+    """Per-sentence timeout, counted from when the worker takes the request. A timeout kills
+    the worker, and the next sentence reloads the model (about 3.2 s cold)."""
+```
+REPLACE:
+```python
+    timeout_seconds: float = Field(default=30.0, gt=0.0, le=600.0, allow_inf_nan=False)
+    """Per-sentence timeout, counted from when the worker takes the request. A timeout kills
+    the worker, and the next sentence reloads the model (about 3.2 s cold). At most 600 s:
+    ``threading.Timer`` takes no more than ``threading.TIMEOUT_MAX`` (4294967 s on Windows),
+    and an infinite deadline would never fire."""
+```
+
+**GF1 (combined: the import serves AD-738f's finding 1 in GF2).** `src/probos/config_models/experience.py`. SEARCH:
+```python
+import re
+from typing import Literal
+
+from pydantic import BaseModel, Field, field_validator, model_validator
+```
+REPLACE:
+```python
+import re
+from typing import Literal
+
+from pydantic import BaseModel, Field, field_validator, model_validator
+
+from probos.settings.section_registry import is_secret_field_id
+```
+(`section_registry` imports only `re`, `dataclasses` and `typing`, so there is no cycle; `probos.config` re-exports `experience` names by an explicit list, so no facade name moves. Absence Verified below.)
+
+**GF2 (combined: 738g finding 3, the path validator; 738f finding 1, the secret-name check).** `src/probos/config_models/experience.py`. SEARCH:
+```python
+    @field_validator("agent_voices")
+    @classmethod
+    def _keys_are_role_names(cls, value: dict[str, str]) -> dict[str, str]:
+        """A key is an ``agent_type``: lowercase letters, digits and ``_``, at most 64 characters."""
+        for role in value:
+            if not _ROLE_NAME.fullmatch(role):
+                raise ValueError(f"tts.kokoro.agent_voices: {role!r} is not a role name (an agent_type)")
+        return value
+```
+REPLACE:
+```python
+    @field_validator("python_path", "model_path", "voices_path")
+    @classmethod
+    def _paths_can_name_a_file(cls, value: str) -> str:
+        """A path is non-blank and holds no NUL character, which no file system accepts."""
+        if not value.strip() or "\x00" in value:
+            raise ValueError("tts.kokoro: a path must be non-blank and must not contain a NUL character")
+        return value
+
+    @field_validator("agent_voices")
+    @classmethod
+    def _keys_are_role_names(cls, value: dict[str, str]) -> dict[str, str]:
+        """A key is an ``agent_type``: lowercase letters, digits and ``_``, at most 64 characters,
+        and not a name the config API treats as a secret field (AD-741)."""
+        for role in value:
+            if not _ROLE_NAME.fullmatch(role):
+                raise ValueError(f"tts.kokoro.agent_voices: {role!r} is not a role name (an agent_type)")
+            if is_secret_field_id(role):
+                # /api/config hides such a key on read and refuses a patch that holds it
+                # (routers/config.py); the redaction rule stays as AD-741 wrote it.
+                raise ValueError(
+                    f"tts.kokoro.agent_voices: {role!r} contains secret, token, password, api_key or "
+                    "private_key, which the config API treats as a secret field and would hide and "
+                    "refuse; this role speaks its KOKORO_ROLE_VOICES voice or tts.kokoro.voice"
+                )
+        return value
+```
+
+**GF3 (combined: 738g findings 3 and 4; 738f finding 4).** `src/probos/audio/tts/kokoro_backend.py`. SEARCH:
+```python
+        if not text or not text.strip():
+            return None
+        if self._service is None:
+            logger.warning("AD-738g: no voice synthesis service on this runtime; degrading to browser")
+            return None
+        cfg = self._config
+        python = resolve_executable_path(cfg.python_path)
+        script = anchor_install_path(WORKER_SCRIPT)
+        model = anchor_install_path(cfg.model_path)
+        voices = anchor_install_path(cfg.voices_path)
+        missing = [str(path) for path in (script, model, voices) if not path.is_file()]
+        if python is None:
+            missing.insert(0, str(anchor_install_path(cfg.python_path)))
+        if python is None or missing:
+            logger.warning(
+                "AD-738g: kokoro is not installed (missing: %s); run scripts/kokoro-fetch.ps1 or set "
+                "tts.kokoro.* (relative paths anchor to the ProbOS root); degrading to browser",
+                ", ".join(missing),
+            )
+            return None
+        voice = self.resolve_voice(voice_override, agent_type)
+        speed = kokoro_speed(cfg.speed, emotion)
+        key = KokoroWorkerKey(
+            python=str(python),
+            script=str(script),
+            model=str(model),
+            voices=str(voices),
+            threads=cfg.threads,
+            default_voice=cfg.voice,
+        )
+        started = time.perf_counter()
+        wav = await self._service.synthesize(key, text, cfg.timeout_seconds, fields={"voice": voice, "speed": speed})
+        # AD-738f (#1868): the role goes last, so the Captain can read which role spoke in which
+        # voice; no agent id is logged.
+        logger.info(
+            "AD-738g: kokoro voice=%s speed=%.2f chars=%d synth_ms=%.0f result=%s role=%s",
+            voice, speed, len(text), (time.perf_counter() - started) * 1000,
+            "ok" if wav is not None else "degraded", agent_type or "-",
+        )
+        if wav is None:
+            return None
+        return TTSResult(audio_bytes=wav, mime="audio/wav")
+```
+REPLACE:
+```python
+        if not text or not text.strip():
+            return None
+        # AD-738f (#1868): the route sends only strings; anything else from a direct caller is
+        # no role, no per-call voice and no emotion, so this method still never raises.
+        role = agent_type if isinstance(agent_type, str) else None
+        override = voice_override if isinstance(voice_override, str) else None
+        voice = self.resolve_voice(override, role)
+        speed = kokoro_speed(self._config.speed, emotion if isinstance(emotion, str) else None)
+        started = time.perf_counter()
+        wav = await self._speak(text, voice, speed)
+        # D10: one line for every attempt, the early degradations in _speak included. The role
+        # goes last (AD-738f, #1868), so the Captain can read which role spoke in which voice;
+        # no agent id is logged.
+        logger.info(
+            "AD-738g: kokoro voice=%s speed=%.2f chars=%d synth_ms=%.0f result=%s role=%s",
+            voice, speed, len(text), (time.perf_counter() - started) * 1000,
+            "ok" if wav is not None else "degraded", role or "-",
+        )
+        if wav is None:
+            return None
+        return TTSResult(audio_bytes=wav, mime="audio/wav")
+
+    async def _speak(self, text: str, voice: str, speed: float) -> bytes | None:
+        """The worker's WAV bytes, or ``None`` after a WARNING: no service, an install path the
+        OS cannot resolve or a missing file, or the service's own degradation. Never raises."""
+        if self._service is None:
+            logger.warning("AD-738g: no voice synthesis service on this runtime; degrading to browser")
+            return None
+        cfg = self._config
+        try:
+            python = resolve_executable_path(cfg.python_path)
+            script = anchor_install_path(WORKER_SCRIPT)
+            model = anchor_install_path(cfg.model_path)
+            voices = anchor_install_path(cfg.voices_path)
+            missing = [str(path) for path in (script, model, voices) if not path.is_file()]
+            if python is None:
+                missing.insert(0, str(anchor_install_path(cfg.python_path)))
+        except (OSError, ValueError) as exc:  # Path.resolve on a path the OS cannot represent
+            logger.warning(
+                "AD-738g: a tts.kokoro path cannot be resolved (%s: %s); degrading to browser",
+                type(exc).__name__, exc,
+            )
+            return None
+        if python is None or missing:
+            logger.warning(
+                "AD-738g: kokoro is not installed (missing: %s); run scripts/kokoro-fetch.ps1 or set "
+                "tts.kokoro.* (relative paths anchor to the ProbOS root); degrading to browser",
+                ", ".join(missing),
+            )
+            return None
+        key = KokoroWorkerKey(
+            python=str(python),
+            script=str(script),
+            model=str(model),
+            voices=str(voices),
+            threads=cfg.threads,
+            default_voice=cfg.voice,
+        )
+        return await self._service.synthesize(key, text, cfg.timeout_seconds, fields={"voice": voice, "speed": speed})
+```
+(`synth_ms` now also spans the path checks, a few filesystem stats; on a success it is still dominated by synthesis. The two WARNING texts are unchanged, so B4, B5 and R7 match as before.)
+
+**G4.** `src/probos/audio/tts/piper_backend.py` (two docstrings only; `_anchor_path` and `_resolve_binary_path` untouched). SEARCH:
+```python
+    """AD-738g: ``_anchor_path`` for the sibling Kokoro backend (AD-1025: absolute as-is,
+    relative under ``_probos_root()``, never the CWD). NEVER raises."""
+    return _anchor_path(configured)
+
+
+def resolve_executable_path(configured: str) -> Path | None:
+    """AD-738g: ``_resolve_binary_path`` for the sibling Kokoro backend (anchored; ``.exe``
+    appended on Windows when the literal path is missing). ``None`` when not found. NEVER raises."""
+```
+REPLACE:
+```python
+    """AD-738g: ``_anchor_path`` for the sibling Kokoro backend (AD-1025: absolute as-is,
+    relative under ``_probos_root()``, never the CWD). Raises ``OSError`` or ``ValueError``
+    for a path the OS cannot represent (``Path.resolve``, for example an embedded NUL); the
+    Kokoro backend catches both and degrades."""
+    return _anchor_path(configured)
+
+
+def resolve_executable_path(configured: str) -> Path | None:
+    """AD-738g: ``_resolve_binary_path`` for the sibling Kokoro backend (anchored; ``.exe``
+    appended on Windows when the literal path is missing). ``None`` when not found. Raises
+    ``OSError`` or ``ValueError`` for a path the OS cannot represent, as ``anchor_install_path``
+    does; the Kokoro backend catches both and degrades."""
+```
+
+**G5.** `src/probos/audio/tts/resident.py`. SEARCH:
+```python
+    ``-I`` isolates the interpreter: no ``PYTHON*`` variable, no user site, and neither the
+    script's nor the working directory on ``sys.path``, so the worker cannot import ``probos``.
+```
+REPLACE:
+```python
+    ``-I`` keeps ``PYTHON*`` variables, the user site and the script's and working directories
+    off ``sys.path``. The worker cannot import ``probos`` because its venv does not contain it
+    (``scripts/kokoro-fetch.ps1`` checks this), not because of ``-I``.
+```
+
+**G6.** `scripts/kokoro_worker.py`. SEARCH:
+```python
+``-I`` isolates it: no ``PYTHON*`` variable, no user site, and neither this directory nor the
+working directory on ``sys.path``, so it cannot import ``probos``.
+```
+REPLACE:
+```python
+``-I`` keeps ``PYTHON*`` variables, the user site, this directory and the working directory
+off ``sys.path``. It cannot import ``probos`` because ``tools/kokoro/venv`` does not contain it
+(``scripts/kokoro-fetch.ps1`` checks this), not because of ``-I``.
+```
+
+**G7.** `THIRD_PARTY_LICENSES.md` (the whole line 174). SEARCH:
+```markdown
+- License posture (policy above): the GPL components are installed by the operator, run only in that separate process and are never imported into the ProbOS process, vendored or committed. The worker runs under `python -I`, so it cannot import `probos` (the install script checks it), and the ProbOS venv does not contain these packages. The boundary is a simple request/response exchange. The weights are Apache-2.0.
+```
+REPLACE:
+```markdown
+- License posture (policy above): the GPL components are installed by the operator, run only in that separate process and are never imported into the ProbOS process, vendored or committed. The worker runs from its own venv, which does not contain `probos` (the install script checks that it cannot import it); `python -I` only keeps `PYTHON*` variables, the user site and the script and working directories out. The ProbOS venv does not contain these packages. The boundary is a simple request/response exchange. The weights are Apache-2.0.
+```
+
+**G8.** `DECISIONS.md` (the whole line 31, in the AD-738g S1 entry). SEARCH:
+```markdown
+- *Licence.* GPL-3.0-or-later phonemizer and espeak-ng run only in the operator-installed worker process, which exchanges text, voice and speed in and a WAV path out; the worker runs under `python -I` and cannot import `probos`.
+```
+REPLACE:
+```markdown
+- *Licence.* GPL-3.0-or-later phonemizer and espeak-ng run only in the operator-installed worker process, which exchanges text, voice and speed in and a WAV path out; that venv does not contain `probos` (the install script checks it cannot import it), and `python -I` keeps `PYTHON*` variables and the user site out.
+```
+
+**G9.** `scripts/kokoro-fetch.ps1`. SEARCH:
+```powershell
+$Line = '{"text": "Kokoro is ready, Captain.", "output_file": ' + (ConvertTo-Json $Probe) + ', "voice": "af_heart", "speed": 1.0}'
+$Answer = $Line | & $Python -I $Worker --model $Model --voices $Voices --threads 4 --default-voice af_heart
+if ($LASTEXITCODE -ne 0 -or -not (Test-Path $Probe) -or "$Answer".Trim() -ne $Probe) {
+    throw "The Kokoro worker did not speak the test line (exit $LASTEXITCODE, answer '$Answer'); its messages are above."
+}
+```
+REPLACE:
+```powershell
+# Windows PowerShell 5.1 pipes text to a native program as ASCII ($OutputEncoding), so a
+# non-ASCII destination would reach the worker as '?': escape each non-ASCII UTF-16 unit as
+# \uXXXX, which the worker's json.loads decodes. The worker answers in UTF-8; the console
+# decodes it as UTF-8 for the comparison and gets its own encoding back afterwards.
+$ProbeJson = [regex]::Replace((ConvertTo-Json $Probe), '[^\x00-\x7F]', { param($m) '\u{0:x4}' -f [int][char]$m.Value })
+$Line = '{"text": "Kokoro is ready, Captain.", "output_file": ' + $ProbeJson + ', "voice": "af_heart", "speed": 1.0}'
+$ConsoleEncoding = [Console]::OutputEncoding
+try { [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false } catch { Write-Host "[warn] cannot set the console encoding; a non-ASCII path may fail the comparison" -ForegroundColor Yellow }
+try {
+    $Answer = $Line | & $Python -I $Worker --model $Model --voices $Voices --threads 4 --default-voice af_heart
+    $Exit = $LASTEXITCODE
+} finally {
+    try { [Console]::OutputEncoding = $ConsoleEncoding } catch { }
+}
+if ($Exit -ne 0 -or -not (Test-Path $Probe) -or "$Answer".Trim() -ne $Probe) {
+    throw "The Kokoro worker did not speak the test line (exit $Exit, answer '$Answer'); its messages are above."
+}
+```
+
+**G10.** `PROGRESS.md`, the AD-738g S1 paragraph (line 5). Tracker exception to "starts at the beginning of a line": each SEARCH here is a substring that occurs once in the file (counted).
+- SEARCH `4 threads, 30 s timeout)` REPLACE `4 threads, 30 s timeout, at most 600 s)`
+- SEARCH `` `tests/test_ad738g_kokoro_voice.py` (28 tests) `` REPLACE `` `tests/test_ad738g_kokoro_voice.py` (32 tests) ``
+
+**G11.** `tests/test_ad738g_kokoro_voice.py`.
+
+G11.1 (W9, new, after W1). SEARCH:
+```python
+    assert struct.unpack("<3h", frames) == (16383, 32767, -32767)
+    assert not (tmp_path / (out.name + ".part")).exists()
+
+
+def test_w2_the_language_follows_the_voice_prefix(tmp_path: Path) -> None:
+```
+REPLACE:
+```python
+    assert struct.unpack("<3h", frames) == (16383, 32767, -32767)
+    assert not (tmp_path / (out.name + ".part")).exists()
+
+
+def test_w9_an_interrupted_write_leaves_neither_the_output_nor_a_part_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    out = tmp_path / "out.wav"
+    real_writeframes = wave.Wave_write.writeframes
+
+    def _disk_full(self, data):
+        real_writeframes(self, data[:2])  # one frame reaches the disk, then the write fails
+        raise OSError("disk full")
+
+    monkeypatch.setattr(wave.Wave_write, "writeframes", _disk_full)
+
+    with pytest.raises(OSError, match="disk full"):
+        worker.write_wav(out, [0.5, -0.5, 0.25], 24000)
+
+    # The service reads output_file once the path comes back: it must never hold a partial WAV.
+    assert not out.exists()
+    assert not (tmp_path / (out.name + ".part")).exists()
+
+
+def test_w2_the_language_follows_the_voice_prefix(tmp_path: Path) -> None:
+```
+
+G11.2 (B7 and B8, new, after B6). SEARCH:
+```python
+    }
+    assert len(KOKORO_VOICES) == 28
+    assert all(re.fullmatch(r"[ab][fm]_[a-z]+", voice) for voice in KOKORO_VOICES)
+```
+REPLACE:
+```python
+    }
+    assert len(KOKORO_VOICES) == 28
+    assert all(re.fullmatch(r"[ab][fm]_[a-z]+", voice) for voice in KOKORO_VOICES)
+
+
+@pytest.mark.asyncio
+async def test_b7_every_attempt_logs_one_result_line_even_when_it_degrades_early(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.INFO)
+    caplog.set_level(logging.INFO, logger="probos.audio.tts")
+    svc = _RecordingService()
+
+    missing = _installed(tmp_path, monkeypatch, model_path=str(tmp_path / "absent.onnx"))
+    assert await KokoroBackend(missing, service=svc).synthesize("Hi.") is None
+    assert await KokoroBackend(_installed(tmp_path, monkeypatch), service=None).synthesize("Hi.") is None
+    assert await KokoroBackend(_installed(tmp_path, monkeypatch), service=svc).synthesize("   ") is None
+
+    lines = [
+        record.getMessage() for record in caplog.records
+        if record.levelno == logging.INFO and record.getMessage().startswith("AD-738g: kokoro voice=")
+    ]
+    assert len(lines) == 2  # one per attempt (D10); blank text is not an attempt
+    for line in lines:
+        assert "voice=af_heart speed=1.00 chars=3" in line
+        assert "result=degraded role=-" in line
+    assert svc.calls == []
+
+
+@pytest.mark.asyncio
+async def test_b8_a_path_that_cannot_be_resolved_degrades_and_never_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.INFO)
+    caplog.set_level(logging.INFO, logger="probos.audio.tts")
+    svc = _RecordingService()
+    installed = _installed(tmp_path, monkeypatch)
+
+    # C4: the config refuses a NUL; model_copy skips validation, as a config built in code can.
+    for name in ("python_path", "model_path", "voices_path"):
+        cfg = installed.model_copy(update={name: "tools/kokoro/a\x00b"})
+        assert await KokoroBackend(cfg, service=svc).synthesize("Hi.") is None
+    assert svc.calls == []
+    assert caplog.text.count("result=degraded") == 3
+
+    def _unrepresentable(configured: str) -> Path:
+        raise OSError(22, "The filename, directory name, or volume label syntax is incorrect")
+
+    monkeypatch.setattr(kokoro_backend, "anchor_install_path", _unrepresentable)
+    assert await KokoroBackend(installed, service=svc).synthesize("Hi.") is None
+    assert svc.calls == []
+    assert "a tts.kokoro path cannot be resolved (OSError" in caplog.text
+    assert caplog.text.count("result=degraded") == 4
+```
+
+G11.3 (C4, new, after C3). SEARCH:
+```python
+    backend = next(field for field in section.fields if field.field_id == "tts.backend")
+
+    assert backend.enum_values == ("browser", "piper", "kokoro")
+```
+REPLACE:
+```python
+    backend = next(field for field in section.fields if field.field_id == "tts.backend")
+
+    assert backend.enum_values == ("browser", "piper", "kokoro")
+
+
+def test_c4_a_timeout_the_timer_cannot_take_and_a_path_no_file_can_have_are_refused() -> None:
+    import threading
+
+    # threading.Timer raises OverflowError past TIMEOUT_MAX (4294967.0 on Windows) inside its
+    # own thread, so the deadline would silently never fire; infinity and NaN never fire either.
+    assert 600.0 <= threading.TIMEOUT_MAX
+    for value in (float("inf"), float("nan"), 600.01, 4294968.0, 1e30):
+        with pytest.raises(ValueError):
+            KokoroTTSConfig(timeout_seconds=value)
+    assert KokoroTTSConfig(timeout_seconds=600.0).timeout_seconds == 600.0
+
+    for name in ("python_path", "model_path", "voices_path"):
+        for value in ("tools/kokoro/a\x00b", "", "   "):
+            with pytest.raises(ValueError):
+                KokoroTTSConfig(**{name: value})
+```
+
+G11.4 (S1, changed in place: it now proves the injected service is the one the backend speaks through; the reviewer showed a dropped injection survived it). SEARCH:
+```python
+def test_s1_select_backend_builds_kokoro_with_the_runtime_service(service) -> None:
+    backend = select_backend("kokoro", TTSConfig(backend="kokoro"), service=service)
+
+    assert isinstance(backend, KokoroBackend)
+    assert backend.name == "kokoro"
+    assert isinstance(select_backend("piper", TTSConfig(backend="piper")), PiperBackend)
+```
+REPLACE:
+```python
+@pytest.mark.asyncio
+async def test_s1_select_backend_builds_kokoro_with_the_runtime_service(
+    service, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backend = select_backend("kokoro", TTSConfig(backend="kokoro"), service=service)
+
+    assert isinstance(backend, KokoroBackend)
+    assert backend.name == "kokoro"
+    assert isinstance(select_backend("piper", TTSConfig(backend="piper")), PiperBackend)
+    # A1: the backend speaks through the service it was given (a dropped injection degrades).
+    recording = _RecordingService()
+    built = select_backend(
+        "kokoro", TTSConfig(backend="kokoro", kokoro=_installed(tmp_path, monkeypatch)), service=recording,
+    )
+    assert await built.synthesize("Hi.") == TTSResult(audio_bytes=b"RIFF", mime="audio/wav")
+    assert len(recording.calls) == 1
+```
+
+### 16.3 Regenerations and checks (after both A1 sections are applied)
+
+G1 adds a schema maximum to `KokoroTTSConfig.timeout_seconds`; GF2 adds validators (no schema change); no field, model or public name is added. Run from the worktree root:
+```text
+d:/ProbOS/.venv/Scripts/python.exe scripts/check_config_facade.py --update-baseline
+d:/ProbOS/.venv/Scripts/python.exe scripts/gen_config_reference.py
+d:/ProbOS/.venv/Scripts/python.exe scripts/check_config_facade.py --check
+d:/ProbOS/.venv/Scripts/python.exe scripts/gen_config_reference.py --check
+d:/ProbOS/.venv/Scripts/python.exe scripts/check_config_profiles.py --check
+d:/ProbOS/.venv/Scripts/python.exe -P scripts/gen_ad_ledger.py --check
+```
+**Pin rule.** The update must print `names=311, owned=298, incidental=13, models=229, fields=1886` on this tree (`fields=1887` if BF-932 has merged first). A1 moves **no** count pin: `test_ad1270e1_config_facade.py`'s `field_definitions` pin keeps the value it has. Any other printed number, or a baseline hunk outside the `KokoroTTSConfig` entry (and the reference's Kokoro rows), is a stop. Do not hand-edit either generated file. If `gen_ad_ledger.py --check` fails, run it without `--check` (no `--online`) and stage the two ledger files.
+
+Focused tests (the orchestrator; `-n 0`):
+```text
+d:/ProbOS/.venv/Scripts/pytest.exe tests/test_ad738g_kokoro_voice.py tests/test_ad738f_per_agent_voices.py tests/test_ad738_piper_tts.py tests/test_bf918_tts_latency.py tests/test_bf918_tts_retention.py tests/test_bf930_voice_path_timing.py tests/test_ad1025_path_anchoring.py tests/test_ad1270e1_config_facade.py tests/test_ad1270e2c_experience_models.py tests/test_ad741_section_registry.py tests/test_ad741_config_api.py tests/test_ad705a_offline_stt_config.py tests/test_bf_codebase_index_config_models.py -n 0 -q
+```
+**Installer end-to-end (the orchestrator, by hand; G9 has no automated test).** From an interactive console, with a destination whose folder name is non-ASCII and the two model files copied in so the hash check skips the download:
+```text
+$Dest = "G:\speech-kokoro-probe\voix-$([char]0xE9)"
+New-Item -ItemType Directory -Force $Dest | Out-Null
+Copy-Item tools\kokoro\kokoro-v1.0.onnx, tools\kokoro\voices-v1.0.bin $Dest
+$Before = [Console]::OutputEncoding.CodePage
+powershell -ExecutionPolicy Bypass -File scripts\kokoro-fetch.ps1 -DestDir $Dest
+pwsh -ExecutionPolicy Bypass -File scripts\kokoro-fetch.ps1 -DestDir $Dest
+[Console]::OutputEncoding.CodePage -eq $Before
+Get-ChildItem $Dest -Filter "*.wav*"
+```
+Pass: both runs end `[ ok ] the Kokoro worker spoke the test line (...)` and `Kokoro is installed at: ...voix-é`, neither prints `[warn]`, the code page is unchanged, and no `fetch-check.wav` or `voice-?` file remains. Record also one run from the non-interactive orchestrator shell: if it prints `[warn]` and fails the comparison, that host has no console; note it, it is not a defect of G9 (follow-up 3). Mutation check: with `$ProbeJson = ConvertTo-Json $Probe` the 5.1 run must fail (`WinError 123` from the worker).
+
+### 16.4 What A1 does not change
+
+`_anchor_path`, `_resolve_binary_path` and every other Piper line; Piper's `tts.timeout_seconds`; `resident.py`'s code (docstring only); the worker's protocol and its stdout handling; the redaction machinery in `routers/config.py` and `section_registry.py`; the route; `voice.ts`; the settings registry; `config/system.yaml`.
+
+### 16.5 Mutation rows (A1 campaign, one at a time on the frozen A1 candidate, file restored byte for byte)
+
+New rows for A1 code and for tests the K1-K19 campaign never targeted (each locator a whole stripped line, unique in its file):
+
+| ID | File: line (stripped) | Becomes | Killed by |
+|---|---|---|---|
+| K20 | `resident.py`: `self.python, "-I", self.script,` | `self.python, self.script,` | R4 |
+| K21 | `kokoro_worker.py`: the first `return EXIT_CANNOT_START` (in `serve`, after `refusing to start`) | `pass` | W5, R7 |
+| K22 | `kokoro_worker.py`: `import numpy as np` | the same line, then `import onnxruntime` | W8 |
+| K23 | `kokoro_backend.py`: `threads=cfg.threads,` | `threads=1,` | B1 |
+| K24 | `kokoro_backend.py`: `if python is None or missing:` | `if python is None:` | B4, B7 |
+| K25 | `kokoro_backend.py`: `if not text or not text.strip():` | `if not text:` | B5, B7 |
+| K26 | `experience.py`: `"af_nova", "af_river", "af_sarah", "af_sky",` | `"af_river", "af_sarah", "af_sky",` | B6 (and 738f V1) |
+| K27 | `experience.py`: `threads: int = Field(default=4, ge=1, le=16)` | `threads: int = Field(default=8, ge=1, le=16)` | C1 |
+| K28 | `experience.py`: `speed: float = Field(default=1.0, ge=0.5, le=2.0)` | `speed: float = Field(default=1.0, ge=0.0, le=2.0)` | C2 |
+| K29 | `section_registry.py`: `enum_values=("browser", "piper", "kokoro"),` | `enum_values=("browser", "piper"),` | C3 |
+| K30 | `experience.py`: `timeout_seconds: float = Field(default=30.0, gt=0.0, le=600.0, allow_inf_nan=False)` | `timeout_seconds: float = Field(default=30.0, gt=0.0)` | C4 |
+| K31 | `experience.py`: `if not value.strip() or "\x00" in value:` | `if False:` | C4 |
+| K32 | `kokoro_backend.py`: `except (OSError, ValueError) as exc:  # Path.resolve on a path the OS cannot represent` | `except KeyError as exc:` | B8 |
+| K33 | `kokoro_backend.py`: `wav = await self._speak(text, voice, speed)` | the same line, then `if wav is None: return None` at the same indent | B7, B8 |
+| K34 | `kokoro_worker.py`: `os.replace(part, path)` together with `with wave.open(str(part), "wb") as out:` | `with wave.open(str(path), "wb") as out:` and `pass` (a direct, non-atomic write) | W9 (W1 survives by design) |
+| K35 | `kokoro_worker.py`: `part.unlink(missing_ok=True)` | `pass` | W9 |
+| K36 | `__init__.py`: `return KokoroBackend(config.kokoro, service=service)` | `return KokoroBackend(config.kokoro)` | S1, T1 |
+
+Tests with no row, by design: **R1** (Piper's line without fields is the base's line: it must pass on the base; K19 covers the call shape), **T2** (the default config speaks in the browser and starts nothing: true on the base), **UI case 2** of `voice.kokoroGate.test.tsx` (the browser status makes no POST: true on the base). These three are compatibility tests; the reviewer agrees.
+
+**Rerun from K1-K19.** Files A1 changes: `experience.py`, `kokoro_backend.py`, `kokoro_worker.py` and `resident.py` (docstrings only), `piper_backend.py` (docstrings only, no row), and the test file. Rerun K1, K4 to K19 (every row whose file or killing test changed); K2 and K3 (`voice.ts`, UI file unchanged) keep their earlier result. The A1 campaign, run once on the frozen candidate with each file's sha256 recorded, is the campaign of record for A1.
+
+### 16.6 Contract exceptions recorded (no code)
+
+- **Milestone tests (6.15, 6.19).** The R and W tests were written in M3, not in M1 and M2 as 6.15 and 6.19 prescribe. The commits stand; the M1 and M2 commits are not focused-test-complete on their own, and the frozen candidate is the unit of evidence.
+- **ASCII (6.19, section 9 item 11, acceptance 3).** "ASCII-only" applies to hand-written text. The generated `docs/development/config-reference.md` contains `—`, `≥` and `≤` written by `gen_config_reference.py`; it is regenerated, never hand-edited.
+
+### 16.7 Section 9 after A1
+
+| # | Was | Now tested by |
+|---|---|---|
+| 6 | Not verified (native fd-1; atomic write) | The "never leaves a partial WAV" half: W9 (with K34, K35). The stdout half is narrowed to what is claimed and tested: no Python-level write reaches the protocol stdout (W7, K14); a native write to fd 1 is a recorded limit (follow-up 1), so item 6 now reads "no Python-level write". |
+| 8 | Not verified (timeout bounds, path strings) | C4 (K30, K31): finite timeout in (0, 600], no NaN or infinity; paths non-blank with no NUL. B8 (K32): a path that still cannot be resolved degrades. |
+| 11 | Not verified as worded | Scoped by 16.6: hand-written text is ASCII and LF; the generated reference is the tool's output (`gen_config_reference.py --check`). |
+| 12 | Not verified (deadline, no-raise, stdout, isolation) | Deadline: C4. No-raise: B8 and AD-738f's B2. Per-sentence INFO: B7 (K33). Isolation wording corrected at four sites (G5 to G8). Stdout: as item 6. |
+
+### 16.8 Follow-ups recorded (the orchestrator files them; none blocks this batch)
+
+1. The worker's protocol stdout is the process's fd 1; a native library write to fd 1 would reach the pipe (injected-only; fails closed to the browser). Fix sketch in 16.1 row 5.
+2. Piper's `tts.timeout_seconds` (`experience.py`:715, plain `float = 30.0`) accepts infinity and values past `threading.TIMEOUT_MAX`, as Kokoro's did.
+3. The installer's answer comparison relies on setting `[Console]::OutputEncoding`; a host with no console keeps its own decoding and may fail the comparison for a non-ASCII destination (reported as failure, never as success).
+4. AD-741's secret rule treats a dictionary key as a field name; any future dict-valued config whose keys are data meets the same redaction (here closed at parse time for `agent_voices` only).
+
+### 16.9 Verified Against Codebase (A1, 2026-11-27, tree `f573a703`)
+
+```text
+grep -n "timeout_seconds: float = Field(default=30.0, gt=0.0)" src/probos/config_models/experience.py   668
+grep -n "^from pydantic import\|^import re" src/probos/config_models/experience.py                      13, 10
+grep -n "_ROLE_NAME\|def _keys_are_role_names\|python_path: str\|model_path: str\|voices_path: str" src/probos/config_models/experience.py   634, 682, 646, 650, 653
+grep -n "timeout_seconds: float = 30.0" src/probos/config_models/experience.py                          715 (Piper; untouched)
+grep -n "if not text or not text.strip\|resolve_executable_path(cfg.python_path)\|role=%s\|agent_type or" src/probos/audio/tts/kokoro_backend.py   110, 116, 145, 147
+grep -n "def _anchor_path\|return candidate.resolve()\|def anchor_install_path\|def resolve_executable_path" src/probos/audio/tts/piper_backend.py   41, 49, 61, 67
+grep -n "threading.Timer(timeout\|isolates the interpreter" src/probos/audio/tts/resident.py           289, 162
+grep -n "isolates it\|def write_wav\|os.replace(part, path)\|part.unlink\|sys.stdout = sys.stderr\|encode(\"utf-8\")" scripts/kokoro_worker.py   5, 62, 75, 77, 153, 129
+grep -n "ConvertTo-Json \$Probe\|import probos" scripts/kokoro-fetch.ps1                                87, 76
+grep -n "python -I" THIRD_PARTY_LICENSES.md DECISIONS.md                                                174; 31
+grep -n "_SECRET_RE\|def is_secret_field_id\|^import\|^from" src/probos/settings/section_registry.py   508, 511, 14-18 (stdlib only)
+grep -n "is_secret_field_id" src/probos/routers/config.py                                              44, 87, 103, 277
+grep -n "def test_s1_\|assert len(KOKORO_VOICES) == 28\|assert backend.enum_values\|out.name + \".part\"" tests/test_ad738g_kokoro_voice.py   548, 503, 545, 210
+grep -n "enum_values=(\"browser\", \"piper\", \"kokoro\")" src/probos/settings/section_registry.py      275
+grep -n "return EXIT_CANNOT_START" scripts/kokoro_worker.py                                            115, 158
+```
+
+Absence Verified (A1):
+```text
+CLAIM: no test pins the "NEVER raises" wrapper docstrings or the two wrapper names
+RUN:   Grep "NEVER raises|anchor_install_path|resolve_executable_path" tests
+FOUND: tests/test_ad722_avatar_telemetry.py:4 (an unrelated module docstring)      HOLDS: yes
+CLAIM: no test pins the -I isolation wording
+RUN:   Grep "cannot import .probos|isolates the interpreter|THIRD_PARTY_LICENSES" tests
+FOUND: test_ad705a_offline_stt_config.py:48, :59 (whisper.cpp sections only)       HOLDS: yes
+CLAIM: no test builds a Kokoro path that is blank, or a timeout above 600
+RUN:   Grep "(python_path|model_path|voices_path)=[\"']\s*[\"']|timeout_seconds=(\d{4,}|float)" tests
+FOUND: test_bf825_a_run_someone_is_waiting_on.py:737 (strand_timeout_seconds; unrelated)   HOLDS: yes
+CLAIM: no test counts the Kokoro INFO records, so a line on degraded attempts breaks none
+RUN:   Grep "kokoro is not installed|no voice synthesis service|AD-738g: kokoro|kokoro.*caplog\.records" tests
+FOUND: test_ad738g_kokoro_voice.py:392, :422, :468, :489; test_ad738f_per_agent_voices.py:181 (all substrings)   HOLDS: yes
+CLAIM: config_models imports nothing outside config_models today, and no structural test forbids importing probos.settings
+RUN:   Grep "^\s*from probos\.[a-z_]+ import|^\s*from probos\.[a-z_]+\." src/probos/config_models; Read test_ad1270e2c_experience_models.py:501-512
+FOUND: only config_models.__init__ re-imports; the structural test forbids probos.config only   HOLDS: yes
+CLAIM: GF1 adds no facade name
+RUN:   Read scripts/check_config_facade.py:1020 (vars(probos.config)); config.py imports experience names by an explicit list (738f Absence Verified)
+FOUND: is_secret_field_id is not re-exported                                         HOLDS: yes
+```
+
+### 16.10 Prior art (A1)
+
+Repair round; no new design. The escape is the standard JSON `\uXXXX` form (RFC 8259 section 7, which allows each UTF-16 unit of a surrogate pair to be escaped separately); reading native output requires `[Console]::OutputEncoding` in both PowerShell 5.1 and 7 (`about_Character_Encoding`). No external search was run.
