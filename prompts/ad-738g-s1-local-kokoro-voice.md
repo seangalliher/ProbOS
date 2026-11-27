@@ -1,0 +1,1892 @@
+# AD-738g S1 (#1662): a local Kokoro voice, on this machine's CPU, behind the TTS backend seam
+
+**Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-27
+**Status:** ready to build. **Owning issue:** #1662 (stays open: S2 to S5 and the Captain's live acceptance remain). Commits say `Refs #1662.` and never a closing keyword.
+**Base:** main `63c536b3`. Branch `feat/ad738g-s1-local-kokoro-voice-20261127`. Built in parallel with BF-930's batch and merged with it before one gate (section 7.1). **Number:** AD-738g is the issue's own number; no new AD or BF number is allocated.
+**Design base:** the Architect consult of 2026-11-27 (`ref-738-consult-answer.md`), accepted, plus the orchestrator's first-hand measurements of the same day (real-time factor, install, hashes, API, the missing `duration` output, the GPL boundary). Where this contract departs from the consult it says so in section 3.
+**Line endings:** the working copies may be CRLF and the blocks below are LF; match after normalising. Every SEARCH starts at the beginning of a line and occurs once in its file at its turn. All new text is ASCII.
+**Estimated tests:** Python 28 new in one new file, 1 case added to a parametrised test, 2 tests updated in place (snapshot and counts, reasons inline); UI 3 new in one new file. 0 removed.
+**Scope:** four commits (section 4). New: `src/probos/audio/tts/kokoro_backend.py`, `scripts/kokoro_worker.py`, `scripts/kokoro-fetch.ps1`, `tests/fixtures/fake_kokoro_worker.py`, `tests/test_ad738g_kokoro_voice.py`, `ui/src/audio/__tests__/voice.kokoroGate.test.tsx`. Changed: `src/probos/audio/tts/resident.py`, `src/probos/audio/tts/__init__.py`, `src/probos/audio/tts/piper_backend.py`, `src/probos/config_models/experience.py`, `src/probos/config_models/__init__.py`, `src/probos/config.py`, `src/probos/settings/section_registry.py`, `src/probos/routers/avatars.py` (one docstring), `ui/src/audio/voice.ts` (four lines), `tests/test_ad1270e2c_experience_models.py`, `tests/test_ad1270e1_config_facade.py`, `THIRD_PARTY_LICENSES.md`, `docs/development/roadmap.md`, `docs/research/reference-projects.md`, `PROGRESS.md`, `DECISIONS.md`, and the tool-regenerated `docs/development/config-facade-baseline.yaml`, `docs/development/config-reference.md`, `docs/development/ad-ledger-snapshot.json`, `docs/development/open-ads-report.md`.
+
+## 1. Problem (premise table)
+
+| Where | What it does today | Effect |
+|---|---|---|
+| `config_models/experience.py`:744 | `backend: Literal["browser", "piper"]` | no Kokoro backend can be configured |
+| `audio/tts/__init__.py`:17-49 (`select_backend`) | knows `piper` (:31) and `browser` (:43); any other name warns and returns `NullBackend` (:45-49) | nothing builds a Kokoro backend |
+| `audio/tts/resident.py`:93-115, :128, :198, :336 | the resident service (BF-918) is keyed by `PiperWorkerKey`, whose argv is Piper's flags; the request line carries only `text` and `output_file` | a Kokoro worker cannot run under it: one Kokoro process must take a voice and a speed per request |
+| `resident.py`:458-465 | every outcome without audio retires the worker | correct for Piper (a 0.5 s reload); for Kokoro a respawn costs about 3.2 s (0.72 s model load and 2.43 s first call, measured 2026-11-27) and one sentence with no phonemes would make the next sentence pay it |
+| `ui/src/audio/voice.ts`:555, :567 | the client takes the server path only when `backend === 'piper'` (`!== 'piper'` falls back) | a `kokoro` status would make the browser speak every sentence |
+| `routers/avatars.py`:222 | the server already gates on `backend == "browser"` | the server needs no gate change; client and server disagree today for any third backend |
+| `config_models/experience.py`:725-825, `docs/development/config-facade-baseline.yaml`:3621-3638, `tests/test_ad1270e2c_experience_models.py`:198-208 | `TTSConfig`'s fields, schema digest and default dump are frozen | any new field moves the facade baseline and the snapshot test; both are regenerated or updated with the reason inline |
+
+## 2. Overview
+
+S1 is row 1 of the consult's slice plan: a resident Kokoro voice on this machine's CPU, audio only, lip-sync unchanged, off until the Captain configures it.
+
+- **Worker (`scripts/kokoro_worker.py`, new).** Runs in the operator's venv `tools/kokoro/venv` under `python -I`. It speaks Piper's `--json-input` line protocol: one ASCII JSON line in (`text`, `output_file`, `voice`, `speed`), a 24 kHz 16-bit mono WAV written to `output_file`, the path printed. It derives `lang` from the voice prefix (`b?_` gives `en-gb`, else `en-us`). Its failure policy is D2.
+- **Resident service (`resident.py`).** A `WorkerKey` Protocol (`label`, `name`, `retire_on_empty`, `argv`). `PiperWorkerKey` keeps its fields and gains the three properties; a new frozen `KokoroWorkerKey`. `synthesize(..., *, fields=None)` merges `fields` into the line only when given, after `text` and `output_file` and never replacing them, so Piper's line is byte-identical. A Kokoro worker that answers without audio stays resident. Log wording and the temp-directory prefix use `key.label`, so every Piper line reads as before except two service-wide lines (D7).
+- **Backend (`audio/tts/kokoro_backend.py`, new).** Resolves the install paths (AD-1025 anchoring), the voice (a catalogue override, else `tts.kokoro.voice`), and the speed (`tts.kokoro.speed / length_scale` of the AD-738e-1 emotion table, clamped to [0.5, 2.0]); calls the service; logs one INFO line per sentence with the voice and the synthesis time.
+- **Config.** A nested `KokoroTTSConfig` under `TTSConfig.kokoro` (section 6.6); `backend` gains `"kokoro"`; the registry enum gains it.
+- **Client gate.** `voice.ts`:555 and :567 test `backend === 'browser'`, matching the server at `avatars.py`:222.
+- **Install.** `scripts/kokoro-fetch.ps1` makes the venv with `uv`, installs `kokoro-onnx==0.6.1`, downloads the two model files with size and SHA-256 checks, and speaks one test line through the real worker.
+
+Rejected, one line each:
+- A separate `KokoroWorker` class: it would duplicate BF-918's lifecycle (DRY); the key Protocol is the only seam needed.
+- A ProbOS-owned HTTP speech service now: a port, a credential and a bind policy the local pipe does not need; it belongs to the remote-Mac slice.
+- The PyTorch `kokoro` package or Kokoro-FastAPI: multi-GB torch install; FastAPI serves with no documented authentication (consult section 2).
+- A catalogue module under `audio/tts/` for config validation (the consult's `kokoro_voices.py`): `config_models` would import the audio package. The voice `Literal` in the config is the one source; the backend reads it with `typing.get_args` (D5).
+- A prewarm in S1: D1.
+- A Kokoro-to-Piper fallback chain: it changes the voice as audibly as the browser fallback, and the chain belongs with the remote slice.
+
+## 3. Decisions
+
+| # | Decision | Reason |
+|---|---|---|
+| D1 | `threads` default 4 (1 to 16); `timeout_seconds` default 30.0 (> 0); no prewarm in S1 | Measured on the Ryzen 9 7950X3D: real-time factor 0.314 at 4 threads (0.41 s for 13 chars, 1.13 s for 65, 1.99 s worst of 8), 0.23 at 8, 0.181 at 16. At 4 threads synthesis runs 3.2 times faster than playback, so BF-930's prefetch keeps ahead once speech starts; only the first sentence's latency is visible, and 8 threads would save about 0.3 s on a 65-char sentence while taking twice the cores from the vessel. The cold cost is 0.72 s load plus 2.43 s first call, once per process: with D3 the process stays for the session, so one spoken warm-up line before recording is enough. 30 s is about six times the worst cold first sentence (process start, load, lazy init and a 118-char sentence, about 5 s) and short enough that one runaway request does not hold the single Kokoro lock for minutes; the timer starts only when the worker takes the request (`resident.py`:200), so queued sentences do not age. A prewarm needs startup wiring, a stored task and a shutdown cancel: S2 (consult row 3) |
+| D2 | Worker failure policy: an engine error on one request (no phonemes, a speed out of range, any `Exception` from `create` or the WAV write) is logged on stderr and answered with the path and no file, and the loop continues. A line it cannot read (not ASCII JSON, no string `text` or `output_file`) ends the worker with exit 3. A model it cannot load ends it with exit 2. A default voice the voices file lacks ends it with exit 2 before it reads a line. A per-request voice the file lacks is spoken in the default voice, with a stderr warning | A request it cannot speak leaves the process healthy and the pipe in step (it answered with the matching path), so retiring it would only add a 3.2 s reload to the next sentence of a live interview. An unreadable line means the pipe is no longer trustworthy and there is no path to answer with; exiting makes the service see end of file at once and respawn for the next request, instead of waiting the 30 s timeout. The default voice is validated against the catalogue at config load (D5) and the voices file is hash-pinned (section 6.12), so a missing default means a foreign voices file: refusing to start is honest, where silently speaking another voice would hide it; each sentence then degrades to the browser voice |
+| D3 | `KokoroWorkerKey.retire_on_empty` is `False`; `PiperWorkerKey.retire_on_empty` is `True` | D2's per-request answer arrives as the service's `empty` outcome (`resident.py`:213-214). Piper's behaviour stays as BF-918 shipped (`test_bf918_tts_latency.py`:259-267 keeps passing) |
+| D4 | The client gate becomes `backend === 'browser'` at `voice.ts`:555 and :567; the two comments at :548-549 and :561-562 follow | One rule on both sides (`avatars.py`:222). The zero-HTTP guarantee for the default config is unchanged: `browser` still makes no POST (`voice.serverTts.test.tsx`:81-125) |
+| D5 | The 28 English voice ids are `KokoroVoiceId = Literal[...]` in `config_models/experience.py`; `KokoroTTSConfig.voice` is typed with it; the backend's catalogue is `frozenset(get_args(KokoroTTSConfig.model_fields["voice"].annotation))` | Parse-time validation with no validator code and no import from the audio package into config. English only: the worker supports `en-us` and `en-gb`; a non-English voice spoken with an English phonemiser would be wrong. Ids from hexgrad/Kokoro-82M VOICES.md (20 American, 8 British) |
+| D6 | The backend honours `voice_override` only when it is a catalogue id; otherwise `tts.kokoro.voice`. Voice resolution is one public method, `KokoroBackend.resolve_voice` | AD-718a proposals and the HXI picker can hold Piper or browser names (`voice/proposal.py`:34 checks no catalogue). AD-738f (#1868) adds its per-role default inside that method and an `agent_type` keyword on the backend Protocol; S1 leaves the Protocol unchanged |
+| D7 | The resident service's log lines use `key.label`; every Piper line reads as before except two service-wide lines, "all N resident voice processes are busy" and "stopped N resident voice process(es)" | They name a shared pool, not one engine. No test pins either text (Absence Verified) |
+| D8 | Without `fields`, `synthesize_blocking` and `_request` are called with BF-918's two arguments | `test_bf930_voice_path_timing.py`:96 and :387 replace those methods with a two-argument signature; passing a third positional `None` would break them, and BF-930's batch may touch that file, so it is not edited here |
+| D9 | The Kokoro process uses one of the 4 resident slots (`PIPER_MAX_RESIDENT`, unchanged) and the per-key lock serialises its sentences | One speaker at a time is the interview case; synthesis is 3.2 times faster than playback |
+| D10 | The backend logs one INFO line per sentence: `AD-738g: kokoro voice=<id> speed=<x.xx> chars=<n> synth_ms=<ms> result=ok|degraded` | The Captain's live check reads it (section 13); the BF-930 slow-request line is rate-limited to 12 a minute (`utils/step_timing.py`:46-58) and fires only past 750 ms |
+
+## 4. Milestones and commits
+
+Each milestone is one commit, built and focused-tested before the next (section 8.2 names its tests). Stage explicit paths only; never `git add -A`. Run `git diff --cached --stat` before each commit and stop on any unexpected file with more than 200 deletions.
+
+| M | Pairs | Commit subject |
+|---|---|---|
+| M1 resident generalisation | 6.1; the R1-R4 tests of 6.15 | `Speech: the resident voice service runs any keyed worker, and a Kokoro key passes each request's voice and speed` |
+| M2 worker and fake worker | 6.2, 6.3; the W1-W8 and R5-R7 tests of 6.15 | `Speech: a Kokoro worker that speaks Piper's line protocol from the operator's own venv` |
+| M3 backend, config, registry, client gate | 6.4 to 6.11, the regenerations of 6.9, 6.16; the B, C, S and T tests of 6.15 | `Speech: a resident Kokoro voice on this machine behind the TTS backend seam, off until configured` |
+| M4 install, licences, trackers | 6.12, 6.13, 6.14, 6.17 to 6.20; then `d:/ProbOS/.venv/Scripts/python.exe -P scripts/gen_ad_ledger.py` (no `--online`) and stage the two ledger files when they change | `Speech: the Kokoro install script with pinned hashes, its licence record and the trackers` |
+
+No subject carries an `AD-` or `BF-` token or the words close, fix or resolve. Each commit body ends `Refs #1662.`
+
+## 5. Builder: may and may not
+
+- **May:** create the six new files with the content given; apply the pairs in order; run each milestone's focused line of 8.2; run the three config tools of 6.9 and `gen_ad_ledger.py`; `git diff --check`, `git diff --stat`.
+- **May not:** edit an unnamed file; edit `tests/test_bf930_voice_path_timing.py`, `tests/test_bf918_tts_latency.py`, the census fixtures or `tests/test_bf892_spawn_env_guard.py`; add `skip`, `xfail` or a retry; add a wall-clock assertion; install anything into the ProbOS venv; reword an anchor. If a SEARCH does not match exactly once, or a regenerated count differs from 6.9's arithmetic, stop and report.
+
+## 6. The pairs
+
+### 6.1 `src/probos/audio/tts/resident.py` (M1)
+
+**P1.1** SEARCH:
+```python
+Not ``loop.set_default_executor``: that would change the pool under every other
+caller, crew cognition included, and bound none of them.
+"""
+```
+REPLACE:
+```python
+Not ``loop.set_default_executor``: that would change the pool under every other
+caller, crew cognition included, and bound none of them.
+
+AD-738g (#1662): a process is fixed by a ``WorkerKey``. ``PiperWorkerKey`` is BF-918's
+key, unchanged; ``KokoroWorkerKey`` runs ``scripts/kokoro_worker.py``, which speaks the
+same line protocol and takes each request's voice and speed as extra fields. One Kokoro
+process serves every voice, and a request it answers without audio does not retire it.
+"""
+```
+
+**P1.2** SEARCH:
+```python
+from typing import IO, Any, Callable, Iterator, TypeVar
+```
+REPLACE:
+```python
+from typing import IO, Any, Callable, Iterator, Mapping, Protocol, TypeVar
+```
+
+**P1.3** SEARCH (the whole of `PiperWorkerKey`):
+```python
+@dataclass(frozen=True)
+class PiperWorkerKey:
+    """What one resident process is fixed to: the binary, the model and the prosody flags."""
+
+    binary: str
+    model: str
+    noise_scale: float
+    length_scale: float
+    noise_w: float
+    sentence_silence: float
+
+    def argv(self, output_dir: Path) -> list[str]:
+        """The process's command line. ``--output_dir`` is a fallback; each request names its own file."""
+        return [
+            self.binary,
+            "--model", self.model,
+            "--json-input",
+            "--output_dir", str(output_dir),
+            "--noise_scale", str(self.noise_scale),
+            "--length_scale", str(self.length_scale),
+            "--noise_w", str(self.noise_w),
+            "--sentence_silence", str(self.sentence_silence),
+        ]
+```
+REPLACE:
+```python
+class WorkerKey(Protocol):
+    """AD-738g (#1662): what one resident process is fixed to; implemented by frozen, hashable dataclasses.
+
+    ``label`` names the engine in logs and in the temporary directory, ``name`` names the
+    model in logs, and ``retire_on_empty`` says whether a request answered without audio
+    retires the process (Piper: yes, as BF-918 shipped; Kokoro: no, its worker answers a
+    request it cannot speak and stays healthy, and a restart reloads the model).
+    """
+
+    @property
+    def label(self) -> str: ...
+
+    @property
+    def name(self) -> str: ...
+
+    @property
+    def retire_on_empty(self) -> bool: ...
+
+    def argv(self, output_dir: Path) -> list[str]: ...
+
+
+@dataclass(frozen=True)
+class PiperWorkerKey:
+    """What one resident process is fixed to: the binary, the model and the prosody flags."""
+
+    binary: str
+    model: str
+    noise_scale: float
+    length_scale: float
+    noise_w: float
+    sentence_silence: float
+
+    @property
+    def label(self) -> str:
+        return "piper"
+
+    @property
+    def name(self) -> str:
+        return Path(self.model).stem
+
+    @property
+    def retire_on_empty(self) -> bool:
+        return True
+
+    def argv(self, output_dir: Path) -> list[str]:
+        """The process's command line. ``--output_dir`` is a fallback; each request names its own file."""
+        return [
+            self.binary,
+            "--model", self.model,
+            "--json-input",
+            "--output_dir", str(output_dir),
+            "--noise_scale", str(self.noise_scale),
+            "--length_scale", str(self.length_scale),
+            "--noise_w", str(self.noise_w),
+            "--sentence_silence", str(self.sentence_silence),
+        ]
+
+
+@dataclass(frozen=True)
+class KokoroWorkerKey:
+    """AD-738g (#1662): one resident Kokoro worker (``scripts/kokoro_worker.py``) serves every voice.
+
+    The voice and speed travel on each request line (``fields``); the process is fixed to
+    the interpreter, the model, the voices file, the thread count and the default voice.
+    ``-I`` isolates the interpreter: no ``PYTHON*`` variable, no user site, and neither the
+    script's nor the working directory on ``sys.path``, so the worker cannot import ``probos``.
+    """
+
+    python: str
+    script: str
+    model: str
+    voices: str
+    threads: int
+    default_voice: str
+
+    @property
+    def label(self) -> str:
+        return "kokoro"
+
+    @property
+    def name(self) -> str:
+        return Path(self.model).stem
+
+    @property
+    def retire_on_empty(self) -> bool:
+        return False
+
+    def argv(self, output_dir: Path) -> list[str]:
+        """The process's command line. Each request names its own output file, so ``output_dir`` is unused."""
+        return [
+            self.python, "-I", self.script,
+            "--model", self.model,
+            "--voices", self.voices,
+            "--threads", str(self.threads),
+            "--default-voice", self.default_voice,
+        ]
+```
+
+**P1.4** SEARCH:
+```python
+    def __init__(self, key: PiperWorkerKey) -> None:
+        self.key = key
+```
+REPLACE:
+```python
+    def __init__(self, key: WorkerKey) -> None:
+        self.key = key
+```
+
+**P1.5** SEARCH:
+```python
+    def synthesize_blocking(self, text: str, timeout: float) -> PiperOutcome:
+        """Run one request; starts the process first when it is not running.
+
+        Refused (``closed``) once the worker is closed. When ``close`` came while this
+        request ran, the request releases the worker before it returns.
+        """
+        self.thread_started = time.perf_counter()  # BF-930: log-only
+        with self._state:
+            if self._closed:  # closed while this request was queued: start nothing
+                return PiperOutcome(None, "closed")
+            self._running = True
+        try:
+            return self._request(text, timeout)
+```
+REPLACE:
+```python
+    def synthesize_blocking(
+        self, text: str, timeout: float, fields: Mapping[str, str | float] | None = None,
+    ) -> PiperOutcome:
+        """Run one request; starts the process first when it is not running.
+
+        Refused (``closed``) once the worker is closed. When ``close`` came while this
+        request ran, the request releases the worker before it returns. AD-738g:
+        ``fields`` (Kokoro's voice and speed) join the request line.
+        """
+        self.thread_started = time.perf_counter()  # BF-930: log-only
+        with self._state:
+            if self._closed:  # closed while this request was queued: start nothing
+                return PiperOutcome(None, "closed")
+            self._running = True
+        try:
+            # AD-738g: without fields the call keeps BF-918's two arguments (test stand-ins
+            # replace this method with that signature: test_bf930_voice_path_timing.py).
+            return self._request(text, timeout) if fields is None else self._request(text, timeout, fields)
+```
+
+**P1.6** SEARCH:
+```python
+    def _request(self, text: str, timeout: float) -> PiperOutcome:
+```
+REPLACE:
+```python
+    def _request(
+        self, text: str, timeout: float, fields: Mapping[str, str | float] | None = None,
+    ) -> PiperOutcome:
+```
+
+**P1.7** SEARCH:
+```python
+                return PiperOutcome(None, "error: no pipes to the piper process")
+```
+REPLACE:
+```python
+                return PiperOutcome(None, f"error: no pipes to the {self.key.label} process")
+```
+
+**P1.8** SEARCH:
+```python
+            line = json.dumps({"text": " ".join(text.splitlines()), "output_file": str(out)}, ensure_ascii=True)
+```
+REPLACE:
+```python
+            payload: dict[str, str | float] = {"text": " ".join(text.splitlines()), "output_file": str(out)}
+            if fields:
+                # AD-738g: per-request fields follow the two above and never replace them.
+                payload.update({name: value for name, value in fields.items() if name not in payload})
+            line = json.dumps(payload, ensure_ascii=True)
+```
+
+**P1.9** SEARCH:
+```python
+        directory = Path(tempfile.mkdtemp(prefix="probos-piper-"))
+```
+REPLACE:
+```python
+        directory = Path(tempfile.mkdtemp(prefix=f"probos-{self.key.label}-"))
+```
+
+**P1.10** SEARCH:
+```python
+        logger.info("BF-918: resident piper started (voice=%s)", Path(self.key.model).stem)
+```
+REPLACE:
+```python
+        logger.info("BF-918: resident %s started (voice=%s)", self.key.label, self.key.name)
+```
+
+**P1.11** SEARCH:
+```python
+        self._resident: OrderedDict[PiperWorkerKey, PiperWorker] = OrderedDict()
+        self._busy: set[PiperWorkerKey] = set()
+        # BF-918: evicted workers whose close has not run yet; ``close`` reaches them here.
+        self._retiring: set[PiperWorker] = set()
+        self._locks: dict[PiperWorkerKey, asyncio.Lock] = {}
+```
+REPLACE:
+```python
+        self._resident: OrderedDict[WorkerKey, PiperWorker] = OrderedDict()
+        self._busy: set[WorkerKey] = set()
+        # BF-918: evicted workers whose close has not run yet; ``close`` reaches them here.
+        self._retiring: set[PiperWorker] = set()
+        self._locks: dict[WorkerKey, asyncio.Lock] = {}
+```
+
+**P1.12** SEARCH:
+```python
+    async def synthesize(self, key: PiperWorkerKey, text: str, timeout: float) -> bytes | None:
+        """WAV bytes for ``text`` from the resident process for ``key``, or ``None`` to degrade."""
+```
+REPLACE:
+```python
+    async def synthesize(
+        self, key: WorkerKey, text: str, timeout: float, *, fields: Mapping[str, str | float] | None = None,
+    ) -> bytes | None:
+        """WAV bytes for ``text`` from the resident process for ``key``, or ``None`` to degrade.
+
+        AD-738g: ``fields`` join the request line (Kokoro's voice and speed); Piper passes
+        none, so its line is unchanged.
+        """
+```
+
+**P1.13** SEARCH:
+```python
+                    future = loop.run_in_executor(self.executor, worker.synthesize_blocking, text, timeout)
+```
+REPLACE:
+```python
+                    # AD-738g: no third argument without fields (D8 of the contract).
+                    extra: tuple[Mapping[str, str | float], ...] = () if fields is None else (fields,)
+                    future = loop.run_in_executor(self.executor, worker.synthesize_blocking, text, timeout, *extra)
+```
+
+**P1.14** SEARCH:
+```python
+                    logger.warning("BF-918: piper request failed; the browser speaks this one", exc_info=True)
+```
+REPLACE:
+```python
+                    logger.warning("BF-918: %s request failed; the browser speaks this one", key.label, exc_info=True)
+```
+
+**P1.15** SEARCH:
+```python
+                        "BF-930: piper request slow chars=%d voice=%s total_ms=%.0f lock_wait_ms=%.0f claim_ms=%.0f "
+                        "pool_wait_ms=%.0f work_ms=%.0f resume_lag_ms=%.0f cold=%s result=%s in_flight=%d",
+                        len(text), Path(key.model).stem, total_ms, ms_between(t_enter, t_locked),
+```
+REPLACE:
+```python
+                        "BF-930: %s request slow chars=%d voice=%s total_ms=%.0f lock_wait_ms=%.0f claim_ms=%.0f "
+                        "pool_wait_ms=%.0f work_ms=%.0f resume_lag_ms=%.0f cold=%s result=%s in_flight=%d",
+                        key.label, len(text), key.name, total_ms, ms_between(t_enter, t_locked),
+```
+
+**P1.16** SEARCH:
+```python
+                if not self._closed:  # a request that shutdown ended is not a piper failure
+                    self._log_failure(outcome, text, timeout)
+                if self._resident.get(key) is worker:
+```
+REPLACE:
+```python
+                if not self._closed:  # a request that shutdown ended is not a voice failure
+                    self._log_failure(key.label, outcome, text, timeout)
+                if outcome.reason == "empty" and not key.retire_on_empty:
+                    return None  # AD-738g: the worker answered without audio; it stays resident
+                if self._resident.get(key) is worker:
+```
+
+**P1.17** SEARCH:
+```python
+    async def _claim(self, key: PiperWorkerKey) -> PiperWorker | None:
+```
+REPLACE:
+```python
+    async def _claim(self, key: WorkerKey) -> PiperWorker | None:
+```
+
+**P1.18** SEARCH:
+```python
+                    "BF-918: all %d resident piper processes are busy; the browser speaks this one",
+```
+REPLACE:
+```python
+                    "BF-918: all %d resident voice processes are busy; the browser speaks this one",
+```
+
+**P1.19** SEARCH:
+```python
+    def _forget(self, key: PiperWorkerKey, worker: PiperWorker) -> None:
+```
+REPLACE:
+```python
+    def _forget(self, key: WorkerKey, worker: PiperWorker) -> None:
+```
+
+**P1.20** SEARCH:
+```python
+    @staticmethod
+    def _log_failure(outcome: PiperOutcome, text: str, timeout: float) -> None:
+        if outcome.reason == "timeout":
+            logger.warning(
+                "AD-738/BF-918: piper timed out after %ss synthesizing %d chars; killed, "
+                "and the next request starts a new process",
+                timeout, len(text),
+            )
+        elif outcome.reason == "exited":
+            logger.warning("AD-738/BF-918: piper exit=%s; stderr=%s", outcome.returncode, outcome.stderr_tail)
+        elif outcome.reason == "empty":
+            logger.warning("AD-738/BF-918: piper produced 0 bytes; degrading")
+        else:
+            logger.warning("AD-738/BF-918: piper subprocess failed: %s", outcome.reason)
+```
+REPLACE:
+```python
+    @staticmethod
+    def _log_failure(label: str, outcome: PiperOutcome, text: str, timeout: float) -> None:
+        if outcome.reason == "timeout":
+            logger.warning(
+                "AD-738/BF-918: %s timed out after %ss synthesizing %d chars; killed, "
+                "and the next request starts a new process",
+                label, timeout, len(text),
+            )
+        elif outcome.reason == "exited":
+            logger.warning("AD-738/BF-918: %s exit=%s; stderr=%s", label, outcome.returncode, outcome.stderr_tail)
+        elif outcome.reason == "empty":
+            logger.warning("AD-738/BF-918: %s produced 0 bytes; degrading", label)
+        else:
+            logger.warning("AD-738/BF-918: %s subprocess failed: %s", label, outcome.reason)
+```
+
+**P1.21** SEARCH:
+```python
+            logger.info("BF-918: voice synthesis closed; stopped %d resident piper process(es)", len(workers))
+```
+REPLACE:
+```python
+            logger.info("BF-918: voice synthesis closed; stopped %d resident voice process(es)", len(workers))
+```
+
+### 6.2 `scripts/kokoro_worker.py` (new, M2)
+
+```python
+"""AD-738g (#1662) S1: the resident Kokoro worker. ProbOS starts it; it is not part of the ProbOS process.
+
+Run by ``VoiceSynthesisService`` (``src/probos/audio/tts/resident.py``) as
+``<tools/kokoro/venv python> -I scripts/kokoro_worker.py --model M --voices V --threads N --default-voice D``.
+``-I`` isolates it: no ``PYTHON*`` variable, no user site, and neither this directory nor the
+working directory on ``sys.path``, so it cannot import ``probos``.
+
+Protocol (Piper's ``--json-input``): one ASCII JSON object per stdin line,
+``{"text", "output_file", "voice", "speed"}``. For each line the worker writes a 16-bit mono
+WAV at the engine's rate (24 kHz) to ``output_file`` and prints that path on stdout. A request
+it cannot speak (an engine error: no phonemes, a speed out of range) is answered with the path
+and no file, and the worker keeps serving. A line it cannot read ends the worker (exit 3). A
+model it cannot load, or a default voice the voices file lacks, ends it before it reads a line
+(exit 2). Logs go to stderr, which the service sends to a file; library prints go there too.
+
+License posture: this file imports only the standard library and numpy at module level, and
+``onnxruntime`` and ``kokoro_onnx`` (both MIT) inside ``load_engine``. kokoro-onnx loads
+phonemizer and espeak-ng (GPL-3.0-or-later) into this process, which the operator installs
+into ``tools/kokoro/venv`` (``scripts/kokoro-fetch.ps1``) and which exchanges only text, a
+voice id and a speed in and a WAV path out with ProbOS (THIRD_PARTY_LICENSES.md, "License policy").
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sys
+import wave
+from pathlib import Path
+from typing import IO, Any, Callable, Protocol
+
+import numpy as np
+
+#: Exit codes; the service's log shows them as ``exit=N``.
+EXIT_CANNOT_START = 2
+EXIT_UNREADABLE_LINE = 3
+
+
+class Engine(Protocol):
+    """The part of ``kokoro_onnx.Kokoro`` the worker uses."""
+
+    def get_voices(self) -> list[str]: ...
+
+    def create(self, text: str, voice: str, speed: float, lang: str) -> tuple[Any, int]: ...
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="ProbOS resident Kokoro worker (AD-738g)")
+    parser.add_argument("--model", required=True)
+    parser.add_argument("--voices", required=True)
+    parser.add_argument("--threads", type=int, default=4)
+    parser.add_argument("--default-voice", required=True)
+    return parser
+
+
+def lang_for(voice: str) -> str:
+    """kokoro-onnx's language for a voice id: ``b?_`` voices are British English, the rest American."""
+    return "en-gb" if voice.startswith("b") else "en-us"
+
+
+def write_wav(path: Path, samples: Any, rate: int) -> None:
+    """Write ``samples`` (floats in -1..1) as a 16-bit mono WAV; the file appears whole or not at all."""
+    pcm = np.nan_to_num(np.asarray(samples, dtype=np.float32).reshape(-1), nan=0.0)
+    if pcm.size == 0:
+        raise ValueError("the engine returned no samples")
+    frames = (np.clip(pcm, -1.0, 1.0) * 32767.0).astype("<i2").tobytes()
+    part = path.with_name(path.name + ".part")
+    try:
+        with wave.open(str(part), "wb") as out:
+            out.setnchannels(1)
+            out.setsampwidth(2)
+            out.setframerate(int(rate))
+            out.writeframes(frames)
+        os.replace(part, path)
+    finally:
+        part.unlink(missing_ok=True)
+
+
+def read_request(raw: bytes) -> dict[str, Any]:
+    """One request line. Raises ``ValueError`` unless it is a JSON object with string ``text`` and ``output_file``."""
+    request = json.loads(raw.decode("ascii"))
+    if (
+        not isinstance(request, dict)
+        or not isinstance(request.get("text"), str)
+        or not isinstance(request.get("output_file"), str)
+        or not request["output_file"]
+    ):
+        raise ValueError("a request needs a string text and a non-empty string output_file")
+    return request
+
+
+def speak(engine: Engine, voices: frozenset[str], default_voice: str, request: dict[str, Any], log: IO[str]) -> bool:
+    """Synthesize one request into its output file. True when a file was written; never raises."""
+    text: str = request["text"]
+    voice = request.get("voice")
+    if not isinstance(voice, str) or voice not in voices:
+        if voice is not None:
+            _log(log, f"AD-738g: voice {voice!r} is not in the voices file; speaking {default_voice}")
+        voice = default_voice
+    try:
+        samples, rate = engine.create(text, voice=voice, speed=float(request.get("speed", 1.0)), lang=lang_for(voice))
+        write_wav(Path(request["output_file"]), samples, rate)
+        return True
+    except Exception as exc:  # one request: answer with the path and no file, keep serving (contract D2)
+        _log(log, f"AD-738g: no audio for {len(text)} chars in {voice}: {type(exc).__name__}: {exc}")
+        return False
+
+
+def serve(engine: Engine, stdin: IO[bytes], stdout: IO[bytes], *, default_voice: str, log: IO[str]) -> int:
+    """Answer request lines until end of input (0), an unreadable line (3) or a missing default voice (2)."""
+    voices = frozenset(engine.get_voices())
+    if default_voice not in voices:
+        _log(log, f"AD-738g: default voice {default_voice!r} is not in the voices file; refusing to start")
+        return EXIT_CANNOT_START
+    _log(log, f"AD-738g: kokoro worker ready ({len(voices)} voices, default {default_voice})")
+    while True:
+        raw = stdin.readline()
+        if not raw:
+            return 0
+        if not raw.strip():
+            continue
+        try:
+            request = read_request(raw)
+        except ValueError as exc:  # JSONDecodeError and UnicodeDecodeError are ValueErrors
+            _log(log, f"AD-738g: unreadable request line; exiting: {exc}")
+            return EXIT_UNREADABLE_LINE
+        speak(engine, voices, default_voice, request, log)
+        stdout.write(request["output_file"].encode("utf-8") + b"\n")
+        stdout.flush()
+
+
+def load_engine(args: argparse.Namespace) -> Engine:
+    """kokoro-onnx on the CPU with ``args.threads`` intra-op threads (measured RTF 0.314 at 4 on a 7950X3D)."""
+    import onnxruntime as ort
+    from kokoro_onnx import Kokoro
+
+    options = ort.SessionOptions()
+    options.intra_op_num_threads = args.threads
+    options.inter_op_num_threads = 1
+    session = ort.InferenceSession(args.model, sess_options=options, providers=["CPUExecutionProvider"])
+    return Kokoro.from_session(session, args.voices)
+
+
+def main(
+    argv: list[str] | None = None,
+    *,
+    engine_factory: Callable[[argparse.Namespace], Engine] = load_engine,
+) -> int:
+    args = build_parser().parse_args(argv)
+    protocol = sys.stdout.buffer
+    log = sys.stderr
+    sys.stdout = sys.stderr  # a library print can never reach the protocol pipe
+    try:
+        engine = engine_factory(args)
+    except Exception as exc:
+        _log(log, f"AD-738g: cannot load the Kokoro model: {type(exc).__name__}: {exc}")
+        return EXIT_CANNOT_START
+    return serve(engine, sys.stdin.buffer, protocol, default_voice=args.default_voice, log=log)
+
+
+def _log(log: IO[str], message: str) -> None:
+    print(message, file=log, flush=True)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+```
+
+### 6.3 `tests/fixtures/fake_kokoro_worker.py` (new, M2)
+
+```python
+"""AD-738g (#1662): the real Kokoro worker loop with a stand-in engine, for tests.
+
+Run exactly as the service runs the real worker: ``python -I <this file> --model M --voices V
+--threads N --default-voice D``. Only the engine is fake: ``scripts/kokoro_worker.py``'s own
+``main`` parses the arguments, moves library prints off stdout, reads each JSON line, picks
+the voice and language, writes the WAV and prints the path. The fake engine has no model, so
+``--model`` names a file where it appends one JSON line per call (text, voice, speed, lang and
+this process's pid). Nothing here needs kokoro-onnx; numpy is a ProbOS dependency.
+"""
+
+from __future__ import annotations
+
+import importlib.util
+import json
+import os
+import sys
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+
+WORKER_PATH = Path(__file__).resolve().parents[2] / "scripts" / "kokoro_worker.py"
+VOICES: tuple[str, ...] = ("af_heart", "af_bella", "bf_emma", "bm_fable", "am_liam")
+RATE = 24000
+
+
+def load_worker() -> Any:
+    """``scripts/kokoro_worker.py`` as a module, loaded by path (``-I`` puts no script directory on ``sys.path``)."""
+    spec = importlib.util.spec_from_file_location("kokoro_worker", WORKER_PATH)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+class FakeEngine:
+    """kokoro-onnx 0.6.1's checks, measured 2026-11-27: an unknown voice, a speed outside [0.5, 2.0]
+    and a text with no phonemes raise ``ValueError``. A voice's audio is 0.05 s per catalogue
+    position (``af_heart`` 0.05 s, ``bm_fable`` 0.2 s), so a WAV's length shows which voice spoke."""
+
+    def __init__(self, record: Path | None = None, voices: tuple[str, ...] = VOICES) -> None:
+        self.record = record
+        self.voices = voices
+        self.calls: list[dict[str, Any]] = []
+
+    def get_voices(self) -> list[str]:
+        return list(self.voices)
+
+    def create(self, text: str, voice: str, speed: float, lang: str) -> tuple[Any, int]:
+        call = {"text": text, "voice": voice, "speed": speed, "lang": lang, "pid": os.getpid()}
+        self.calls.append(call)
+        if self.record is not None:
+            with self.record.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(call) + "\n")
+        if voice not in self.voices:
+            raise ValueError(f"Voice {voice} not found in available voices")
+        if not 0.5 <= speed <= 2.0:
+            raise ValueError(f"Speed should be between 0.5 and 2.0, got {speed}")
+        if not text.strip():
+            raise ValueError(f"Nothing to synthesize, {text!r} produced no phonemes")
+        if text == "CHATTER":
+            print("library chatter on stdout")
+        frames = int(RATE * 0.05 * (1 + self.voices.index(voice)))
+        return np.full(frames, 0.25, dtype=np.float32), RATE
+
+
+if __name__ == "__main__":
+    worker = load_worker()
+    sys.exit(worker.main(engine_factory=lambda args: FakeEngine(Path(args.model))))
+```
+
+### 6.4 `src/probos/audio/tts/kokoro_backend.py` (new, M3)
+
+```python
+"""AD-738g (#1662) S1: Kokoro speech on this machine, from a resident worker process.
+
+The worker (``scripts/kokoro_worker.py``) runs ``kokoro-onnx`` in the operator's venv under
+``tools/kokoro/`` (installed by ``scripts/kokoro-fetch.ps1``; ``/tools/`` is gitignored) and
+speaks Piper's line protocol, so the runtime's ``VoiceSynthesisService`` (BF-918) owns its
+start, restart, timeout and stop. One process serves every voice: the voice and the speed
+travel on each request line.
+
+License posture: kokoro-onnx and onnxruntime are MIT and the Kokoro-82M weights Apache-2.0;
+the phonemizer (GPL-3.0-or-later) and the espeak-ng library it loads (GPL-3.0-or-later) run
+only in that separate process, which receives text, a voice id and a speed and returns a WAV
+file path. Nothing in ProbOS imports them (THIRD_PARTY_LICENSES.md, "License policy").
+
+Tier-2 log-and-degrade: ``synthesize`` returns ``None`` on any failure, and the browser speaks.
+"""
+
+from __future__ import annotations
+
+import logging
+import time
+from typing import get_args
+
+from probos.audio.tts.backends import TTSResult
+from probos.audio.tts.piper_backend import anchor_install_path, resolve_executable_path
+from probos.audio.tts.prosody import resolve_prosody_overrides
+from probos.audio.tts.resident import KokoroWorkerKey, VoiceSynthesisService
+from probos.config import KokoroTTSConfig
+
+logger = logging.getLogger(__name__)
+
+#: The worker script, relative to the ProbOS root (AD-1025 anchoring).
+WORKER_SCRIPT = "scripts/kokoro_worker.py"
+#: The voices the backend sends: the English ids of ``KokoroTTSConfig.voice``'s ``Literal`` (one source).
+KOKORO_VOICES: frozenset[str] = frozenset(get_args(KokoroTTSConfig.model_fields["voice"].annotation))
+#: kokoro-onnx raises ``ValueError`` for a speed outside this range.
+SPEED_MIN = 0.5
+SPEED_MAX = 2.0
+
+
+def kokoro_speed(base: float, emotion: str | None) -> float:
+    """AD-738e-1's per-emotion ``length_scale`` as a Kokoro speed: ``base / length_scale``, clamped."""
+    length_scale = resolve_prosody_overrides(emotion).get("length_scale", 1.0)
+    return min(SPEED_MAX, max(SPEED_MIN, base / length_scale))
+
+
+class KokoroBackend:
+    """Kokoro TTS backend (``tts.backend: kokoro``): a 24 kHz 16-bit mono WAV, or ``None`` to degrade."""
+
+    name: str = "kokoro"
+
+    def __init__(self, config: KokoroTTSConfig, service: VoiceSynthesisService | None = None) -> None:
+        self._config = config
+        # BF-918: the runtime's resident synthesis; without it Kokoro degrades to the browser.
+        self._service = service
+
+    def resolve_voice(self, voice_override: str | None) -> str:
+        """The voice for one call: a catalogue override (the HXI picker, an AD-718a proposal), else ``tts.kokoro.voice``.
+
+        A name the catalogue lacks (a Piper or browser voice name) is ignored. AD-738f (#1868)
+        adds the per-role default between the two.
+        """
+        if voice_override is not None and voice_override in KOKORO_VOICES:
+            return voice_override
+        return self._config.voice
+
+    async def synthesize(
+        self,
+        text: str,
+        emotion: str | None = None,
+        voice_override: str | None = None,
+    ) -> TTSResult | None:
+        """WAV bytes from the resident Kokoro worker, or ``None`` on any failure. NEVER raises."""
+        if not text or not text.strip():
+            return None
+        if self._service is None:
+            logger.warning("AD-738g: no voice synthesis service on this runtime; degrading to browser")
+            return None
+        cfg = self._config
+        python = resolve_executable_path(cfg.python_path)
+        script = anchor_install_path(WORKER_SCRIPT)
+        model = anchor_install_path(cfg.model_path)
+        voices = anchor_install_path(cfg.voices_path)
+        missing = [str(path) for path in (script, model, voices) if not path.is_file()]
+        if python is None:
+            missing.insert(0, str(anchor_install_path(cfg.python_path)))
+        if python is None or missing:
+            logger.warning(
+                "AD-738g: kokoro is not installed (missing: %s); run scripts/kokoro-fetch.ps1 or set "
+                "tts.kokoro.* (relative paths anchor to the ProbOS root); degrading to browser",
+                ", ".join(missing),
+            )
+            return None
+        voice = self.resolve_voice(voice_override)
+        speed = kokoro_speed(cfg.speed, emotion)
+        key = KokoroWorkerKey(
+            python=str(python),
+            script=str(script),
+            model=str(model),
+            voices=str(voices),
+            threads=cfg.threads,
+            default_voice=cfg.voice,
+        )
+        started = time.perf_counter()
+        wav = await self._service.synthesize(key, text, cfg.timeout_seconds, fields={"voice": voice, "speed": speed})
+        logger.info(
+            "AD-738g: kokoro voice=%s speed=%.2f chars=%d synth_ms=%.0f result=%s",
+            voice, speed, len(text), (time.perf_counter() - started) * 1000,
+            "ok" if wav is not None else "degraded",
+        )
+        if wav is None:
+            return None
+        return TTSResult(audio_bytes=wav, mime="audio/wav")
+```
+
+### 6.5 `src/probos/audio/tts/piper_backend.py` (M3)
+
+**P5.1** SEARCH:
+```python
+    location regardless of the process CWD. Absolute as-is; relative under
+    ``_probos_root()``; NEVER the CWD. NEVER raises."""
+    return _anchor_path(voices_dir)
+```
+REPLACE:
+```python
+    location regardless of the process CWD. Absolute as-is; relative under
+    ``_probos_root()``; NEVER the CWD. NEVER raises."""
+    return _anchor_path(voices_dir)
+
+
+def anchor_install_path(configured: str) -> Path:
+    """AD-738g: ``_anchor_path`` for the sibling Kokoro backend (AD-1025: absolute as-is,
+    relative under ``_probos_root()``, never the CWD). NEVER raises."""
+    return _anchor_path(configured)
+
+
+def resolve_executable_path(configured: str) -> Path | None:
+    """AD-738g: ``_resolve_binary_path`` for the sibling Kokoro backend (anchored; ``.exe``
+    appended on Windows when the literal path is missing). ``None`` when not found. NEVER raises."""
+    return _resolve_binary_path(configured)
+```
+
+### 6.6 `src/probos/config_models/experience.py` (M3)
+
+**P6.1** SEARCH:
+```python
+class LipSyncConfig(BaseModel):
+```
+REPLACE:
+```python
+#: AD-738g (#1662): the English Kokoro-82M voices (hexgrad/Kokoro-82M VOICES.md, read 2026-11-27):
+#: 20 American English (``a?_``) and 8 British English (``b?_``). The worker derives the
+#: language from the prefix, so a non-English voice is not offered.
+KokoroVoiceId = Literal[
+    "af_heart", "af_alloy", "af_aoede", "af_bella", "af_jessica", "af_kore", "af_nicole",
+    "af_nova", "af_river", "af_sarah", "af_sky",
+    "am_adam", "am_echo", "am_eric", "am_fenrir", "am_liam", "am_michael", "am_onyx",
+    "am_puck", "am_santa",
+    "bf_alice", "bf_emma", "bf_isabella", "bf_lily",
+    "bm_daniel", "bm_fable", "bm_george", "bm_lewis",
+]
+
+
+class KokoroTTSConfig(BaseModel):
+    """AD-738g (#1662) S1 -- the local Kokoro backend, read when ``tts.backend`` is ``kokoro``.
+
+    The operator installs the runtime and the model with ``scripts/kokoro-fetch.ps1``
+    (``tools/kokoro/``, gitignored). Relative paths anchor to the ProbOS install root, never
+    the process CWD (AD-1025). Kokoro runs on the CPU in one resident worker process; any
+    failure degrades to the browser voice.
+    """
+
+    python_path: str = "tools/kokoro/venv/Scripts/python"
+    """The operator venv's interpreter (``.exe`` appended on Windows). On Linux or macOS set
+    ``tools/kokoro/venv/bin/python``."""
+
+    model_path: str = "tools/kokoro/kokoro-v1.0.onnx"
+    """The Kokoro-82M ONNX model (Apache-2.0 weights; release ``model-files-v1.0``)."""
+
+    voices_path: str = "tools/kokoro/voices-v1.0.bin"
+    """The voices file of the same release."""
+
+    voice: KokoroVoiceId = "af_heart"
+    """The ship's voice, and the worker's default when a request's voice is missing from the
+    voices file. A per-call ``voice_name`` that is one of these ids overrides it."""
+
+    speed: float = Field(default=1.0, ge=0.5, le=2.0)
+    """Speech rate (kokoro-onnx accepts 0.5 to 2.0). The AD-738e-1 per-emotion ``length_scale``
+    divides it, clamped to the same range."""
+
+    threads: int = Field(default=4, ge=1, le=16)
+    """ONNX Runtime intra-op threads. Measured on a Ryzen 9 7950X3D: real-time factor 0.314
+    at 4, 0.23 at 8, 0.181 at 16. 4 leaves the cores to the vessel."""
+
+    timeout_seconds: float = Field(default=30.0, gt=0.0)
+    """Per-sentence timeout, counted from when the worker takes the request. A timeout kills
+    the worker, and the next sentence reloads the model (about 3.2 s cold)."""
+
+
+class LipSyncConfig(BaseModel):
+```
+
+**P6.2** SEARCH:
+```python
+    backend: Literal["browser", "piper"] = "browser"
+    """``browser``: server returns ``{"backend": "disabled"}``, browser
+    uses SpeechSynthesisUtterance (default — zero behaviour change for
+    operators who don't install Piper). ``piper``: subprocess wrapper
+    around the piper binary."""
+```
+REPLACE:
+```python
+    backend: Literal["browser", "piper", "kokoro"] = "browser"
+    """``browser``: server returns ``{"backend": "disabled"}``, browser
+    uses SpeechSynthesisUtterance (default — zero behaviour change for
+    operators who don't install Piper). ``piper``: subprocess wrapper
+    around the piper binary. ``kokoro`` (AD-738g): a resident Kokoro
+    worker on this machine's CPU, configured under ``kokoro``."""
+```
+
+**P6.3** SEARCH:
+```python
+    When ``True`` AND the backend is ``piper`` AND a reply contains more
+```
+REPLACE:
+```python
+    When ``True`` AND the backend is a server backend (``piper`` or
+    ``kokoro``; AD-738g recommends it with ``kokoro``) AND a reply contains more
+```
+
+**P6.4** SEARCH:
+```python
+    ``GET /api/avatars/tts/status`` so the browser can read it via its
+    existing one-time status probe."""
+
+
+class WakeWordConfig(BaseModel):
+```
+REPLACE:
+```python
+    ``GET /api/avatars/tts/status`` so the browser can read it via its
+    existing one-time status probe."""
+
+    kokoro: KokoroTTSConfig = Field(default_factory=KokoroTTSConfig)
+    """AD-738g (#1662): the local Kokoro backend's settings, read when
+    ``backend`` is ``kokoro``."""
+
+
+class WakeWordConfig(BaseModel):
+```
+
+### 6.7 `src/probos/config_models/__init__.py` (M3)
+
+**P7.1** SEARCH:
+```python
+    KnowledgeBrowserConfig,
+    LipSyncConfig,
+    OnboardingConfig,
+```
+REPLACE:
+```python
+    KnowledgeBrowserConfig,
+    KokoroTTSConfig,
+    LipSyncConfig,
+    OnboardingConfig,
+```
+
+**P7.2** SEARCH:
+```python
+    "KnowledgeLoadingConfig",
+    "LLMRateConfig",
+```
+REPLACE:
+```python
+    "KnowledgeLoadingConfig",
+    "KokoroTTSConfig",
+    "LLMRateConfig",
+```
+(`__all__` is sorted and must equal the sorted imports: `tests/test_ad1270e2e_operations_models.py`:615-627.)
+
+### 6.8 `src/probos/config.py` (M3)
+
+**P8.1** SEARCH:
+```python
+    KnowledgeBrowserConfig,
+    LipSyncConfig,
+    OnboardingConfig,
+```
+REPLACE:
+```python
+    KnowledgeBrowserConfig,
+    KokoroTTSConfig,
+    LipSyncConfig,
+    OnboardingConfig,
+```
+
+### 6.9 Regenerations and the two config tests (M3, after 6.6 to 6.8)
+
+Run, from the worktree root, in this order:
+```text
+d:/ProbOS/.venv/Scripts/python.exe scripts/check_config_facade.py --update-baseline
+d:/ProbOS/.venv/Scripts/python.exe scripts/gen_config_reference.py
+d:/ProbOS/.venv/Scripts/python.exe scripts/check_config_facade.py --check
+d:/ProbOS/.venv/Scripts/python.exe scripts/gen_config_reference.py --check
+d:/ProbOS/.venv/Scripts/python.exe scripts/check_config_profiles.py --check
+```
+Expected counts (precedent: AD-1346 M3c, commit `0c859b90`, one model and two fields): one owned model and eight fields (`KokoroTTSConfig`'s seven and `TTSConfig.kokoro`): `names=311, owned=298, incidental=13, models=230, fields=1885`. If the checker prints other numbers, stop and report. `check_config_profiles.py --check` must pass unchanged (no new `bool` field).
+
+**P9.1** `tests/test_ad1270e1_config_facade.py`. SEARCH:
+```python
+    assert counts["public_names"] == 310  # #1414 A3: drop_null_sections
+    assert counts["owned"] == 297  # #1414 A3: drop_null_sections is owned
+    assert counts["incidental"] == 13
+    assert counts["own_models"] == 228  # AD-1355 S1 (#1700): HolodeckBirthChamberConfig
+```
+REPLACE:
+```python
+    # AD-738g S1 (#1662) adds the owned model KokoroTTSConfig: public_names 310 -> 311, owned 297 -> 298,
+    # own_models 228 -> 229, and the check prints names=311.
+    assert counts["public_names"] == 311  # AD-738g S1 (#1662): KokoroTTSConfig
+    assert counts["owned"] == 298  # AD-738g S1 (#1662): KokoroTTSConfig is owned
+    assert counts["incidental"] == 13
+    assert counts["own_models"] == 229  # AD-738g S1 (#1662): KokoroTTSConfig
+```
+
+**P9.2** same file. SEARCH:
+```python
+    # AD-1355 S1 (#1700) removes HolodeckBirthChamberConfig's eight fields and SystemConfig.holodeck_birth_chamber (1886 -> 1877).
+    assert counts["field_definitions"] == 1877  # AD-1206 intentionally adds github_repository.
+```
+REPLACE:
+```python
+    # AD-1355 S1 (#1700) removes HolodeckBirthChamberConfig's eight fields and SystemConfig.holodeck_birth_chamber (1886 -> 1877).
+    # AD-738g S1 (#1662) adds KokoroTTSConfig's seven fields and TTSConfig.kokoro (1877 -> 1885).
+    assert counts["field_definitions"] == 1885  # AD-1206 intentionally adds github_repository.
+```
+
+**P9.3** same file. SEARCH:
+```python
+    assert len(baseline["names"]) == 310  # #1414 A3: drop_null_sections (309 -> 310)
+    assert len(baseline["models"]) == 229  # AD-1355 S1 (#1700): HolodeckBirthChamberConfig (230 -> 229)
+```
+REPLACE:
+```python
+    # AD-738g S1 (#1662) adds KokoroTTSConfig (310 -> 311, 229 -> 230).
+    assert len(baseline["names"]) == 311  # AD-738g S1 (#1662): KokoroTTSConfig (310 -> 311)
+    assert len(baseline["models"]) == 230  # AD-738g S1 (#1662): KokoroTTSConfig (229 -> 230)
+```
+
+**P9.4** `tests/test_ad1270e2c_experience_models.py`. SEARCH:
+```python
+                     'sentence_silence': 0.35,
+                     'sentence_pipelining_enabled': False},
+```
+REPLACE:
+```python
+                     'sentence_silence': 0.35,
+                     'sentence_pipelining_enabled': False,
+                     # AD-738g S1 (#1662) adds the nested Kokoro section after the
+                     # pre-move fields; these are KokoroTTSConfig's own defaults.
+                     'kokoro': {   'python_path': 'tools/kokoro/venv/Scripts/python',
+                                   'model_path': 'tools/kokoro/kokoro-v1.0.onnx',
+                                   'voices_path': 'tools/kokoro/voices-v1.0.bin',
+                                   'voice': 'af_heart',
+                                   'speed': 1.0,
+                                   'threads': 4,
+                                   'timeout_seconds': 30.0}},
+```
+
+**P9.5** same file. SEARCH:
+```python
+    [("TTSConfig", "piper"), ("LipSyncConfig", "rhubarb")],
+```
+REPLACE:
+```python
+    # AD-738g S1 (#1662): "kokoro" joins the TTS backend Literal; "espeak" stays rejected below.
+    [("TTSConfig", "piper"), ("TTSConfig", "kokoro"), ("LipSyncConfig", "rhubarb")],
+```
+
+### 6.10 `src/probos/audio/tts/__init__.py` and `src/probos/settings/section_registry.py` (M3)
+
+**P10.1** `audio/tts/__init__.py`. SEARCH:
+```python
+from probos.audio.tts.backends import TTSBackend, TTSResult
+from probos.audio.tts.null_backend import NullBackend
+from probos.audio.tts.piper_backend import PiperBackend
+```
+REPLACE:
+```python
+from probos.audio.tts.backends import TTSBackend, TTSResult
+from probos.audio.tts.kokoro_backend import KokoroBackend
+from probos.audio.tts.null_backend import NullBackend
+from probos.audio.tts.piper_backend import PiperBackend
+```
+
+**P10.2** SEARCH:
+```python
+    if backend_name == "browser":
+        return NullBackend()
+```
+REPLACE:
+```python
+    if backend_name == "kokoro":
+        # AD-738g (#1662): a resident Kokoro worker on this machine's CPU.
+        return KokoroBackend(config.kokoro, service=service)
+    if backend_name == "browser":
+        return NullBackend()
+```
+
+**P10.3** SEARCH:
+```python
+__all__ = ["TTSBackend", "TTSResult", "NullBackend", "PiperBackend", "select_backend"]
+```
+REPLACE:
+```python
+__all__ = ["TTSBackend", "TTSResult", "NullBackend", "PiperBackend", "KokoroBackend", "select_backend"]
+```
+
+**P10.4** `settings/section_registry.py`. SEARCH:
+```python
+                "tts.backend",
+                "TTS backend",
+                "enum",
+                enum_values=("browser", "piper"),
+```
+REPLACE:
+```python
+                "tts.backend",
+                "TTS backend",
+                "enum",
+                enum_values=("browser", "piper", "kokoro"),
+```
+
+### 6.11 `src/probos/routers/avatars.py` and `ui/src/audio/voice.ts` (M3)
+
+**P11.1** `routers/avatars.py` (docstring only). SEARCH:
+```python
+    The browser caches this response in module-level state in ``voice.ts``
+    and skips ``POST /api/avatars/tts`` entirely when ``backend != "piper"``.
+```
+REPLACE:
+```python
+    The browser caches this response in module-level state in ``voice.ts``
+    and skips ``POST /api/avatars/tts`` entirely when ``backend == "browser"``
+    (AD-738g: ``piper`` and ``kokoro`` both take the server path).
+```
+
+**P11.2** `ui/src/audio/voice.ts`. SEARCH:
+```ts
+  // Fast synchronous path: if fetch is unavailable OR the cached probe
+  // already says "not piper", run the browser fallback synchronously.
+```
+REPLACE:
+```ts
+  // Fast synchronous path: if fetch is unavailable OR the cached probe
+  // already says "browser" (AD-738g: any other backend is a server one), run
+  // the browser fallback synchronously.
+```
+
+**P11.3** SEARCH:
+```ts
+  if (_ttsStatus !== null && (!_ttsStatus.enabled || _ttsStatus.backend !== 'piper')) {
+```
+REPLACE:
+```ts
+  if (_ttsStatus !== null && (!_ttsStatus.enabled || _ttsStatus.backend === 'browser')) {
+```
+
+**P11.4** SEARCH:
+```ts
+    // probe once, cache, and skip the POST entirely when backend != "piper".
+```
+REPLACE:
+```ts
+    // probe once, cache, and skip the POST entirely when backend == "browser"
+    // (AD-738g: piper and kokoro both take the server path, as the server's gate does).
+```
+
+**P11.5** SEARCH:
+```ts
+    if (status === null || !status.enabled || status.backend !== 'piper') {
+```
+REPLACE:
+```ts
+    if (status === null || !status.enabled || status.backend === 'browser') {
+```
+
+### 6.12 `scripts/kokoro-fetch.ps1` (new, M4)
+
+```powershell
+# scripts/kokoro-fetch.ps1
+# AD-738g (#1662) S1: install the local Kokoro voice into tools/kokoro/ (gitignored).
+#
+#   1. A Python 3.12 venv at tools/kokoro/venv made by uv, holding kokoro-onnx==0.6.1
+#      (MIT) and what it pulls: onnxruntime (MIT), numpy, phonemizer (GPL-3.0-or-later)
+#      and espeakng-loader (bundles espeak-ng, GPL-3.0-or-later). This venv is separate
+#      from ProbOS's and cannot import probos; ProbOS never imports these packages.
+#   2. The Kokoro-82M model files (Apache-2.0 weights) from the kokoro-onnx release
+#      model-files-v1.0, each checked for its size and SHA-256 (the release publishes no
+#      digests; the pins are the LFS ids of the byte-identical files on
+#      huggingface.co/fastrtc/kokoro-onnx, and matched a download on 2026-11-27).
+#   3. One test sentence spoken through scripts/kokoro_worker.py, the worker ProbOS runs.
+#
+# Usage (from anywhere):
+#   powershell -ExecutionPolicy Bypass -File scripts\kokoro-fetch.ps1
+#   powershell -ExecutionPolicy Bypass -File scripts\kokoro-fetch.ps1 -Force   # rebuild the venv, re-download
+#
+param(
+    [switch]$Force,
+    [string]$DestDir = "tools/kokoro"
+)
+
+$ErrorActionPreference = "Stop"
+$ProgressPreference = "SilentlyContinue"  # Invoke-WebRequest is many times slower with its progress bar
+
+$Root = Split-Path -Parent $PSScriptRoot
+if (-not [System.IO.Path]::IsPathRooted($DestDir)) { $DestDir = Join-Path $Root $DestDir }
+$Pin = "kokoro-onnx==0.6.1"
+$Base = "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0"
+$Files = @(
+    @{ name = "kokoro-v1.0.onnx"; size = 325532387; sha256 = "7d5df8ecf7d4b1878015a32686053fd0eebe2bc377234608764cc0ef3636a6c5" }
+    @{ name = "voices-v1.0.bin";  size = 28214398;  sha256 = "bca610b8308e8d99f32e6fe4197e7ec01679264efed0cac9140fe9c29f1fbf7d" }
+)
+
+if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
+    throw "uv is required (https://docs.astral.sh/uv/). Install it, then run this script again."
+}
+New-Item -ItemType Directory -Force -Path $DestDir | Out-Null
+
+# 1. The venv and the pinned runtime.
+$Venv = Join-Path $DestDir "venv"
+$Python = Join-Path $Venv "Scripts\python.exe"
+if ($Force -and (Test-Path $Venv)) { Remove-Item -Recurse -Force $Venv }
+if (-not (Test-Path $Python)) {
+    & uv venv --python 3.12 $Venv
+    if ($LASTEXITCODE -ne 0) { throw "uv venv failed (exit $LASTEXITCODE)" }
+}
+& uv pip install --python $Python $Pin
+if ($LASTEXITCODE -ne 0) { throw "uv pip install $Pin failed (exit $LASTEXITCODE)" }
+
+# 2. The model files, size- and hash-checked; a mismatch deletes the download and stops.
+foreach ($f in $Files) {
+    $target = Join-Path $DestDir $f.name
+    if (-not $Force -and (Test-Path $target) -and ((Get-FileHash $target -Algorithm SHA256).Hash.ToLower() -eq $f.sha256)) {
+        Write-Host "[skip] $($f.name) (present, SHA-256 verified)" -ForegroundColor DarkGray
+        continue
+    }
+    $part = "$target.part"
+    Write-Host "[get ] $($f.name) ..." -ForegroundColor Cyan
+    Invoke-WebRequest -Uri "$Base/$($f.name)" -OutFile $part -UseBasicParsing
+    $size = (Get-Item $part).Length
+    $actual = (Get-FileHash $part -Algorithm SHA256).Hash.ToLower()
+    if ($size -ne $f.size -or $actual -ne $f.sha256) {
+        Remove-Item $part -Force
+        throw "Mismatch for $($f.name): expected $($f.size) bytes, SHA-256 $($f.sha256); got $size bytes, $actual. File removed."
+    }
+    Move-Item -Force $part $target
+    Write-Host "[ ok ] $($f.name) (SHA-256 verified: $actual)" -ForegroundColor Green
+}
+
+# 3. The boundary and one spoken line through the real worker.
+# Windows PowerShell 5.1 turns a redirected native stderr line into an error record, which
+# "Stop" would make terminating; the expected ImportError traceback must not end the script.
+$Previous = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
+& $Python -I -c "import probos" 2>$null
+$Importable = ($LASTEXITCODE -eq 0)
+$ErrorActionPreference = $Previous
+if ($Importable) { throw "The Kokoro venv can import probos; it must not (licence boundary)." }
+Write-Host "[ ok ] the Kokoro venv cannot import probos" -ForegroundColor Green
+
+$Model = Join-Path $DestDir "kokoro-v1.0.onnx"
+$Voices = Join-Path $DestDir "voices-v1.0.bin"
+$Worker = Join-Path $Root "scripts\kokoro_worker.py"
+$Probe = Join-Path $DestDir "fetch-check.wav"
+if (Test-Path $Probe) { Remove-Item $Probe -Force }
+$Line = '{"text": "Kokoro is ready, Captain.", "output_file": ' + (ConvertTo-Json $Probe) + ', "voice": "af_heart", "speed": 1.0}'
+$Answer = $Line | & $Python -I $Worker --model $Model --voices $Voices --threads 4 --default-voice af_heart
+if ($LASTEXITCODE -ne 0 -or -not (Test-Path $Probe) -or "$Answer".Trim() -ne $Probe) {
+    throw "The Kokoro worker did not speak the test line (exit $LASTEXITCODE, answer '$Answer'); its messages are above."
+}
+$Bytes = (Get-Item $Probe).Length
+Remove-Item $Probe -Force
+Write-Host "[ ok ] the Kokoro worker spoke the test line ($Bytes bytes of 24 kHz WAV)" -ForegroundColor Green
+Write-Host ""
+Write-Host "Kokoro is installed at: $DestDir" -ForegroundColor White
+Write-Host "Set tts.backend: kokoro and tts.sentence_pipelining_enabled: true in config/system.yaml, then restart." -ForegroundColor White
+```
+
+### 6.13 `THIRD_PARTY_LICENSES.md` (M4)
+
+Append at the end of the file (after the `## openWakeWord (AD-705c)` section, line 167):
+
+```markdown
+
+## Kokoro speech: kokoro-onnx, Kokoro-82M, and its phonemizer (AD-738g)
+
+- Projects: <https://github.com/thewh1teagle/kokoro-onnx> (kokoro-onnx 0.6.1, MIT), <https://huggingface.co/hexgrad/Kokoro-82M> (weights, Apache-2.0), <https://github.com/microsoft/onnxruntime> (MIT), <https://github.com/bootphon/phonemizer> (phonemizer 3.6.0, GPL-3.0-or-later per its package metadata), espeak-ng (GPL-3.0-or-later; bundled as `espeak-ng.dll` and `espeak-ng-data` by `espeakng-loader` 0.2.4, whose wheel ships no licence file).
+- Used by: `scripts/kokoro_worker.py`, a ProbOS-authored worker that runs in a separate process. `src/probos/audio/tts/kokoro_backend.py` starts it through the resident voice service (`src/probos/audio/tts/resident.py`) and exchanges only text, a voice id and a speed in, and a WAV file path out (one JSON line each way).
+- Installation: **not** in `pyproject.toml`. The operator runs `scripts/kokoro-fetch.ps1`, which makes a separate venv at `tools/kokoro/venv` (gitignored under `/tools/`) with `uv pip install kokoro-onnx==0.6.1`, and downloads `kokoro-v1.0.onnx` (325,532,387 B) and `voices-v1.0.bin` (28,214,398 B) from the kokoro-onnx release `model-files-v1.0`, SHA-256 pinned.
+- License posture (policy above): the GPL components are installed by the operator, run only in that separate process and are never imported into the ProbOS process, vendored or committed. The worker runs under `python -I`, so it cannot import `probos` (the install script checks it), and the ProbOS venv does not contain these packages. The boundary is a simple request/response exchange. The weights are Apache-2.0.
+```
+
+### 6.14 `docs/development/roadmap.md` and `docs/research/reference-projects.md` (M4)
+
+**P14.1** `roadmap.md` (line 827; the em dash is existing text). SEARCH:
+```markdown
+| AD-738g | Kokoro speech backend, local or LAN Mac, timing-derived lip-sync (Kokoro Apache 2.0 behind the TTSBackend Protocol; StyleTTS2 rejected as a separate engine) — renumbered from AD-738b (Wave 158); PAUSED | [#1662](https://github.com/seangalliher/ProbOS/issues/1662) | 4 |
+```
+REPLACE:
+```markdown
+| AD-738g | Kokoro speech backend, local or LAN Mac, timing-derived lip-sync (Kokoro Apache 2.0 behind the TTSBackend Protocol; StyleTTS2 rejected as a separate engine) — renumbered from AD-738b (Wave 158) | [#1662](https://github.com/seangalliher/ProbOS/issues/1662) | 4 |
+```
+(Row 826's issue column is the AD-738f contract's edit, not this one.)
+
+**P14.2** `reference-projects.md`. SEARCH:
+```markdown
+| Kokoro / misaki / HeadTTS / mlx-audio | 2026-10-25 | checked | AD-738g (#1662) Prior Art |
+```
+REPLACE:
+```markdown
+| Kokoro / misaki / HeadTTS / mlx-audio | 2026-11-27 | checked | AD-738g (#1662) Prior Art; S1 contract `prompts/ad-738g-s1-local-kokoro-voice.md`: kokoro-onnx 0.6.1 and its dependencies (phonemizer GPL-3; espeakng-loader bundles espeak-ng with no licence file), model-files-v1.0 hashes from the Hugging Face LFS ids, and `kokoro-v1.0.onnx` has no `duration` output (no synthesizer timings) |
+```
+
+### 6.15 `tests/test_ad738g_kokoro_voice.py` (new; R1-R4 in M1, W1-W8 and R5-R7 in M2, the rest in M3)
+
+The Builder writes the file in the order below, adding each group in its milestone. Every case is `async` with `@pytest.mark.asyncio` where it awaits (the style of `tests/test_bf918_tts_latency.py`). No assertion reads a clock. Shared code, at the top of the file:
+
+```python
+"""AD-738g (#1662) S1: a local Kokoro voice behind the TTS backend seam.
+
+Real ``VoiceSynthesisService``, ``KokoroBackend``, routes, store and config. The worker
+loop is the real ``scripts/kokoro_worker.py``; only its engine is a stand-in
+(``tests/fixtures/fake_kokoro_worker.py``), run as a real ``python -I`` subprocess where a
+case says so. Nothing here needs kokoro-onnx. No assertion reads a clock.
+"""
+
+from __future__ import annotations
+
+import ast
+import hashlib
+import io
+import json
+import logging
+import struct
+import sys
+import wave
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+from fastapi import FastAPI
+from httpx import ASGITransport, AsyncClient
+
+from probos.audio.tts import KokoroBackend, PiperBackend, TTSResult, select_backend
+from probos.audio.tts import kokoro_backend, resident
+from probos.audio.tts.kokoro_backend import KOKORO_VOICES, kokoro_speed
+from probos.audio.tts.resident import KokoroWorkerKey, PiperWorkerKey, VoiceSynthesisService
+from probos.config import AttachmentsConfig, KokoroTTSConfig, LipSyncConfig, TTSConfig
+from probos.execution.command_env import trusted_command_env
+from probos.routers import avatars as avatars_router_mod
+from probos.routers import chat as chat_router_mod
+from probos.routers.deps import get_runtime
+from probos.settings.section_registry import get_section
+from tests.fixtures.fake_kokoro_worker import FakeEngine, load_worker
+from tests.fixtures.fake_piper import FakePiperLauncher
+
+_REPO = Path(__file__).resolve().parents[1]
+FAKE_WORKER = _REPO / "tests" / "fixtures" / "fake_kokoro_worker.py"
+_WAV = b"RIFF\x24\x00\x00\x00WAVEfmt " + b"\x00" * 32
+_FIELDS = {"voice": "bf_emma", "speed": 1.0}
+worker = load_worker()
+
+
+def _piper_key() -> PiperWorkerKey:
+    return PiperWorkerKey(binary="piper", model="m.onnx", noise_scale=0.85, length_scale=1.0, noise_w=1.0, sentence_silence=0.35)
+
+
+def _kokoro_key() -> KokoroWorkerKey:
+    return KokoroWorkerKey(python="py", script="w.py", model="m.onnx", voices="v.bin", threads=4, default_voice="af_heart")
+
+
+def _line(request: dict) -> bytes:
+    return json.dumps(request).encode("ascii") + b"\n"
+
+
+def _wav(data: bytes) -> tuple[int, int, int, bytes]:
+    with wave.open(io.BytesIO(data), "rb") as handle:
+        return handle.getnchannels(), handle.getsampwidth(), handle.getframerate(), handle.readframes(handle.getnframes())
+
+
+def _real_key(tmp_path: Path, default_voice: str = "af_heart") -> tuple[KokoroWorkerKey, Path]:
+    """A key that runs the real worker loop with the fake engine; the engine logs its calls to ``record``."""
+    record = tmp_path / "engine-calls.jsonl"
+    record.write_text("", encoding="utf-8")
+    voices = tmp_path / "voices.bin"
+    voices.write_bytes(b"")
+    key = KokoroWorkerKey(
+        python=sys.executable, script=str(FAKE_WORKER), model=str(record), voices=str(voices),
+        threads=1, default_voice=default_voice,
+    )
+    return key, record
+
+
+def _calls(record: Path) -> list[dict]:
+    return [json.loads(line) for line in record.read_text(encoding="utf-8").splitlines() if line]
+
+
+@pytest.fixture
+def launcher(monkeypatch: pytest.MonkeyPatch):
+    def _install(*modes: str):
+        fake = FakePiperLauncher(*modes, wav=_WAV)
+        monkeypatch.setattr(resident.subprocess, "Popen", fake)
+        return fake
+    return _install
+
+
+@pytest.fixture
+def service():
+    svc = VoiceSynthesisService()
+    yield svc
+    svc.close()
+
+
+class _RecordingService:
+    """Stands in for the service where a case asks only what the backend sends."""
+
+    def __init__(self, wav: bytes | None = b"RIFF") -> None:
+        self.wav = wav
+        self.calls: list[tuple] = []
+
+    async def synthesize(self, key, text, timeout, *, fields=None):
+        self.calls.append((key, text, timeout, dict(fields or {})))
+        return self.wav
+
+
+def _installed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, **overrides) -> KokoroTTSConfig:
+    model = tmp_path / "model.onnx"
+    model.write_bytes(b"\x00")
+    voices = tmp_path / "voices.bin"
+    voices.write_bytes(b"\x00")
+    monkeypatch.setattr(kokoro_backend, "WORKER_SCRIPT", str(FAKE_WORKER))
+    values = {"python_path": sys.executable, "model_path": str(model), "voices_path": str(voices)}
+    values.update(overrides)
+    return KokoroTTSConfig(**values)
+```
+
+Named cases and what each asserts (the Builder writes the bodies; each assertion listed is required):
+
+**Resident service (M1; `launcher` and `service` fixtures)**
+- R1 `test_r1_a_piper_line_without_fields_has_exactly_text_and_output_file`: `launcher("ok")`; `await service.synthesize(_piper_key(), "Hello\nthere", 5.0) == _WAV`; the fake's first request has `list(request) == ["text", "output_file"]` and `request["text"] == "Hello there"`.
+- R2 `test_r2_fields_follow_the_line_and_never_replace_text_or_output_file`: `launcher("ok")`; `synthesize(_kokoro_key(), "Hi.", 5.0, fields={"text": "evil", "output_file": "x", "voice": "bf_emma", "speed": 1.25})`; the request has `list(request) == ["text", "output_file", "voice", "speed"]`, `text == "Hi."`, `output_file != "x"`, `voice == "bf_emma"`, `speed == 1.25`.
+- R3 `test_r3_a_kokoro_worker_that_answers_without_audio_stays_resident`: `launcher("empty")`; two `synthesize(_kokoro_key(), "Hi.", 5.0, fields=_FIELDS)` both return `None`; `len(fake.launched) == 1`, `fake.launched[0].returncode is None`, `service.resident_count == 1`; WARNING text contains `kokoro produced 0 bytes`. (Piper's opposite stays pinned by `test_bf918_tts_latency.py::test_an_empty_wav_degrades`.)
+- R4 `test_r4_a_kokoro_key_launches_the_isolated_worker_with_the_trusted_environment`: `launcher("ok")`; one synthesize; `fake.launched[0].args == ["py", "-I", "w.py", "--model", "m.onnx", "--voices", "v.bin", "--threads", "4", "--default-voice", "af_heart"]`; `fake.launched[0].kwargs["env"] == trusted_command_env()`; INFO text contains `BF-918: resident kokoro started (voice=m)`.
+
+**Worker loop in process (M2; `worker = load_worker()`)**
+- W1 `test_w1_the_worker_writes_a_24khz_mono_16bit_wav_and_prints_its_path`: an engine (a small class in the test) whose `get_voices()` is `["af_heart"]` and whose `create` returns `(numpy.array([0.5, 1.5, -1.5], dtype=numpy.float32), 24000)`; `serve(engine, io.BytesIO(_line({"text": "Hi.", "output_file": str(out), "voice": "af_heart", "speed": 1.0})), stdout, default_voice="af_heart", log=io.StringIO()) == 0`; `stdout.getvalue() == str(out).encode("utf-8") + b"\n"`; `_wav(out.read_bytes())[:3] == (1, 2, 24000)` and `struct.unpack("<3h", frames) == (16383, 32767, -32767)`; no `out.name + ".part"` file remains.
+- W2 `test_w2_the_language_follows_the_voice_prefix`: `FakeEngine()`; two lines for `bf_emma` and `af_heart`; `[c["lang"] for c in engine.calls] == ["en-gb", "en-us"]`.
+- W3 `test_w3_a_voice_the_file_lacks_is_spoken_in_the_default_voice`: a line with `"voice": "zz_nobody"`; `engine.calls[0]["voice"] == "af_heart"`; the file is written; the log contains `'zz_nobody' is not in the voices file`.
+- W4 `test_w4_an_engine_error_is_answered_with_the_path_and_no_file_and_the_loop_continues`: lines `{"text": "   ", output_file a}` then `{"text": "Hello.", output_file b}`; return 0; stdout holds both paths in order; `a` does not exist, `b` does; the log contains `no audio for 3 chars`.
+- W5 `test_w5_a_default_voice_the_file_lacks_refuses_to_start`: `FakeEngine(voices=("af_bella",))`, `default_voice="af_heart"`, one valid line; return `2`; stdout empty; `engine.calls == []`; the log contains `refusing to start`.
+- W6 `test_w6_an_unreadable_line_ends_the_worker`: input `b"not json\n"` followed by a valid line; return `3`; stdout empty; `engine.calls == []`.
+- W7 `test_w7_main_keeps_library_prints_off_the_protocol_pipe`: monkeypatch `sys.stdin` to `io.TextIOWrapper(io.BytesIO(_line({"text": "CHATTER", "output_file": str(out), "voice": "af_heart"})), encoding="ascii")`, `sys.stdout` to `io.TextIOWrapper(io.BytesIO(), encoding="utf-8")` (keep a reference) and `sys.stderr` to `io.StringIO()`; `worker.main(["--model", "m", "--voices", "v", "--default-voice", "af_heart"], engine_factory=lambda args: FakeEngine()) == 0`; the stdout wrapper's `.buffer.getvalue() == str(out).encode("utf-8") + b"\n"`; the stderr text contains `library chatter on stdout`.
+- W8 `test_w8_the_worker_imports_only_the_stdlib_and_numpy_at_module_level_and_src_never_imports_the_engine`: `ast.parse` of `scripts/kokoro_worker.py`; the module-level `Import`/`ImportFrom` top-level names are a subset of `{"__future__", "argparse", "json", "os", "sys", "wave", "pathlib", "typing", "numpy"}`; `kokoro_onnx` and `onnxruntime` are imported only inside `load_engine`; and no `.py` file under `src/probos` contains an `import`/`from` of `kokoro_onnx`, `onnxruntime`, `phonemizer` or `espeakng_loader` (walk with `Path.rglob("*.py")` and `ast`).
+
+**Real subprocess through the service (M2; `service` fixture, no `launcher`)**
+- R5 `test_r5_the_real_worker_loop_answers_the_resident_service_and_stays_one_process`: `key, record = _real_key(tmp_path)`; `first = await service.synthesize(key, "Good evening, Captain.", 30.0, fields={"voice": "bf_emma", "speed": 1.0})`; `second = ... "Status report.", fields={"voice": "am_liam", "speed": 0.9}`; both `_wav(...)[:3] == (1, 2, 24000)`; `[(c["text"], c["voice"], c["lang"], c["speed"]) for c in _calls(record)] == [("Good evening, Captain.", "bf_emma", "en-gb", 1.0), ("Status report.", "am_liam", "en-us", 0.9)]`; the two `pid` values are equal.
+- R6 `test_r6_a_sentence_with_no_phonemes_degrades_and_the_process_stays`: `synthesize(key, "   ", 30.0, fields=_FIELDS) is None`; then `synthesize(key, "Hello.", 30.0, fields=_FIELDS)` returns WAV bytes; `_calls(record)` has 2 entries with equal `pid`.
+- R7 `test_r7_a_worker_that_refuses_to_start_degrades`: `_real_key(tmp_path, default_voice="zz_nobody")`; `synthesize(...)` is `None`; `_calls(record) == []`; a WARNING whose text contains `kokoro` was logged (exit or broken pipe: the worker may exit before or after the line is written).
+
+**Backend (M3; `_RecordingService` and `_installed`)**
+- B1 `test_b1_the_backend_sends_the_configured_voice_and_speed_and_logs_the_sentence`: `caplog.set_level(logging.INFO)`; `KokoroBackend(cfg, service=svc).synthesize("Hello.")` returns `TTSResult(audio_bytes=b"RIFF", mime="audio/wav")`; the one call's key `== KokoroWorkerKey(python=str(Path(sys.executable).resolve()), script=str(FAKE_WORKER.resolve()), model=<model resolved>, voices=<voices resolved>, threads=4, default_voice="af_heart")`; its timeout is `30.0`; its fields are `{"voice": "af_heart", "speed": 1.0}`; the log contains `AD-738g: kokoro voice=af_heart speed=1.00 chars=6` and `result=ok`.
+- B2 `test_b2_a_catalogue_override_wins_and_a_foreign_name_is_ignored`: with `voice="am_liam"` in the config: override `"bf_emma"` sends `bf_emma`; override `"en_US-ryan-medium"` sends `am_liam`; override `None` sends `am_liam`.
+- B3 `test_b3_emotion_scales_the_speed_within_kokoros_range`: `kokoro_speed(1.0, None) == 1.0`; `kokoro_speed(1.0, "concerned") == pytest.approx(1 / 1.05)`; `kokoro_speed(2.0, "excited") == 2.0`; `kokoro_speed(0.5, "concerned") == 0.5`; and through the backend with `speed=2.0`, emotion `"excited"` sends `speed == 2.0`.
+- B4 `test_b4_a_missing_install_degrades_without_calling_the_service`: `python_path=str(tmp_path / "absent")`; result `None`; `svc.calls == []`; WARNING contains `kokoro is not installed` and `scripts/kokoro-fetch.ps1`. Repeat with a missing `model_path`: `None`, no call.
+- B5 `test_b5_blank_text_and_a_missing_service_degrade`: `"   "` returns `None` with no call; `KokoroBackend(cfg, service=None).synthesize("Hi.")` returns `None` and logs `no voice synthesis service`.
+- B6 `test_b6_the_catalogue_is_the_28_english_voices`: `KOKORO_VOICES == {<the 28 ids of 6.6, written out>}`; every id matches `^[ab][fm]_[a-z]+$`.
+
+**Config, registry, selection (M3)**
+- C1 `test_c1_defaults_stay_browser_and_kokoro_defaults_are_the_measured_ones`: `TTSConfig().backend == "browser"`; `TTSConfig().kokoro == KokoroTTSConfig()`; `KokoroTTSConfig()` has `voice == "af_heart"`, `speed == 1.0`, `threads == 4`, `timeout_seconds == 30.0`, and the three `tools/kokoro/` paths of 6.6.
+- C2 `test_c2_kokoro_config_rejects_values_the_engine_cannot_take`: `pytest.raises(ValueError)` for `speed=0.49`, `speed=2.01`, `threads=0`, `threads=17`, `timeout_seconds=0.0`, `voice="zz_nobody"`, `voice="jf_alpha"`; `speed=0.5`, `speed=2.0`, `threads=1`, `threads=16` are accepted.
+- C3 `test_c3_the_settings_registry_offers_kokoro`: the `tts.backend` descriptor of `get_section("voice").fields` has `enum_values == ("browser", "piper", "kokoro")`.
+- S1 `test_s1_select_backend_builds_kokoro_with_the_runtime_service`: `select_backend("kokoro", TTSConfig(backend="kokoro"), service=svc)` is a `KokoroBackend` whose `name == "kokoro"`; `select_backend("piper", TTSConfig(backend="piper"))` is still a `PiperBackend`.
+
+**Route (M3; a `kokoro_client` fixture copied from `test_bf918_tts_latency.py`:538-557 with `lipsync=LipSyncConfig()`, `tts=TTSConfig()` and `voice_synthesis=service`)**
+- T1 `test_t1_post_tts_speaks_kokoro_through_the_real_worker_loop` (the seam-crossing case): `key, record = _real_key(tmp_path)` for the paths; `monkeypatch.setattr(kokoro_backend, "WORKER_SCRIPT", str(FAKE_WORKER))`; `rt.config.tts = TTSConfig(backend="kokoro", kokoro=KokoroTTSConfig(python_path=sys.executable, model_path=key.model, voices_path=key.voices, voice="bm_fable"))`; `POST /api/avatars/tts` with `{"text": "Good evening, Captain.", "emotion": "concerned", "defer_visemes": True}`; the body has `backend == "kokoro"`, `mime == "audio/wav"`, `duration_ms == 200` (`bm_fable` is the fake's 4th voice: 4800 frames at 24 kHz); the stored file (`chat_router_mod._get_attachment_store(rt).get_path(id)`) hashes to the body's `audio_attachment_id` and is a 24 kHz mono 16-bit WAV; `_calls(record)` is one call with `voice == "bm_fable"`, `lang == "en-gb"`, `speed == pytest.approx(1 / 1.05)`.
+- T2 `test_t2_the_default_config_speaks_in_the_browser_and_starts_no_process`: `launcher("ok")`; default `TTSConfig()`; POST returns `backend == "disabled"` and `audio_attachment_id is None`; `fake.launched == []`.
+- T3 `test_t3_tts_status_reports_kokoro`: `TTSConfig(backend="kokoro", sentence_pipelining_enabled=True)`; `GET /api/avatars/tts/status` returns `{"enabled": True, "backend": "kokoro", "sentence_pipelining_enabled": True}`.
+
+### 6.16 `ui/src/audio/__tests__/voice.kokoroGate.test.tsx` (new, M3)
+
+```tsx
+/** AD-738g (#1662) S1: any TTS backend other than `browser` takes the server path.
+ *  The gate used to test `backend !== 'piper'`, so a `kokoro` status made the browser speak. */
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { cleanup } from '@testing-library/react';
+
+let speakCalls: any[] = [];
+let createdAudios: FakeAudio[] = [];
+const SHA = 'b'.repeat(64);
+
+class FakeUtterance {
+  text: string;
+  rate = 1; pitch = 1; volume = 1;
+  voice: SpeechSynthesisVoice | null = null;
+  onstart: (() => void) | null = null;
+  onend: (() => void) | null = null;
+  constructor(text: string) { this.text = text; }
+}
+
+class FakeAudio {
+  src: string;
+  volume = 1;
+  playbackRate = 1;
+  preservesPitch = true;
+  paused = false;
+  pause = vi.fn(() => { this.paused = true; });
+  play = vi.fn(async () => {});
+  listeners: Record<string, Array<() => void>> = {};
+  constructor(src: string) { this.src = src; createdAudios.push(this); }
+  addEventListener(ev: string, fn: () => void): void { (this.listeners[ev] ||= []).push(fn); }
+}
+
+function installGlobals(): void {
+  speakCalls = [];
+  createdAudios = [];
+  (globalThis as any).SpeechSynthesisUtterance = FakeUtterance;
+  (globalThis as any).Audio = FakeAudio;
+  (globalThis as any).window = globalThis;
+  (globalThis as any).speechSynthesis = {
+    cancel: vi.fn(),
+    speak: vi.fn((u: any) => speakCalls.push(u)),
+    getVoices: () => [],
+    addEventListener: vi.fn(),
+  };
+  if (!(globalThis as any).localStorage) {
+    (globalThis as any).localStorage = { getItem: () => null, setItem: () => {}, removeItem: () => {} };
+  }
+}
+
+async function flush(): Promise<void> {
+  for (let i = 0; i < 10; i++) await Promise.resolve();
+}
+
+function fetchFor(status: Record<string, unknown>) {
+  return vi.fn(async (url: string) => {
+    if (url.endsWith('/api/avatars/tts/status')) return { ok: true, json: async () => status } as any;
+    if (url === '/api/avatars/tts') {
+      return {
+        ok: true,
+        json: async () => ({ backend: 'kokoro', audio_attachment_id: SHA, mime: 'audio/wav', visemes: [], duration_ms: 1000 }),
+      } as any;
+    }
+    throw new Error(`unexpected fetch to ${url}`);
+  });
+}
+
+const count = (m: ReturnType<typeof fetchFor>, pred: (u: string) => boolean) =>
+  m.mock.calls.map((c) => c[0] as string).filter(pred).length;
+
+beforeEach(() => {
+  vi.resetModules();
+  installGlobals();
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  cleanup();
+});
+
+describe('AD-738g speakResponse: the kokoro backend takes the server path', () => {
+  it('posts to /api/avatars/tts and plays the audio when the status reports backend=kokoro', async () => {
+    const fetchMock = fetchFor({ enabled: true, backend: 'kokoro', sentence_pipelining_enabled: false });
+    (globalThis as any).fetch = fetchMock;
+    const voiceMod = await import('../voice');
+    voiceMod._resetTtsStatusForTests();
+
+    voiceMod.speakResponse('Good evening, Captain.');
+    await flush();
+
+    expect(count(fetchMock, (u) => u === '/api/avatars/tts')).toBe(1);
+    expect(createdAudios.length).toBe(1);
+    expect(createdAudios[0].src).toBe(`/api/chat/attachments/${SHA}`);
+    expect(speakCalls.length).toBe(0);
+  });
+
+  it('makes no POST when the status reports kokoro but enabled=false', async () => {
+    const fetchMock = fetchFor({ enabled: false, backend: 'kokoro', sentence_pipelining_enabled: false });
+    (globalThis as any).fetch = fetchMock;
+    const voiceMod = await import('../voice');
+    voiceMod._resetTtsStatusForTests();
+
+    voiceMod.speakResponse('hi');
+    await flush();
+
+    expect(count(fetchMock, (u) => u === '/api/avatars/tts')).toBe(0);
+    expect(speakCalls.length).toBe(1);
+  });
+
+  it('a cached kokoro status takes the server path on the next utterance without a second probe', async () => {
+    const fetchMock = fetchFor({ enabled: true, backend: 'kokoro', sentence_pipelining_enabled: false });
+    (globalThis as any).fetch = fetchMock;
+    const voiceMod = await import('../voice');
+    voiceMod._resetTtsStatusForTests();
+
+    voiceMod.speakResponse('one');
+    await flush();
+    expect(createdAudios.length).toBe(1);
+    (createdAudios[0].listeners.ended || []).forEach((fn) => fn());
+    await flush();
+    voiceMod.speakResponse('two');
+    await flush();
+
+    expect(count(fetchMock, (u) => u.includes('/api/avatars/tts/status'))).toBe(1);
+    expect(count(fetchMock, (u) => u === '/api/avatars/tts')).toBe(2);
+    expect(speakCalls.length).toBe(0);
+  });
+});
+```
+If the third case's first audio needs more than its `ended` listener to release the device (`voice.ts`:763), end it the way `voice.serverTts.test.tsx` does for its second-utterance case; do not add a timer.
+
+### 6.17 `PROGRESS.md` (M4)
+
+Insert above the newest entry (directly under `# ProbOS Progress` and its blank line):
+
+```markdown
+**AD-738g S1 (2026-11-27), #1662 -- a local Kokoro voice on this machine's CPU, behind the TTS backend seam, off until configured.** `tts.backend: kokoro` runs `scripts/kokoro_worker.py` in the operator's venv `tools/kokoro/venv` (kokoro-onnx 0.6.1, installed with the model files by `scripts/kokoro-fetch.ps1`, sizes and SHA-256 pinned) as one resident process under `python -I`; it speaks Piper's line protocol with each request's voice and speed, so the BF-918 resident service owns its start, restart, timeout and stop. The service is keyed by a `WorkerKey` Protocol (`PiperWorkerKey` unchanged, `KokoroWorkerKey` new); Piper's request line is byte-identical, and a Kokoro request answered without audio leaves the process resident (a respawn costs about 3.2 s). `KokoroBackend` takes a per-call voice only when it is one of the 28 English Kokoro ids (`KokoroTTSConfig.voice`'s `Literal`), maps the AD-738e-1 emotion `length_scale` to speed (clamped to 0.5-2.0) and logs one INFO line per sentence (`AD-738g: kokoro voice=... synth_ms=...`). `TTSConfig` gains `kokoro` (defaults: voice `af_heart`, 4 threads, 30 s timeout) and `"kokoro"` in its backend `Literal` and the settings registry. The HXI client takes the server path for any backend other than `browser` (`voice.ts`), as the server does. Lip-sync is unchanged (heuristic or rhubarb): the shipped `kokoro-v1.0.onnx` has no `duration` output, so synthesizer timings need another model file (S3). Measured on the Ryzen 9 7950X3D: real-time factor 0.314 at 4 threads. GPL phonemizer and espeak-ng run only in the worker process (THIRD_PARTY_LICENSES.md). New `tests/test_ad738g_kokoro_voice.py` (28 tests), `ui/src/audio/__tests__/voice.kokoroGate.test.tsx` (3 tests). #1662 stays open for S2 to S5 and the Captain's live acceptance. Contract `prompts/ad-738g-s1-local-kokoro-voice.md`.
+```
+
+### 6.18 `DECISIONS.md` (M4)
+
+Insert above the newest entry's heading:
+
+```markdown
+### AD-738g S1 -- a local Kokoro voice: a resident worker in the operator's venv, keyed into the BF-918 voice service (2026-11-27, #1662)
+
+- *Scope.* `audio/tts/resident.py` (`WorkerKey`, `KokoroWorkerKey`, request `fields`), `audio/tts/kokoro_backend.py` (new), `scripts/kokoro_worker.py` (new), `scripts/kokoro-fetch.ps1` (new), `config_models/experience.py` (`KokoroTTSConfig`, `TTSConfig.kokoro`), `ui/src/audio/voice.ts` (the gate). Contract `prompts/ad-738g-s1-local-kokoro-voice.md`.
+- *D1.* Runtime: kokoro-onnx 0.6.1 in a separate venv under `tools/kokoro/`, one resident process speaking Piper's line protocol. Not the PyTorch package (multi-GB), not Kokoro-FastAPI (no documented authentication), not a ProbOS HTTP service (deferred to the remote-Mac slice).
+- *D2.* The resident service is generalised by a key Protocol, not a second worker class (DRY); Piper's line, retirement and log text stay as BF-918 shipped, except two service-wide lines that now say "voice".
+- *D3.* A Kokoro request the engine cannot speak is answered with no file and the process stays; an unreadable line or a missing default voice ends the worker. A respawn costs about 3.2 s of model load and first-call initialisation.
+- *D4.* CPU, 4 threads, 30 s timeout, no prewarm in S1 (measured real-time factor 0.314; one warm-up line before recording).
+- *D5.* The 28 English voice ids are the config's `Literal`, the single catalogue; a foreign per-call voice name is ignored.
+- *Licence.* GPL-3.0-or-later phonemizer and espeak-ng run only in the operator-installed worker process, which exchanges text, voice and speed in and a WAV path out; the worker runs under `python -I` and cannot import `probos`.
+- *Reversal.* Revert the four commits and set `tts.backend` back to `piper` or `browser`; no persisted format changes. `tools/kokoro/` can be deleted.
+```
+
+### 6.19 Commit staging lists
+
+- M1: `src/probos/audio/tts/resident.py`, `tests/test_ad738g_kokoro_voice.py`.
+- M2: `scripts/kokoro_worker.py`, `tests/fixtures/fake_kokoro_worker.py`, `tests/test_ad738g_kokoro_voice.py`.
+- M3: `src/probos/audio/tts/kokoro_backend.py`, `src/probos/audio/tts/__init__.py`, `src/probos/audio/tts/piper_backend.py`, `src/probos/config_models/experience.py`, `src/probos/config_models/__init__.py`, `src/probos/config.py`, `src/probos/settings/section_registry.py`, `src/probos/routers/avatars.py`, `ui/src/audio/voice.ts`, `ui/src/audio/__tests__/voice.kokoroGate.test.tsx`, `tests/test_ad738g_kokoro_voice.py`, `tests/test_ad1270e1_config_facade.py`, `tests/test_ad1270e2c_experience_models.py`, `docs/development/config-facade-baseline.yaml`, `docs/development/config-reference.md`.
+- M4: `scripts/kokoro-fetch.ps1`, `THIRD_PARTY_LICENSES.md`, `docs/development/roadmap.md`, `docs/research/reference-projects.md`, `PROGRESS.md`, `DECISIONS.md`, and the two ledger files if they change.
+
+### 6.20 Files that may hold unrelated Captain work
+
+`PROGRESS.md`, `DECISIONS.md`, `docs/development/roadmap.md`: stage by path after checking `git diff` shows only this contract's hunk. Never stage `config/system.yaml`.
+
+## 7. Consumers
+
+| Contract | Consumer | After the change |
+|---|---|---|
+| `VoiceSynthesisService.synthesize(key, text, timeout)` | `PiperBackend.synthesize` (`piper_backend.py`:217) | unchanged call; same line, same retirement, same logs except D7 |
+| `PiperWorker.synthesize_blocking` / `_request` two-argument stand-ins | `test_bf930_voice_path_timing.py`:96, :387 | still called with two arguments when no fields (D8) |
+| `PiperWorker._spawn`, one `Popen` | effect census `tests/fixtures/ad1346_effect_census.py`:132, file-write census `ad1346_file_write_census.py`:206, spawn-env guard `test_bf892_spawn_env_guard.py`:87 | still one `Popen` with `env=trusted_command_env()` in `_spawn`; the census keys (`PiperWorker._spawn`) are unchanged |
+| `select_backend(name, config, service)` | `_synthesize_tts_impl` (`avatars.py`:270-274) | builds `KokoroBackend` for `kokoro`; the response's `backend` is `kokoro` (`avatars.py`:335) |
+| `TTSConfig` dump and schema | `GET/POST /api/config`, the settings registry, `check_config_facade.py`, `gen_config_reference.py` | one nested section more; baseline and reference regenerated (6.9) |
+| `GET /api/avatars/tts/status` | `voice.ts` `_fetchTtsStatus` and the gates :555, :567 | `kokoro` passes through (`avatars.py`:109) and now takes the server path |
+| WAV container | `_wav_duration_ms` (`avatars.py`), rhubarb when `lipsync.backend == "rhubarb"` | stdlib `wave` writes the canonical 44-byte header (T1 pins `duration_ms == 200`); rhubarb on 24 kHz is not verified (section 13) |
+
+### 7.1 Merge with BF-930's batch
+
+This contract edits, in the files BF-930's batch also edits:
+- `ui/src/audio/voice.ts`: only lines 548-549, 555, 561-562 and 567 (P11.2 to P11.5), inside `speakResponse`'s gate. Nothing near `_prepareServerSpeech`, the prefetch buffer or `voiceChunking.ts`.
+- `src/probos/routers/avatars.py`: only the `tts_status` docstring, lines 95-96 (P11.1). Nothing in `_synthesize_tts_impl`.
+- No test of this contract depends on BF-930's tests or code; none of BF-930's tests mock a `kokoro` status, and a `piper` status still takes the server path. If BF-930's batch also edits `resident.py`, `tests/test_bf930_voice_path_timing.py` or `tests/test_bf918_tts_latency.py`, the merge is not mechanical: re-run 8.2's first line on the merged tree before the gate, and check D8's two stand-ins.
+
+## 8. Gates (the orchestrator runs them)
+
+### 8.1 Oracle tree, before the Builder starts
+
+- Each SEARCH of section 6 counted at its turn: 1 each; the six new files do not exist.
+- A/B: on `63c536b3` the new Python file fails at collection (`KokoroWorkerKey` and `kokoro_backend` do not exist); the UI file's cases 1 and 3 fail (the browser speaks) and case 2 passes. On the candidate all pass.
+
+### 8.2 Focused checks on the candidate
+
+Per milestone (the Builder runs its milestone's line; the orchestrator runs all on the frozen candidate):
+```text
+M1: d:/ProbOS/.venv/Scripts/pytest.exe tests/test_ad738g_kokoro_voice.py tests/test_bf918_tts_latency.py tests/test_bf930_voice_path_timing.py tests/test_ad738_piper_tts.py -n 0 -q
+M2: d:/ProbOS/.venv/Scripts/pytest.exe tests/test_ad738g_kokoro_voice.py -n 0 -q
+M3: d:/ProbOS/.venv/Scripts/pytest.exe tests/test_ad738g_kokoro_voice.py tests/test_ad738_piper_tts.py tests/test_bf918_tts_latency.py tests/test_bf918_tts_retention.py tests/test_bf918_attachment_io.py tests/test_bf930_voice_path_timing.py tests/test_bf291_piper_voice_catalog.py tests/test_ad738e_1_per_emotion_prosody.py tests/test_ad1071_tts_pipelining.py tests/test_ad1025_path_anchoring.py tests/test_ad718_voice_profile.py tests/test_ad1270e2c_experience_models.py tests/test_ad1270e1_config_facade.py tests/test_ad1270e2_config_models.py tests/test_ad1270e2e_operations_models.py tests/test_ad741_section_registry.py tests/test_ad741_config_api.py tests/test_ad826_voice_config.py tests/test_bf892_spawn_env_guard.py tests/test_ad1346_admission_effect_census.py tests/test_ad1346_admission_file_write_census.py tests/test_ad1346_admission_subprocess_plumbing.py -n 0 -q
+M3 (ui/): npx vitest run src/audio/__tests__/voice.kokoroGate.test.tsx src/audio/__tests__/voice.serverTts.test.tsx src/audio/__tests__/voice.pipelining.test.tsx src/audio/__tests__/voice.prefetch.bf918.test.tsx src/audio/__tests__/voice.perEmotion.test.tsx src/audio/__tests__/voice.balancedEnd.test.tsx src/__tests__/CrewVRM.mouthClock.bf931.test.tsx src/components/profile/__tests__/ProfileChatTab.bf918.test.tsx
+M3: the five commands of 6.9 (the --check forms pass)
+M4: d:/ProbOS/.venv/Scripts/python.exe -P scripts/gen_ad_ledger.py --check
+All: d:/ProbOS/.venv/Scripts/python.exe scripts/run_test_gate.py --preflight-only --label ad-738g-s1
+```
+Retriage a parallel failure at `-n 0`.
+
+### 8.3 Mutation rows (one at a time on the candidate, file restored byte for byte)
+
+| ID | File: line (stripped) | Becomes | Killed by |
+|---|---|---|---|
+| K1 | `__init__.py`: `return KokoroBackend(config.kokoro, service=service)` | `return NullBackend()` | S1, T1 |
+| K2 | `voice.ts`:567 `... status.backend === 'browser') {` | `... status.backend !== 'piper') {` | UI case 1 |
+| K3 | `voice.ts`:555 `... _ttsStatus.backend === 'browser')) {` | `... _ttsStatus.backend !== 'piper')) {` | UI case 3 |
+| K4 | `resident.py`: `payload.update({name: value for name, value in fields.items() if name not in payload})` | (line deleted, `pass` under the `if`) | R2, R5, T1 |
+| K5 | the same line | `payload.update(fields)` | R2 |
+| K6 | `kokoro_backend.py`: `if voice_override is not None and voice_override in KOKORO_VOICES:` | `if voice_override:` | B2 |
+| K7 | `kokoro_backend.py`: `return min(SPEED_MAX, max(SPEED_MIN, base / length_scale))` | `return base / length_scale` | B3 |
+| K8 | `resident.py`: `if outcome.reason == "empty" and not key.retire_on_empty:` | `if False:` | R3, R6 |
+| K9 | `KokoroWorkerKey.retire_on_empty`: `return False` | `return True` | R3, R6 |
+| K10 | `PiperWorkerKey.retire_on_empty`: `return True` | `return False` | `test_bf918_tts_latency.py::test_an_empty_wav_degrades` |
+| K11 | `kokoro_worker.py`: `return "en-gb" if voice.startswith("b") else "en-us"` | `return "en-us"` | W2, R5, T1 |
+| K12 | `kokoro_worker.py`: `return False` in `speak`'s `except` | `raise` | W4, R6 |
+| K13 | `kokoro_worker.py`: `voice = default_voice` (in `speak`) | `pass` | W3 |
+| K14 | `kokoro_worker.py`: `sys.stdout = sys.stderr  # ...` | (line deleted) | W7 |
+| K15 | `kokoro_worker.py`: `frames = (np.clip(pcm, -1.0, 1.0) * 32767.0).astype("<i2").tobytes()` | `frames = (pcm * 32767.0).astype("<i2").tobytes()` | W1 |
+| K16 | `kokoro_worker.py`: `return EXIT_UNREADABLE_LINE` | `continue` | W6 |
+| K17 | `experience.py`: `backend: Literal["browser", "piper", "kokoro"] = "browser"` | `backend: Literal["browser", "piper"] = "browser"` | the e2c `kokoro` literal case, S1, T1, T3 |
+| K18 | `kokoro_backend.py`: `name: str = "kokoro"` | `name: str = "piper"` | S1, T1 |
+| K19 | `resident.py` (`synthesize_blocking`): `return self._request(text, timeout) if fields is None else self._request(text, timeout, fields)` | `return self._request(text, timeout, fields)` | `test_bf930_voice_path_timing.py` (the `_stub_request` cases) |
+
+This campaign, run once on the frozen candidate overlay and recorded with each file's sha256, is the campaign of record; a Builder whose files match does not repeat it.
+
+### 8.4 The gate
+
+`d:/ProbOS/.venv/Scripts/python.exe scripts/run_test_gate.py --label ad-738g-s1 --receipt logs/gates/ad-738g-s1.receipt.json` once on the committed head of the merged batch (this contract and BF-930's), after the base is merged in.
+
+## 9. Diff Reviewer: properties to verify
+
+The change claims a Kokoro voice that runs locally, only when configured, behind the existing backend seam, with Piper's behaviour unchanged. The consumers that must accept it: `PiperBackend` through `VoiceSynthesisService`, the `/api/avatars/tts` route, and `voice.ts`'s gate.
+1. With `fields=None`, Piper's request line is the same bytes as on the base (key set and order `text`, `output_file`), and `synthesize_blocking` and `_request` are called with two arguments.
+2. `fields` never replace `text` or `output_file`.
+3. Only a key whose `retire_on_empty` is `False` keeps a worker after an `empty` outcome; every other outcome and Piper's `empty` retire as on the base.
+4. The only `Popen` stays in `PiperWorker._spawn`, with `env=trusted_command_env()`; the Kokoro argv begins `[python, "-I", script]`.
+5. No file under `src/probos` imports `kokoro_onnx`, `onnxruntime`, `phonemizer` or `espeakng_loader`; `scripts/kokoro_worker.py` imports only the stdlib and numpy at module level.
+6. The worker never writes anything but request paths to the protocol stdout, and never leaves a partial WAV at `output_file`.
+7. `TTSConfig()` defaults keep `backend == "browser"`; with it the route returns `disabled` and starts no process; the client makes no POST for `browser`.
+8. Every new config field has a default and a bound where the engine has one; the voice is validated at parse time.
+9. Piper's log lines read as on the base except the two of D7.
+10. `avatars.py` changes only the `tts_status` docstring; `voice.ts` changes only the four lines of 6.11.
+11. ASCII and LF in new text; no file outside section 6.19 changes; the regenerated files come from their tools.
+12. Each absolute word of the new text (each, every, no, only, never) holds against sections 1, 7 and Absence Verified.
+
+## 10. Verified Against Codebase (2026-11-27, tree `63c536b3`)
+
+- `src/probos/audio/tts/resident.py`: module docstring :1-22 (ends :19-22); `from typing import IO, Any, Callable, Iterator, TypeVar` :40; `trusted_command_env` import :42; `PIPER_MAX_RESIDENT = 4` :52; `SLOW_SYNTHESIS_MS` :56; `PiperWorkerKey` :93-115 (argv :104-115); `PiperOutcome` :118-125; `PiperWorker` :128, `__init__(self, key: PiperWorkerKey)` :142-143; `synthesize_blocking` :161-180 (`self._request(text, timeout)` :173); `_request` :182-224 (no-pipes reason :193, line :198, timer :200, empty :213-214, `except (OSError, ValueError)` :215-218); `_await_answer` :226-234 (skips non-matching lines); `_spawn` :259-279 (`mkdtemp(prefix="probos-piper-")` :261, `Popen(... env=trusted_command_env())` :270-276, log :279); `VoiceSynthesisService` :336; `_resident`/`_busy`/`_retiring`/`_locks` :361-365; `synthesize` :400-465 (`run_in_executor` :426, failure warning :440, BF-930 slow line :449-457, failure branch :458-465); `_claim` :467-484 (busy warning :476-479); `_forget` :486; `_log_failure` :509-522; `close` log :545.
+- `src/probos/audio/tts/__init__.py`: imports :8-10; `select_backend` :17-49 (`piper` :31, `browser` :43, warning :45-49); `__all__` :52.
+- `src/probos/audio/tts/piper_backend.py`: `_probos_root` :29-38; `_anchor_path` :41-49; `resolve_voices_dir` :52-58; `_resolve_binary_path` :61-73; `PiperBackend.name` :100; `PiperWorkerKey(...)` and `service.synthesize(key, text, self._timeout_seconds)` :209-217.
+- `src/probos/audio/tts/backends.py`: `TTSResult` :9-19; `TTSBackend.synthesize(text, emotion, voice_override)` :33-38.
+- `src/probos/audio/tts/prosody.py`: `_EMOTION_PROSODY_OVERRIDES` :22-29 (`concerned` 1.05, `excited` 0.92, `formal` 1.0); `resolve_prosody_overrides` :32-44.
+- `src/probos/config_models/experience.py`: `from typing import Literal` :10; `from pydantic import BaseModel, Field, model_validator` :12; `KnowledgeBrowserConfig` :610; `LipSyncConfig` :620; `TTSConfig` :725, `backend` :744-748, `timeout_seconds` :772, `sentence_pipelining_enabled` :810-825 (":813 AND the backend is ``piper``"); `WakeWordConfig` :828.
+- `src/probos/config.py`: experience import block :42-59 (`KnowledgeBrowserConfig` :49, `LipSyncConfig` :50); `tts: TTSConfig = Field(default_factory=TTSConfig)` :4026; no `__all__`.
+- `src/probos/config_models/__init__.py`: experience import :36-53 (`KnowledgeBrowserConfig` :43, `LipSyncConfig` :44); `__all__` :203; `"KnowledgeBrowserConfig"` :288 to `"LLMRateConfig"` :291.
+- `src/probos/settings/section_registry.py`: `FieldDescriptor` :39-45 (`field_id`, `enum_values`); voice section :260-279; `tts.backend` enum :271-276; `get_section` :522.
+- `src/probos/routers/avatars.py`: `tts_status` :89-115 (docstring :95-96, `"backend": str(cfg.backend)` :109); `_synthesize_tts_impl` :220 (browser gate :222, `voice_name` checks :255-262, `select_backend` :270-274, degraded log :277-280, stage log :326-332, `"backend": backend.name` :335).
+- `ui/src/audio/voice.ts`: `TtsStatus` type :177; `_invalidateTtsStatus` :209-211; `_resetTtsStatusForTests` :229-238; `speakResponse` :353; gate comments :548-549, :561-562; gates :555, :567; `ended` listener :763; `getServerPiperVoices` :981-996 (`data.backend !== 'piper'` :987, the catalogue, not speech).
+- `ui/src/audio/__tests__/voice.serverTts.test.tsx`: harness :7-79; zero-HTTP case :81-125; piper cases :128-206.
+- `src/probos/runtime.py`:859 `self.voice_synthesis = VoiceSynthesisService()`; `src/probos/startup/shutdown.py`:109, :1661 `_close_voice_synthesis`.
+- `src/probos/utils/step_timing.py`: `TimingLines` :46-58 (12 lines per 60 s).
+- Tests: `tests/test_bf918_tts_latency.py` (`_key` :45, `launcher`/`service` fixtures :74-87, empty-retire case :258-267, `voice_client` :538-557, route case :703-716); `tests/test_bf930_voice_path_timing.py` (`_PIPER = "BF-930: piper request slow"` :44, `_lines`/`_field` :55-62, two-argument `_stub_request` :95-100, two-argument `synthesize_blocking` stand-in :384-393); `tests/test_ad1270e2c_experience_models.py` (`EXPECTED_DUMPS['TTSConfig']` :198-208, baseline identity :264-274, dump tests :321-348, literal cases :391-405); `tests/test_ad1270e1_config_facade.py` (counts :1515-1584); `tests/test_ad1270e2e_operations_models.py`:615-627 (sorted `__all__`); `tests/fixtures/fake_piper.py` (`FakePiperLauncher` :141-173, per-launch modes :167); census rows `tests/fixtures/ad1346_effect_census.py`:132, `tests/fixtures/ad1346_file_write_census.py`:206, `tests/test_bf892_spawn_env_guard.py`:87; the effect census scans `src/probos` only (`ad1346_effect_census.py`:250-252).
+- `docs/development/config-facade-baseline.yaml`: regeneration header :1-34; `TTSConfig` :3621-3638. Precedent commit `0c859b90` (AD-1346 M3c: baseline and reference regenerated, counts `names=310 ... fields=1880`).
+- Scripts: `scripts/check_config_facade.py` `--check`/`--update-baseline` :1710-1722; `scripts/gen_config_reference.py` `--check` :199-203; `scripts/check_config_profiles.py` :778-800; `scripts/whisper-tiny-en-fetch.ps1` SHA-256 pattern :27, :41-56; `scripts/piper-voice-fetch.ps1` (layout of 6.12).
+- `scripts/check_architecture_principles.py`: `SRP_MAX_BODY_LINES = 500`, `SRP_MAX_DIRECT_METHODS = 15` :187-188 (no method is added to `PiperWorker` or `VoiceSynthesisService`); ranked layers are only substrate, mesh, consensus, cognitive, experience (`architecture-baseline.yaml`:12-17), so `audio` importing `config` is not a layer-import finding.
+- `THIRD_PARTY_LICENSES.md`: License policy :53-78; last section `## openWakeWord (AD-705c)` :160-167. `.gitignore`:3 `/tools/`. `pyproject.toml`: `requires-python = ">=3.12"` :9, `numpy>=2.0` :86.
+- `docs/development/roadmap.md`:826-827; `docs/research/reference-projects.md`:83.
+- External (2026-11-27): VOICES.md lists 20 American and 8 British English voices, exactly the ids of 6.6 (WebFetch of `huggingface.co/hexgrad/Kokoro-82M/raw/main/VOICES.md`). The orchestrator's measurements (handoff items 1 to 5) are first-hand and are cited, not re-run.
+
+### Absence Verified (2026-11-27)
+
+- CLAIM: nothing in the tree mentions Kokoro yet. RUN: Grep `(?i)kokoro` over `src`, `scripts`, `config`; over `tests` and `ui/src` `*.py,*.ts,*.tsx`. FOUND: none. HOLDS.
+- CLAIM: no `?raw` source import pins `voice.ts`. RUN: Grep `voice\.ts\?raw|voice\?raw` over `tests` and `ui/src`. FOUND: `useMeetingVoice?raw`, `meetingVoice?raw` only. HOLDS.
+- CLAIM: no test pins the two service-wide log texts of D7. RUN: Grep `resident piper|piper timed out|piper exit=|piper produced|piper subprocess failed|piper request|probos-piper|piper process` over `tests`. FOUND: `test_ad738_piper_tts.py`:173, :193; `test_bf918_tts_latency.py`:241, :253; `test_bf930_voice_path_timing.py`:44, :376 (all Piper lines whose text is unchanged); census descriptions :132 and `test_bf892_spawn_env_guard.py`:87 (descriptions, not log text). HOLDS.
+- CLAIM: no test asserts a broken-pipe or "subprocess failed" message. RUN: Grep `BrokenPipe|subprocess failed` over `tests/test_*.py`. FOUND: none. HOLDS.
+- CLAIM: the only stand-ins for `synthesize_blocking`/`_request`, and the only direct callers, are in the BF-918 and BF-930 tests. RUN: Grep `_log_failure|synthesize_blocking|PiperWorker\(` over `tests`; Grep `def _stub_request` over `tests`. FOUND: `test_bf918_tts_latency.py`:331-339 (positional two-argument calls), `test_bf930_voice_path_timing.py`:96-100 and :384-393 (two-argument stand-ins). HOLDS.
+- CLAIM: server code compares the TTS backend to `"piper"` only in `select_backend` and one docstring. RUN: Grep `== ["']piper["']|!= ["']piper["']|in \(["']piper` over `src`. FOUND: `audio/tts/__init__.py`:31, `routers/avatars.py`:96. HOLDS.
+- CLAIM: no test checks the registry's `tts.backend` enum or reads `tts.backend` by name. RUN: Grep `tts\.backend|tts_backend` over `tests`. FOUND: none. HOLDS.
+- CLAIM: nothing outside the config modules imports `probos.config_models` directly, so the backend imports `KokoroTTSConfig` from `probos.config`. RUN: Grep `from probos\.config_models` over `src/probos` excluding `config*.py`. FOUND: only `config_models/__init__.py` itself. HOLDS.
+- CLAIM: the only UI sources that test `'piper'` are `voice.ts` and `ProfileInfoTab.tsx` (the Piper catalogue picker). RUN: Grep `piper|kokoro` count over `ui/src/**/*.{ts,tsx}`. FOUND: `voice.ts` 11, `ProfileInfoTab.tsx` 4, the rest tests. HOLDS.
+
+Not verified here (the orchestrator's D4 pre-checks cover them): that all 28 ids are keys of `voices-v1.0.bin` (16 were checked first-hand); rhubarb's handling of a 24 kHz WAV; the worker's start-up time before the model load; that `_wav_duration_ms` reads the stdlib header (T1 proves it in the gate).
+
+## 11. What this does NOT change
+
+- Lip-sync: heuristic or rhubarb as configured. **Timing-derived lip-sync (the issue's headline, S3) needs a different model file**: the shipped `kokoro-v1.0.onnx` has one output, `audio`, and no `duration` output, so kokoro-onnx's `create_timed` returns an empty timing list ("The timings are empty unless the model exposes a duration output"). Before S3 is drafted it must establish: a Kokoro ONNX export that exposes per-phoneme durations (which file, its licence, size and hash), that kokoro-onnx 0.6.1 reads it, its real-time factor on this CPU against `kokoro-v1.0.onnx`, and how phoneme durations map onto the viseme frames `avatars.py` returns today.
+- Per-agent voices (AD-738f, #1868): no role table, no `agent_type` keyword on `TTSBackend`, no `agent_id` on the request. Every crew member speaks `tts.kokoro.voice` unless a profile's `voice_name` is a Kokoro id.
+- `GET /api/avatars/tts/voices` and the HXI voice picker (`ProfileInfoTab.tsx`, `getServerPiperVoices`): still the Piper catalogue; a Piper name stored on a profile is ignored by Kokoro.
+- GPU (opt-in device and VRAM cap, S4), the remote Mac backend and the fallback chain (S5), prewarm (S2).
+- `PiperBackend`, Piper's request line, process keys and retirement; the `TTSBackend` Protocol; the route's validation; `runtime.voice_synthesis` wiring and its shutdown; the census fixtures; `PIPER_MAX_RESIDENT`.
+- The ProbOS Python environment: nothing is added to `pyproject.toml`.
+
+## 12. Issue text (#1662, on merge; the issue stays open)
+
+Wave comment:
+
+```text
+AD-738g S1 shipped (PR #<PR>, contract prompts/ad-738g-s1-local-kokoro-voice.md). Refs only: the issue stays open for S2 to S5 and the Captain's live acceptance.
+- S1, a local Kokoro voice on this machine's CPU, off until configured: tts.backend: kokoro runs scripts/kokoro_worker.py in the operator's venv tools/kokoro/venv (kokoro-onnx 0.6.1; scripts/kokoro-fetch.ps1 installs it and downloads kokoro-v1.0.onnx and voices-v1.0.bin with sizes and SHA-256 pinned, then speaks one test line through the worker). One resident process under python -I serves every voice over Piper's line protocol, so the BF-918 voice service owns start, restart, timeout and stop; a sentence the engine cannot speak degrades to the browser voice and leaves the process resident. Defaults: voice af_heart, 4 threads, 30 s timeout. The HXI takes the server path for any backend other than browser. Measured on the Ryzen 9 7950X3D: real-time factor 0.314 at 4 threads; the first sentence after a restart costs about 3.2 s more (model load and first-call initialisation), so speak one line before recording. Lip-sync is unchanged. 28 Python tests and 3 UI tests; 19 mutation rows killed.
+- Finding for S3: the shipped kokoro-v1.0.onnx has a single output (audio) and no duration output, so kokoro-onnx's create_timed returns no timings. Timing-derived lip-sync needs a different model export: S3 must first establish which file exposes phoneme durations, its licence, size and hash, that kokoro-onnx reads it, its real-time factor here, and the mapping from phoneme durations to viseme frames.
+- Licence: phonemizer and espeak-ng (GPL-3.0-or-later) run only in the operator-installed worker process, which exchanges text, a voice id and a speed in and a WAV path out; the worker venv cannot import probos (checked by the install script). THIRD_PARTY_LICENSES.md has the entry.
+- Next: AD-738f S1 (#1868, per-role voices) on the tree after BF-930; then S2 prewarm. If the live run shows the first sentence too slow, the GPU slice (S4) moves ahead of S3.
+```
+
+PR title: `A local Kokoro voice behind the TTS backend seam, off until configured`.
+
+## 13. What the Captain does by hand, and what the orchestrator checks first (D4)
+
+**Orchestrator, before the Captain (the scratch venv and models in `G:\speech-kokoro-probe`):**
+1. The real worker alone, from the worktree root:
+   ```powershell
+   '{"text": "Good evening, Captain.", "output_file": "G:\\speech-kokoro-probe\\w1.wav", "voice": "bf_emma", "speed": 1.0}' | G:\speech-kokoro-probe\venv\Scripts\python.exe -I scripts\kokoro_worker.py --model G:\speech-kokoro-probe\kokoro-v1.0.onnx --voices G:\speech-kokoro-probe\voices-v1.0.bin --threads 4 --default-voice af_heart
+   ```
+   Pass: stdout is exactly `G:\speech-kokoro-probe\w1.wav`; stderr has `AD-738g: kokoro worker ready (54 voices, default af_heart)`; `w1.wav` plays as a British voice. Repeat with `"text": "   "`: the path is printed, no file, stderr says `no audio for 3 chars`.
+2. The catalogue against the voices file:
+   ```powershell
+   G:\speech-kokoro-probe\venv\Scripts\python.exe -I -c "from kokoro_onnx import Kokoro; k = Kokoro(r'G:\speech-kokoro-probe\kokoro-v1.0.onnx', r'G:\speech-kokoro-probe\voices-v1.0.bin'); ids = set(k.get_voices()); want = 'af_heart af_alloy af_aoede af_bella af_jessica af_kore af_nicole af_nova af_river af_sarah af_sky am_adam am_echo am_eric am_fenrir am_liam am_michael am_onyx am_puck am_santa bf_alice bf_emma bf_isabella bf_lily bm_daniel bm_fable bm_george bm_lewis'.split(); print(len(want), [v for v in want if v not in ids])"
+   ```
+   Pass: `28 []`. Any id printed must be removed from `KokoroVoiceId` before merge.
+3. The install script end to end in this worktree (its `tools/kokoro` is gitignored): `powershell -ExecutionPolicy Bypass -File scripts\kokoro-fetch.ps1`. Pass: exit 0, two `[ ok ]` lines with the pinned SHA-256s, `the Kokoro venv cannot import probos`, `the Kokoro worker spoke the test line`. A second run prints two `[skip]` lines.
+4. If `lipsync.backend` is `rhubarb` on the Captain's machine: post one sentence to a vessel run from the worktree with `tts.backend: kokoro` and check the `/api/avatars/lipsync` frames are non-empty (rhubarb on 24 kHz is unverified).
+
+**The Captain, in `D:\ProbOS`, after the merge:**
+1. `powershell -ExecutionPolicy Bypass -File scripts\kokoro-fetch.ps1` (about 350 MB; same pass condition as check 3).
+2. In his own `config/system.yaml`:
+   ```yaml
+   tts:
+     enabled: true
+     backend: kokoro
+     sentence_pipelining_enabled: true
+     kokoro:
+       voice: af_heart     # any of the 28 ids; optional
+       threads: 4          # optional
+   ```
+3. Restart the vessel and reload the HXI page (a page that cached `browser` does not re-probe).
+4. Warm-up: ask any crew member one short question and let the reply play; the first sentence takes about 3 to 5 s.
+5. Read the log: `Select-String -Path "$env:LOCALAPPDATA\ProbOS\data\logs\probos.log" -Pattern "resident kokoro started|AD-738g: kokoro"`.
+   Pass: one `BF-918: resident kokoro started (voice=kokoro-v1.0)` line after the restart, then one `AD-738g: kokoro voice=af_heart speed=... chars=N synth_ms=M result=ok` line per sentence; after the warm-up `synth_ms` is roughly a third of the sentence's spoken length (about 1.1 s for a 65-character sentence); no `result=degraded`; the voice is Kokoro and the mouth moves as before. A `result=degraded` line with `kokoro is not installed` means step 1 did not complete.
+
+## 14. Prior art and blind spots
+
+- Internal: AD-738 and BF-918 (#1626: the resident service, its executor and lifecycle), BF-930 (timing lines and the prefetch now in flight), AD-738e-1 (the emotion table reused for speed), AD-1025 (path anchoring), BF-291 and AD-718a (per-call `voice_name`), the 2026-10-25 licence policy and the Captain's ruling on #1662 (GPL allowed out of process), the 2026-11-27 consult (runtime ranking, sources).
+- External: not re-searched; the consult searched this week (kokoro-onnx source and PyPI metadata, the model-files release, Hugging Face licence and LFS ids, VOICES.md, misaki, phonemizer, espeakng-loader, onnxruntime GPU notes, CPU benchmarks) and the orchestrator measured the rest. Absorbed: kokoro-onnx `from_session` for thread control, the release's model files with LFS-derived hashes, Piper's line protocol. Rejected: Kokoro-FastAPI (no documented authentication), the PyTorch package (size). Reference-projects row updated (6.14; not overdue, reviewed 2026-10-25, interval 180 days; date used 2026-11-27).
+- Blind spots:
+  - A respawn (timeout, crash, LRU eviction) pays the cold cost again on the next sentence; D3 removes the common cause.
+  - A sentence that degrades is spoken in the browser voice, an audible change mid-reply; logged as `result=degraded`.
+  - With `sentence_pipelining_enabled: false` a long reply is one request: about 84 s of synthesis for 4096 characters at RTF 0.31, past the 30 s timeout. The Captain's config turns pipelining on; the docstring says so.
+  - A worker that refuses to start can exit before or after the line is written, so the service logs either `kokoro exit=2; stderr=...` or a broken pipe without stderr. The install script's test line shows the worker's messages on the console, which is where a bad install is caught.
+  - One process serialises sentences: two crew speaking at once queue; acceptable for interviews.
+  - The default `python_path` is the Windows venv layout; other platforms set it (docstring).
+  - `espeakng-loader`'s wheel carries no licence file; the entry records espeak-ng's own licence.
+  - The HXI status cache: a page that cached `browser` needs a reload after switching (section 13).
+
+## 15. Acceptance criteria
+
+1. The A/B of 8.1 holds; K1 to K19 are killed as 8.3 says.
+2. The focused checks of 8.2 pass on each milestone and on the frozen candidate; pre-existing tests in those files pass unchanged; the three config tools pass in `--check` form after regeneration.
+3. `git diff --check` is clean, new text is ASCII, and no file outside 6.19 changes.
+4. The Diff Reviewer approves against section 9.
+5. One receipted broad gate on the committed head of the merged batch is green.
+6. The orchestrator's checks 1 to 3 of section 13 pass before the PR is opened; the Captain's live acceptance (section 13, his steps 1 to 5) is recorded on #1662, which stays open.
+7. Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.
