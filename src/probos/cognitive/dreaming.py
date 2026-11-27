@@ -55,11 +55,34 @@ from probos.types import (
     MemorySource,
     episode_ran_in_plan_mode,
 )
+from probos.utils.loop_yield import LoopYield  # BF-932
 
 if TYPE_CHECKING:
     from probos.cognitive.procedure_challenger import ProcedureChallenger
 
 logger = logging.getLogger(__name__)
+
+# BF-932 (#1670): Step 7g gives the event loop a turn every this many notebook reads or word sets, and every this many
+# pair iterations. Counts, not times: the loop-stall sampler (probos.utils.loop_stall) shows what a turn costs.
+_STEP_7G_READS_PER_YIELD = 16
+_STEP_7G_PAIRS_PER_YIELD = 2000
+
+
+async def _reads_as_loaded(records_store: Any, item: dict) -> bool:
+    """BF-932 (#1670): True when a note Step 7g loaded still has the bytes it had then (its fingerprint is unchanged).
+
+    Step 7g gives the event loop turns between its reads and its writes, so a note can be revised meanwhile; any write
+    changes the file's bytes. ``item["_fp"]`` is the fingerprint the step took just before it read the note.
+    ``RecordsStore.entry_fingerprint`` has no await, so a caller that writes or renames right after this check gives
+    the loop no turn between the check and that write. A fingerprint that cannot be taken counts as changed; nothing
+    raised here reaches the caller.
+    """
+    try:
+        fp = await records_store.entry_fingerprint(item["path"])
+        return fp is not None and fp == item["_fp"]
+    except Exception:
+        logger.debug("Step 7g: could not fingerprint %s", item["path"], exc_info=True)
+        return False
 
 
 def _outcome_evidence(episodes: list[Any]) -> list[Any]:
@@ -940,6 +963,10 @@ class DreamingEngine:
 
                 threshold = self.config.notebook_consolidation_threshold
                 min_entries = self.config.notebook_consolidation_min_entries
+                # BF-932 (#1670): this step's reads and comparisons have no await of their own, so they gave the
+                # event loop no turn for the whole step; these counters give it one every so many units.
+                read_pacer = LoopYield(_STEP_7G_READS_PER_YIELD)
+                pair_pacer = LoopYield(_STEP_7G_PAIRS_PER_YIELD)
 
                 for agent_cs, entries in agents_entries.items():
                     if len(entries) < min_entries:
@@ -947,12 +974,17 @@ class DreamingEngine:
                     # Load content for each entry
                     loaded: list[dict] = []
                     for ent in entries:
+                        if read_pacer.due():
+                            await asyncio.sleep(0)  # BF-932: read_entry reads and parses without an await
                         try:
+                            # BF-932 (#1670): the file's fingerprint before the read, so a write that lands after it
+                            # reads as changed at the publication checks below; nothing suspends between the two.
+                            fp = await self._records_store.entry_fingerprint(ent["path"])
                             doc = await self._records_store.read_entry(
                                 ent["path"], reader_id="system",
                             )
-                            if doc:
-                                loaded.append({**ent, "_content": doc.get("content", ""), "_doc": doc})
+                            if doc and fp is not None:
+                                loaded.append({**ent, "_content": doc.get("content", ""), "_doc": doc, "_fp": fp})
                         except Exception:
                             pass
                     if len(loaded) < min_entries:
@@ -960,10 +992,18 @@ class DreamingEngine:
                     # Pairwise similarity → single-linkage clustering
                     n = len(loaded)
                     adj: dict[int, set[int]] = {i: set() for i in range(n)}
+                    # BF-932: each note's word set once (text_to_words is pure), not once per pair
+                    entry_words: list[set[str]] = []
+                    for item in loaded:
+                        if read_pacer.due():
+                            await asyncio.sleep(0)  # BF-932: give the event loop a turn
+                        entry_words.append(text_to_words(item["_content"]))
                     for i in range(n):
-                        words_i = text_to_words(loaded[i]["_content"])
+                        words_i = entry_words[i]
                         for j in range(i + 1, n):
-                            words_j = text_to_words(loaded[j]["_content"])
+                            if pair_pacer.due():
+                                await asyncio.sleep(0)  # BF-932: give the event loop a turn
+                            words_j = entry_words[j]
                             sim = jaccard_similarity(words_i, words_j)
                             if sim >= threshold:
                                 adj[i].add(j)
@@ -1008,6 +1048,20 @@ class DreamingEngine:
                         if unique_observations:
                             consolidated += "\n\n## Consolidated Observations\n\n"
                             consolidated += "\n\n---\n\n".join(unique_observations)
+                        # BF-932 (#1670): publish only when every member still reads as this step loaded it. The turns
+                        # above let a revision land after a read; the write below would overwrite it (the primary) or
+                        # archive it unmerged (the others). Nothing between this check and write_entry's file write
+                        # awaits, so no writer runs between them. A stale cluster waits for the next dream.
+                        stale = [
+                            item["path"] for item in cluster_items
+                            if not await _reads_as_loaded(self._records_store, item)
+                        ]
+                        if stale:
+                            logger.info(
+                                "Step 7g: skipped a cluster of %d notes of agent %s; changed after the read: %s",
+                                len(cluster_items), agent_cs, ", ".join(stale),
+                            )
+                            continue
                         # Write consolidated entry
                         await self._records_store.write_entry(
                             author=primary.get("frontmatter", {}).get("author", "system"),
@@ -1017,6 +1071,13 @@ class DreamingEngine:
                         )
                         # Archive non-primary entries
                         for other in others:
+                            # BF-932 (#1670): the primary's write and each rename below await git (and the indexer), so a
+                            # member can be revised after the check above. A member that no longer reads as loaded stays
+                            # live, so its revision is not archived unmerged; nothing between this check and the rename
+                            # awaits.
+                            if not await _reads_as_loaded(self._records_store, other):
+                                logger.info("Step 7g: left %s live; it changed after the read", other["path"])
+                                continue
                             try:
                                 old_path = self._records_store._safe_path(other["path"])
                                 new_dir = old_path.parent / "_archived"
@@ -1063,6 +1124,8 @@ class DreamingEngine:
                     # Load content for cross-agent comparison
                     cross_loaded: list[dict] = []
                     for ent in agent_dept_entries:
+                        if read_pacer.due():
+                            await asyncio.sleep(0)  # BF-932: read_entry reads and parses without an await
                         try:
                             doc = await self._records_store.read_entry(
                                 ent["path"], reader_id="system",
@@ -1076,12 +1139,20 @@ class DreamingEngine:
                     # Find cross-agent matches
                     n_cross = len(cross_loaded)
                     cross_adj: dict[int, set[int]] = {i: set() for i in range(n_cross)}
+                    # BF-932: each note's word set once (text_to_words is pure), not once per pair
+                    cross_words: list[set[str]] = []
+                    for item in cross_loaded:
+                        if read_pacer.due():
+                            await asyncio.sleep(0)  # BF-932: give the event loop a turn
+                        cross_words.append(text_to_words(item["_content"]))
                     for i in range(n_cross):
-                        words_i = text_to_words(cross_loaded[i]["_content"])
+                        words_i = cross_words[i]
                         for j in range(i + 1, n_cross):
+                            if pair_pacer.due():
+                                await asyncio.sleep(0)  # BF-932: give the event loop a turn
                             if cross_loaded[i]["agent"] == cross_loaded[j]["agent"]:
                                 continue  # skip same-agent pairs
-                            words_j = text_to_words(cross_loaded[j]["_content"])
+                            words_j = cross_words[j]
                             sim = jaccard_similarity(words_i, words_j)
                             if sim >= conv_threshold:
                                 cross_adj[i].add(j)
@@ -1107,10 +1178,14 @@ class DreamingEngine:
                             # Compute coherence = avg pairwise similarity
                             pairs = 0
                             total_sim = 0.0
+                            # BF-932: the word sets built above, in the component's order; the sum's order is unchanged
+                            member_words = [cross_words[idx] for idx in component]
                             for ci in range(len(component)):
-                                wi = text_to_words(cluster_entries[ci]["_content"])
+                                wi = member_words[ci]
                                 for cj in range(ci + 1, len(component)):
-                                    wj = text_to_words(cluster_entries[cj]["_content"])
+                                    if pair_pacer.due():
+                                        await asyncio.sleep(0)  # BF-932: give the event loop a turn
+                                    wj = member_words[cj]
                                     total_sim += jaccard_similarity(wi, wj)
                                     pairs += 1
                             coherence = total_sim / pairs if pairs else 0.0
