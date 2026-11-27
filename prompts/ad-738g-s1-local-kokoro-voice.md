@@ -1867,7 +1867,7 @@ PR title: `A local Kokoro voice behind the TTS backend seam, off until configure
 3. Restart the vessel and reload the HXI page (a page that cached `browser` does not re-probe).
 4. Warm-up: ask any crew member one short question and let the reply play; the first sentence takes about 3 to 5 s.
 5. Read the log: `Select-String -Path "$env:LOCALAPPDATA\ProbOS\data\logs\probos.log" -Pattern "resident kokoro started|AD-738g: kokoro"`.
-   Pass: one `BF-918: resident kokoro started (voice=kokoro-v1.0)` line after the restart, then one `AD-738g: kokoro voice=af_heart speed=... chars=N synth_ms=M result=ok` line per sentence; after the warm-up `synth_ms` is roughly a third of the sentence's spoken length (about 1.1 s for a 65-character sentence); no `result=degraded`; the voice is Kokoro and the mouth moves as before. A `result=degraded` line with `kokoro is not installed` means step 1 did not complete.
+   Pass: one `BF-918: resident kokoro started (voice=kokoro-v1.0)` line after the restart, then one `AD-738g: kokoro voice=V speed=... chars=N synth_ms=M result=ok role=R` line per sentence, where R is the crew member's role and V its voice from the AD-738f table or `tts.kokoro.agent_voices` (a counselor logs `voice=af_bella ... role=counselor`); the ship voice (`voice=af_heart` with the block above) appears only for a reply with no crew member (`role=-`) or for a role neither names (A2, 16.12: corrected, it said `voice=af_heart` per sentence, which is false once AD-738f is stacked); after the warm-up `synth_ms` is roughly a third of the sentence's spoken length (about 1.1 s for a 65-character sentence); no `result=degraded`; the voice is Kokoro and the mouth moves as before. A `result=degraded` line with `kokoro is not installed` means step 1 did not complete.
 
 ## 14. Prior art and blind spots
 
@@ -2430,7 +2430,7 @@ Tests with no row, by design: **R1** (Piper's line without fields is the base's 
 ### 16.6 Contract exceptions recorded (no code)
 
 - **Milestone tests (6.15, 6.19).** The R and W tests were written in M3, not in M1 and M2 as 6.15 and 6.19 prescribe. The commits stand; the M1 and M2 commits are not focused-test-complete on their own, and the frozen candidate is the unit of evidence.
-- **ASCII (6.19, section 9 item 11, acceptance 3).** "ASCII-only" applies to hand-written text. The generated `docs/development/config-reference.md` contains `—`, `≥` and `≤` written by `gen_config_reference.py`; it is regenerated, never hand-edited.
+- **ASCII (6.19, section 9 item 11, acceptance 3).** "ASCII-only" applies to hand-written text. The generated `docs/development/config-reference.md` contains `—`, `≥` and `≤` written by `gen_config_reference.py`; it is regenerated, never hand-edited. *(Extended by A2, 16.12:)* this contract's own non-ASCII characters are exempt too when they sit in a verbatim quotation (of source, a document or tool output) or in a diagnostic example that must show the character (such as the e-acute of a non-ASCII path in 16.3). Its SEARCH/REPLACE blocks are ASCII except where they carry existing text verbatim: the em dash in 6.6's quoted docstring (lines 940, 948) and in 6.14's roadmap rows (1341, 1345).
 
 ### 16.7 Section 9 after A1
 
@@ -2445,7 +2445,7 @@ Tests with no row, by design: **R1** (Piper's line without fields is the base's 
 
 1. The worker's protocol stdout is the process's fd 1; a native library write to fd 1 would reach the pipe (injected-only; the resident reader skips lines that are not the expected WAV path, so it is ignored at run time and only the installer's strict answer comparison would reject it; corrected after the AD-738f round-2 review). Fix sketch in 16.1 row 5.
 2. Piper's `TTSConfig.timeout_seconds` (`experience.py`, `class TTSConfig`, plain `float = 10.0`; line 864 at `cffb4d99`; the orchestrator corrected A1's first anchor, which named `LipSyncConfig`'s field) accepts infinity and values past `threading.TIMEOUT_MAX`, as Kokoro's did.
-3. Replaced by 16.11.4 (A1.1 removed the console-encoding swap). Was: the installer's answer comparison relies on setting `[Console]::OutputEncoding`.
+3. Replaced by 16.11.4 (A1.1 removed the console-encoding swap; *A2, 16.12, restores it*, so this original item stands again as a recorded limit: a host that refuses the setting prints `[warn]`, and under a non-ASCII-compatible console the comparison may then fail). Was: the installer's answer comparison relies on setting `[Console]::OutputEncoding`.
 4. AD-741's secret rule treats a dictionary key as a field name; any future dict-valued config whose keys are data meets the same redaction (here closed at parse time for `agent_voices` only).
 
 ### 16.9 Verified Against Codebase (A1, 2026-11-27, tree `f573a703`)
@@ -2497,6 +2497,8 @@ Repair round; no new design. The escape is the standard JSON `\uXXXX` form (RFC 
 ### 16.11 Amendment A1.1: the installer guard replaces G9 (2026-11-27)
 
 **Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-27. **Base:** `7c63d3dc` (A1 applied and committed). Source: the orchestrator's probes `G:\speech-kokoro-probe\probe_g9_ascii_venv.ps1` and `probe_isolate_espeak.ps1` (2026-11-27).
+
+> **Corrected by A2 (16.12), 2026-11-27. Three readings in 16.11 are false; the text below stays as A1.1 wrote it.** (1) The console-encoding swap is not dead code, and "ASCII under any console encoding" (H3's comment, 16.11.3) is wrong: PowerShell decodes the worker's UTF-8 answer with `[Console]::OutputEncoding`, and a UTF-16 console garbles even an ASCII answer, so H3 fails the comparison after a successful synthesis (orchestrator's `probe_utf16_console.ps1`, 5.1 and 7; round-2 review finding 2). A2 restores the swap. (2) H2 does not test "the resolved `$DestDir`": it tests the text after root anchoring, and `IsPathRooted` is true for a drive-relative `G:x`, which then resolves against a current directory that may be non-ASCII (`probe_driverel.ps1`; finding 1). A2 resolves to the full provider path first. (3) 16.11.1 and 16.11.2's "the hand check above discriminates" are replaced by 16.12.2.
 
 **Decision: (b).** G9's transport is correct, but its premise in 16.1 row 2 ("a non-ASCII destination" is a valid one) is refuted: espeak-ng cannot open its data from a venv whose path has a non-ASCII character (isolation: non-ASCII venv + ASCII model paths = exit 1, `...espeak-ng-data\phontab: No such file or directory`; ASCII venv + non-ASCII model and output paths = wav written). The installer always puts the venv and the probe under `$DestDir`, so the escape and the console-encoding swap are reachable only on a run that cannot succeed. A guard on the resolved `$DestDir`, before anything is created, is the real protection; the dead code goes with it, and the script no longer touches the user's console state. (a) keeps unreachable code; (c) leaves the obscure failure after a 350 MB download and a venv build.
 
@@ -2577,6 +2579,8 @@ REPLACE: the same text, then a new line:
 
 #### 16.11.1 Installer end-to-end (replaces the 16.3 installer paragraph; the orchestrator, by hand)
 
+> **Superseded by 16.12.2 (A2).** Kept as the record of what A1.1 asked.
+
 From the worktree root, PowerShell 5.1 and 7 both:
 ```text
 $Bad = "G:\speech-kokoro-probe\voix-$([char]0xE9)-a11"
@@ -2627,3 +2631,173 @@ FOUND: lines 43, 47, 49, 174, 205+ (other entries); none on line 5              
 #### 16.11.6 Prior art
 
 No new design: an up-front input check. The espeak-ng limit is the orchestrator's measurement; no external search was run, and none is cited as its cause (the C library falling back to its build-time data path is what the error shows, not a documented contract). Considered, deferred: a worker-side workaround (copying `espeak-ng-data` to an ASCII temp folder or using an 8.3 short path), which would widen the protocol slice for a case no supported install reaches.
+
+### 16.12 Amendment A2: review round 2 repairs (2026-11-27)
+
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-27. **Base:** `d6bbd913` (clean; A1, A1.1 and the orchestrator's two docs commits applied). Sources: `review-738g-r2.md` (agent 3de72541) and `review-738f-r2.md` (agent 583bb6be), the orchestrator's probes `G:\speech-kokoro-probe\probe_driverel.ps1` and `probe_utf16_console.ps1` (2026-11-27, PowerShell 5.1 and 7).
+
+#### 16.12.1 Decisions
+
+| 738g r2 finding | Decision | Reason |
+|---|---|---|
+| 1 P2 the guard reads unresolved text | **Fix (A2-1).** After the root anchoring, `$DestDir = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($DestDir)`, then the guard. | `IsPathRooted` is true for `G:x` and `\x`, which resolve against a current directory. This API resolves a path that need not exist against PowerShell's current location on that drive, as `New-Item` does; the orchestrator confirmed it gives `G:\ascii-destination-check`. Writing it back to `$DestDir` hands `New-Item`, `uv` and Python one absolute path, so a native process cannot resolve a relative path against a different current directory. A drive that does not exist (`Q:x`) throws PowerShell's own error before anything is created: accepted. |
+| 2 P2 regression (A1.1) the answer is garbled under a UTF-16 console | **Fix (A2-2): restore A1's UTF-8 scope around the worker call, console restored in `finally`; no escape.** | PowerShell decodes native output with `[Console]::OutputEncoding`. A1's block passed under a UTF-16 console on both versions; with an ASCII path its escape changes nothing, so that probe is evidence for A2-2. **Rejected: `System.Diagnostics.Process` with `StandardOutputEncoding`.** On 5.1 (.NET Framework) `ProcessStartInfo` has no `ArgumentList`, so four paths, the worker's lying under a checkout that may be non-ASCII or contain spaces, would need a hand-quoted `Arguments` string, as well as stdin write-and-close and stderr passthrough: about 15 new untested lines against 7 measured ones. The console change is scoped and restored, the idiom `about_Character_Encoding` gives. **Rejected: dropping the answer comparison.** It is the installer's only check that the protocol stdout carries exactly the path (16.8 item 1). |
+| 3 P3 the Captain's check expects `af_heart` per sentence | **Fixed in place**: section 13, Captain step 5. | It now matches `kokoro_backend.py:124-126` with AD-738f's `role=` field and the table voice (counselor `af_bella`), and says the ship voice appears with `role=-` or for a role neither table names (`kokoro_backend.py:92-93`). AD-738f's own check (its contract, line 1265) already says this. D10 (section 3) stays as written: it is 738g's own record, and 738f records the appended field. Searched: section 12's issue text names no per-sentence voice; lines 1505 and 2278 are test bodies. |
+| 4 P4 `DECISIONS.md:32` join | Fixed in `d6bbd913`. | Nothing in A2. |
+| 5 P4 the ASCII exception is not literal | **Extend 16.6 (done in place)** to verbatim quotations (including existing text a SEARCH/REPLACE block carries) and diagnostic examples. | ASCII-ifying a quotation would falsify it, and the e-acute in 16.3's example is the point of the example. Enumerated: `[^\x00-\x7F]` in this contract hits only 940, 948, 1341, 1345 (quoted source and roadmap text), 2396 (16.3's example) and 2433 (16.6 quoting the generated reference). Generated files are untouched. |
+| 6 P3 K-FD1 record | Fixed (contract 16.8 item 1, #1869). | Nothing in A2. |
+| 7 P4 NaN comment | **Fix (A2-3)**, comment only. | `Condition.wait` treats a timeout that is not `> 0` as no wait, so `Timer(nan)` fires at once (0.48 ms in the probe), the opposite of "never". The assertions stay. |
+| K-TIMEOUT-PIPER | Stays P3, pre-existing, in #1869 (anchor `TTSConfig.timeout_seconds`, `experience.py:864`). | Both reviewers place it there. |
+
+`DECISIONS.md`: **no pair.** The *Limit* bullet (line 32) says the script "refuses such a destination before creating anything" and that the escaped pipe was replaced. Both statements hold after A2, and A2-1 makes the first true for drive-relative input. The bullet never mentioned the console swap.
+
+AD-738f contract: **no edit.** Its round-2 repairs are `d6bbd913` and #1869.
+
+#### 16.12.2 The pairs
+
+**Order.** A2-1, then A2-2 to `scripts/kokoro-fetch.ps1`; A2-3 to `tests/test_ad738g_kokoro_voice.py`. The working copies are CRLF and the blocks LF: match after normalising. Each SEARCH occurs once in its file at its turn (counted on `d6bbd913`). Focused check: `pytest tests/test_ad738g_kokoro_voice.py -q -n 0` (32 pass; the only Python change is a comment). Commit (the orchestrator): subject `Speech: the Kokoro installer checks the resolved destination and decodes the worker's answer as UTF-8 again (AD-738g A2)`, body ends `Refs #1662.`; stage exactly `scripts/kokoro-fetch.ps1`, `tests/test_ad738g_kokoro_voice.py` and this contract.
+
+**A2-1.** SEARCH:
+```powershell
+if (-not [System.IO.Path]::IsPathRooted($DestDir)) { $DestDir = Join-Path $Root $DestDir }
+```
+REPLACE:
+```powershell
+if (-not [System.IO.Path]::IsPathRooted($DestDir)) { $DestDir = Join-Path $Root $DestDir }
+# IsPathRooted is also true for a drive-relative "G:kokoro" or a root-relative "\kokoro",
+# which name a folder under a current directory. Check the full path, and hand that one
+# absolute path to New-Item, uv and Python alike.
+$DestDir = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($DestDir)
+```
+
+**A2-2.** SEARCH:
+```powershell
+# $Probe lies under $DestDir, which the guard above keeps ASCII, so the piped line and the
+# worker's answer are ASCII under any console encoding (PowerShell 5.1 pipes ASCII).
+$Line = '{"text": "Kokoro is ready, Captain.", "output_file": ' + (ConvertTo-Json $Probe) + ', "voice": "af_heart", "speed": 1.0}'
+$Answer = $Line | & $Python -I $Worker --model $Model --voices $Voices --threads 4 --default-voice af_heart
+if ($LASTEXITCODE -ne 0 -or -not (Test-Path $Probe) -or "$Answer".Trim() -ne $Probe) {
+    throw "The Kokoro worker did not speak the test line (exit $LASTEXITCODE, answer '$Answer'); its messages are above."
+}
+```
+REPLACE:
+```powershell
+# $Probe lies under $DestDir, which the guard above keeps ASCII, so the piped line needs no
+# escaping (PowerShell 5.1 pipes ASCII). The worker answers in UTF-8, and PowerShell decodes
+# a native program's output with [Console]::OutputEncoding, which need not be ASCII-compatible
+# (a UTF-16 console garbles even an ASCII answer): the console decodes UTF-8 for this one
+# call and gets its own encoding back afterwards.
+$Line = '{"text": "Kokoro is ready, Captain.", "output_file": ' + (ConvertTo-Json $Probe) + ', "voice": "af_heart", "speed": 1.0}'
+$ConsoleEncoding = [Console]::OutputEncoding
+try { [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false } catch { Write-Host "[warn] cannot set the console encoding; the answer comparison may fail" -ForegroundColor Yellow }
+try {
+    $Answer = $Line | & $Python -I $Worker --model $Model --voices $Voices --threads 4 --default-voice af_heart
+    $Exit = $LASTEXITCODE
+} finally {
+    try { [Console]::OutputEncoding = $ConsoleEncoding } catch { }
+}
+if ($Exit -ne 0 -or -not (Test-Path $Probe) -or "$Answer".Trim() -ne $Probe) {
+    throw "The Kokoro worker did not speak the test line (exit $Exit, answer '$Answer'); its messages are above."
+}
+```
+
+**A2-3.** `tests/test_ad738g_kokoro_voice.py`, `test_c4_...`. SEARCH:
+```python
+    # threading.Timer raises OverflowError past TIMEOUT_MAX (4294967.0 on Windows) inside its
+    # own thread, so the deadline would silently never fire; infinity and NaN never fire either.
+```
+REPLACE:
+```python
+    # threading.Timer raises OverflowError past TIMEOUT_MAX (4294967.0 on Windows) inside its
+    # own thread, so the deadline would silently never fire; infinity is past it too. NaN is
+    # the opposite: Condition.wait treats it as no wait, so the timer fires at once and every
+    # sentence would time out (measured 2026-11-27).
+```
+
+**Contract text changed in place by A2** (no pair; already edited in this file): section 13, Captain step 5 (finding 3); 16.6's ASCII bullet (finding 5); 16.8 item 3 (the swap is back); a correction banner under 16.11's provenance line and a superseded banner on 16.11.1. 16.11's own text stays as A1.1 wrote it.
+
+#### 16.12.3 Installer end-to-end (replaces 16.11.1; the orchestrator, by hand, from the worktree root)
+
+**Step 0, parse (a 5.1 window and a 7 window):**
+```text
+$e = $null; [void][System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path scripts\kokoro-fetch.ps1).Path, [ref]$null, [ref]$e); $e.Count
+```
+Pass: `0` in both.
+
+**Session A, the refusals (one window, either version; the children run both). `uv` is hidden, so no run can build anything, before A2 or after:**
+```text
+$Wt = (Get-Location).Path
+$env:PATH = ($env:PATH -split ';' | Where-Object { $_ -and -not (Test-Path (Join-Path $_ 'uv.exe')) }) -join ';'
+Get-Command uv -ErrorAction SilentlyContinue                      # must print nothing
+$Bad = "G:\speech-kokoro-probe\voix-$([char]0xE9)-a2"
+$Cwd = "G:\speech-kokoro-probe\voix-$([char]0xE9)-cwd"
+New-Item -ItemType Directory -Force $Cwd | Out-Null
+Test-Path $Bad; Test-Path "$Cwd\rel-a2"                           # False, False
+powershell -ExecutionPolicy Bypass -File "$Wt\scripts\kokoro-fetch.ps1" -DestDir $Bad; $LASTEXITCODE     # (a5)
+pwsh -ExecutionPolicy Bypass -File "$Wt\scripts\kokoro-fetch.ps1" -DestDir $Bad; $LASTEXITCODE           # (a7)
+Push-Location $Cwd
+powershell -ExecutionPolicy Bypass -File "$Wt\scripts\kokoro-fetch.ps1" -DestDir G:rel-a2; $LASTEXITCODE # (b5)
+pwsh -ExecutionPolicy Bypass -File "$Wt\scripts\kokoro-fetch.ps1" -DestDir G:rel-a2; $LASTEXITCODE       # (b7)
+Pop-Location
+Test-Path $Bad; Test-Path "$Cwd\rel-a2"                           # still False, False
+```
+Pass: (a5) and (a7) exit 1 at once with `The destination 'G:\speech-kokoro-probe\voix-<e-acute>-a2' contains a non-ASCII character. ...`. (b5) and (b7) exit 1 at once with `The destination 'G:\speech-kokoro-probe\voix-<e-acute>-cwd\rel-a2' contains a non-ASCII character. ...`: the message names the **resolved** path, not `G:rel-a2`. No run prints `uv is required`. Both folders are still absent afterwards. (If `Get-Command uv` prints a path, remove that folder from `$env:PATH` too.)
+
+**Session B, the worker call (normal PATH; the models are present under this worktree's gitignored `tools/kokoro`). In a 5.1 window and then a 7 window, entering the lines one at a time:**
+```text
+$Saved = [Console]::OutputEncoding
+[Console]::OutputEncoding = [System.Text.Encoding]::Unicode
+& .\scripts\kokoro-fetch.ps1                                       # (c5) / (c7)
+[Console]::OutputEncoding.WebName                                  # must print utf-16
+[Console]::OutputEncoding = $Saved
+```
+Then, with the console as it was:
+```text
+powershell -ExecutionPolicy Bypass -File scripts\kokoro-fetch.ps1   # (d5)
+pwsh -ExecutionPolicy Bypass -File scripts\kokoro-fetch.ps1         # (e7)
+```
+Pass: (c5) and (c7) each print two `[skip]` lines (the idempotent re-run on both versions), no `[warn]`, and end `[ ok ] the Kokoro worker spoke the test line (... bytes of 24 kHz WAV)`. `WebName` prints `utf-16` afterwards, so the `finally` restored the caller's console. (d5) and (e7) end the same way, followed by `Kokoro is installed at: <worktree>\tools\kokoro`, an absolute path.
+
+#### 16.12.4 Mutation rows of record (run the two "before" runs on `d6bbd913`, before the Builder applies A2)
+
+| Row | Mutant | Discriminating step | Expected on the mutant | Status |
+|---|---|---|---|---|
+| KA1 | A2-1's resolve line absent (exactly `d6bbd913`) | Session A (b5), (b7) | prints `uv is required ...`: the guard passed the ASCII text | Run live before A2 (safe: `uv` is hidden, so it throws before `New-Item`). Also on record: `probe_driverel.ps1` (guard on the text rejects False; resolved path non-ASCII True; 5.1 and 7) |
+| KA2 | A2-2's UTF-8 scope absent (exactly `d6bbd913`) | Session B (c5), (c7) | `The Kokoro worker did not speak the test line (exit 0, answer '...')` | Run live before A2. Also on record: `probe_utf16_console.ps1` (A1.1 block FAIL, A1 block PASS, both versions) |
+| -- | the `finally` restore removed | Session B's `WebName` line | prints `utf-8` | Not run as a mutant: A1's line is unchanged and the check prints it on every run |
+
+K1 to K36: no row touches the installer or the C4 comment, so none is rerun. A2-3 is a comment and has no row.
+
+#### 16.12.5 Tests
+
+None added; the count stays 32 Python and 3 UI. A cheap discriminating test for A2-2 does not exist. A PowerShell parse of the script (step 0) passes on both the defective and the repaired block, so it guards syntax only, and it stays a hand step rather than a Windows-only pytest. Exercising the comparison needs `uv`, the venv and the real models, because the installer hardcodes the worker. Sessions A and B with KA1 and KA2 are the discriminating evidence.
+
+#### 16.12.6 Verified Against Codebase (A2, 2026-11-27, tree `d6bbd913`)
+
+```text
+git log --oneline -1                                                     d6bbd913 (HEAD)
+grep -n "IsPathRooted" scripts/kokoro-fetch.ps1                          33 (count 1)
+grep -n "contains a non-ASCII character" scripts/kokoro-fetch.ps1        35 (guard at 34-36, before uv check 44 and New-Item 47)
+grep -n "worker's answer are ASCII under any console encoding" scripts/kokoro-fetch.ps1   97 (A2-2 SEARCH = 96-102)
+grep -n "never fire either" tests/test_ad738g_kokoro_voice.py           622 (count 1; A2-3 SEARCH = 621-622)
+grep -n "AD-738g: kokoro voice=%s .* role=%s" src/probos/audio/tts/kokoro_backend.py   124; role or "-" at 126
+grep -n "agent_voices" src/probos/audio/tts/kokoro_backend.py            92-93 (the Captain's map; precedence listed in resolve_voice's docstring, 80-85)
+grep -n "voice=af_bella ... result=ok role=counselor" prompts/ad-738f-s1-per-agent-kokoro-voices.md   1265
+grep -n "\*Limit\.\* The venv must live" DECISIONS.md                    32
+```
+Absence Verified (A2):
+```text
+CLAIM: the script has no $Exit and no OutputEncoding today (A2-2 introduces both)
+RUN:   Grep "\$Exit|OutputEncoding" scripts/kokoro-fetch.ps1
+FOUND: nothing                                                                       HOLDS: yes
+CLAIM: no test reads the installer's text or the C4 comment
+RUN:   Grep "kokoro-fetch|never fire" tests
+FOUND: test_ad738g_kokoro_voice.py:489 (a log substring naming the script), :622 (the comment itself); others are unrelated "never fire(d)" prose   HOLDS: yes
+CLAIM: no other per-sentence af_heart expectation in this contract outside test bodies
+RUN:   Grep "voice=af_heart.{0,120}" -o prompts/ad-738g-s1-local-kokoro-voice.md
+FOUND: 1505, 2278 (test bodies), 1870 (section 13; corrected by A2)                  HOLDS: yes
+```
+
+#### 16.12.7 Prior art
+
+Repair round; no new design. `PathIntrinsics.GetUnresolvedProviderPathFromPSPath` is PowerShell's documented resolver for a path that need not exist. The console-decoding behaviour is the one 16.10 already cited (`about_Character_Encoding`). No external search was run.
