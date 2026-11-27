@@ -10,6 +10,17 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ## Era V — Civilization (Phases 31-36)
 
+### BF-1001 -- The live crew-session projection test waits for its first semantic frame by a deadline (2026-11-27, #1861)
+
+- *Scope.* `tests/test_ad1133_live_crew_session_refresh.py` only. Contract: `prompts/bf-1001-1861-projection-frame-deadline.md`.
+- *Cause.* `receive_semantic_frame` waited 500 polls of 2 ms (about 1.2 s on the gate host). The over-1000-retired case's projection over 200 active and 1,003 retired children arrived after that budget in two 16-worker canonical gates of one docs-only commit while other work ran on the host; a third gate of that commit passed it. No product code is implicated.
+- *D1.* `_wait_until` takes an optional `timeout_s`, a `time.monotonic()` deadline; without it the 500-poll budget stays for its other call sites (BF-981 D1: a budget that is not under test is raised far above the start; budgets that no evidence implicates are left).
+- *D2.* The frame deadline is 15.0 s: above 12 times the budget that ran out and below pytest-timeout's 180 s; a passing wait returns when the frame arrives, so the deadline costs time only in a failing run. A test pins it finite and between 5 s and 30 s.
+- *D3.* The discriminating test is counted, not timed: a queue that reads empty 501 times fails the 500-poll wait on any host and passes the deadline.
+- *D4.* Acceptance requires two consecutive canonical gates of this commit at 3 workers, each with a loop of the case and 13 CPU burners running beside it from the gate's first progress line to its end; their records go on #1861. The failures were at 16 workers on a loaded host; 3 workers and 13 burners are 16 processes beside the loop, as many as the workers of those gates. The count is lowered for the evidence, not as the repair (the *Rejected* line stands): 16-worker gates on this host have aborted with pytest-timeout kills (#1523 F-757), twice before the case ran; the measured reason is recorded on #1861. Under CPU burners (row L2): candidate 10 of 10 passed under 32 burners, largest frame wait 2.6 s; base 4 of 10.
+- *Rejected.* A deadline for all 48 call sites on the base (no evidence that the others fail); a separate loop in `receive_semantic_frame` (a second poll loop, and the one-budget test would count none); awaiting the queue directly (moves the heartbeat checks out of the predicate); lowering `--workers` (BF-981 D3).
+- *Reversal.* Revert the commit. Nothing persisted changes.
+
 ### AD-1337 follow-up -- the secret masker reads each LLM tier's API key from the running config; tests stand in for the credential CLI (2026-11-26, #1820)
 
 - *Scope.* #1820 items ad-1337 R1, R7 and R23. `SecretMasker.__init__` (a keyword-only `config_values`), `SecretMasker._values`, `startup/finalize.py` (`_configured_api_key_pairs`, `_wire_secret_masker`); `tests/conftest.py` (`_ad1337_r23_credential_cli`). Contract `prompts/ad-1337-r23-r7-r1-masker-sources.md`.
