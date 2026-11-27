@@ -80,9 +80,10 @@ class KokoroBackend:
     def resolve_voice(self, voice_override: str | None, agent_type: str | None = None) -> str:
         """The voice for one call; the first match wins (AD-738f, #1868):
 
-        1. ``voice_override`` when it is a catalogue id (a crew member's saved voice-profile
-           ``voice_name``, set by an accepted AD-718a proposal or a profile edit; under Kokoro the
-           HXI picker lists browser voices); any other name (a Piper or browser voice name) is ignored;
+        1. ``voice_override`` when it is a catalogue id (the ``voice_name`` the request carries:
+           a crew member's voice profile supplies it, saved or being sampled, set by an AD-718a
+           proposal or a profile edit; under Kokoro the HXI picker lists browser voices); any other
+           name (a Piper or browser voice name) is ignored;
         2. the Captain's ``tts.kokoro.agent_voices[agent_type]``;
         3. the built-in ``KOKORO_ROLE_VOICES[agent_type]``;
         4. ``tts.kokoro.voice``, the ship's voice (no role, or a role in neither map).
