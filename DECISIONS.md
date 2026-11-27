@@ -29,7 +29,8 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 - *D4.* CPU, 4 threads, 30 s timeout, no prewarm in S1 (measured real-time factor 0.314; one warm-up line before recording).
 - *D5.* The 28 English voice ids are the config's `Literal`, the single catalogue; a foreign per-call voice name is ignored.
 - *Licence.* GPL-3.0-or-later phonemizer and espeak-ng run only in the operator-installed worker process, which exchanges text, voice and speed in and a WAV path out; that venv does not contain `probos` (the install script checks it cannot import it), and `python -I` keeps `PYTHON*` variables and the user site out.
-- *Limit.* The venv must live under an ASCII-only path: espeak-ng cannot open its data from a path with a non-ASCII character (measured 2026-11-27). `scripts/kokoro-fetch.ps1` refuses such a destination before creating anything; the model, voices and output paths may be anything. An escaped installer pipe (A1's G9) was replaced by this guard, because the run it served cannot succeed.- *Reversal.* Revert the four commits and set `tts.backend` back to `piper` or `browser`; no persisted format changes. `tools/kokoro/` can be deleted.
+- *Limit.* The venv must live under an ASCII-only path: espeak-ng cannot open its data from a path with a non-ASCII character (measured 2026-11-27). `scripts/kokoro-fetch.ps1` refuses such a destination before creating anything; the model, voices and output paths may be anything. An escaped installer pipe (A1's G9) was replaced by this guard, because the run it served cannot succeed.
+- *Reversal.* Revert the four commits and set `tts.backend` back to `piper` or `browser`; no persisted format changes. `tools/kokoro/` can be deleted.
 
 ### BF-1002 -- a full dream's dream_complete event reaches its listeners; one helper builds the payload for both emit sites (2026-11-27, #1820)
 
