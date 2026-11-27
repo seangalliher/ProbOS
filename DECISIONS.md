@@ -10,6 +10,17 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ## Era V — Civilization (Phases 31-36)
 
+### AD-738g S1 -- a local Kokoro voice: a resident worker in the operator's venv, keyed into the BF-918 voice service (2026-11-27, #1662)
+
+- *Scope.* `audio/tts/resident.py` (`WorkerKey`, `KokoroWorkerKey`, request `fields`), `audio/tts/kokoro_backend.py` (new), `scripts/kokoro_worker.py` (new), `scripts/kokoro-fetch.ps1` (new), `config_models/experience.py` (`KokoroTTSConfig`, `TTSConfig.kokoro`), `ui/src/audio/voice.ts` (the gate). Contract `prompts/ad-738g-s1-local-kokoro-voice.md`.
+- *D1.* Runtime: kokoro-onnx 0.6.1 in a separate venv under `tools/kokoro/`, one resident process speaking Piper's line protocol. Not the PyTorch package (multi-GB), not Kokoro-FastAPI (no documented authentication), not a ProbOS HTTP service (deferred to the remote-Mac slice).
+- *D2.* The resident service is generalised by a key Protocol, not a second worker class (DRY); Piper's line, retirement and log text stay as BF-918 shipped, except two service-wide lines that now say "voice".
+- *D3.* A Kokoro request the engine cannot speak is answered with no file and the process stays; an unreadable line or a missing default voice ends the worker. A respawn costs about 3.2 s of model load and first-call initialisation.
+- *D4.* CPU, 4 threads, 30 s timeout, no prewarm in S1 (measured real-time factor 0.314; one warm-up line before recording).
+- *D5.* The 28 English voice ids are the config's `Literal`, the single catalogue; a foreign per-call voice name is ignored.
+- *Licence.* GPL-3.0-or-later phonemizer and espeak-ng run only in the operator-installed worker process, which exchanges text, voice and speed in and a WAV path out; the worker runs under `python -I` and cannot import `probos`.
+- *Reversal.* Revert the four commits and set `tts.backend` back to `piper` or `browser`; no persisted format changes. `tools/kokoro/` can be deleted.
+
 ### BF-1002 -- a full dream's dream_complete event reaches its listeners; one helper builds the payload for both emit sites (2026-11-27, #1820)
 
 - *Scope.* #1820 item bf-989 R6, part a. `cognitive/dreaming.py`: `_full_dream_complete_payload` (new), `DreamScheduler.force_dream`, `DreamScheduler._monitor_loop`. Contract `prompts/bf-1002-1820-full-dream-complete-event.md`.
