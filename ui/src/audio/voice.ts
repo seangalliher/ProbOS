@@ -256,9 +256,26 @@ let _speakGeneration = 0;
 let _activeUtteranceId: number | null = null;
 
 /** BF-918 (#1626): sentences synthesized ahead of the one playing under AD-1071
- *  pipelining. One hides a sentence's synthesis behind the previous one's
- *  playback, and caps what a stopped reply can have spent at one sentence. */
-const TTS_PREFETCH_LOOKAHEAD = 1;
+ *  pipelining. BF-930 (#1668): three (was one), so a sentence whose synthesis or
+ *  storage stalls is covered by up to three sentences of audio already held; a
+ *  stopped reply can have spent up to three syntheses (CPU only). */
+const TTS_PREFETCH_LOOKAHEAD = 3;
+
+/** BF-930 (#1668): audio the queue holds before the first sentence plays. A first
+ *  sentence at least this long plays at once, as before; a shorter one waits for the
+ *  next (at most TTS_PREFETCH_LOOKAHEAD more syntheses). */
+const TTS_START_BUFFER_MS = 3000;
+
+/** BF-930: `startWhen` of the AD-1071 queue. A sentence of unknown duration (0 or
+ *  missing) or one whose preparation failed (`null`) counts as a full buffer, so it
+ *  starts exactly as before. */
+function _startBufferFilled(ready: Array<PreparedSpeech | null>): boolean {
+  let held = 0;
+  for (const prepared of ready) {
+    held += prepared !== null && prepared.durationMs > 0 ? prepared.durationMs : TTS_START_BUFFER_MS;
+  }
+  return held >= TTS_START_BUFFER_MS;
+}
 
 /** BF-918 (review round 1, D7a): the `dropped` reason of a dispatched utterance that
  *  lost the device (a stop, or a newer dispatch) before any of its audio started.
@@ -592,6 +609,7 @@ function _playNow(entry: SpeechQueueEntry, endWait: () => void): boolean {
             () => _activeUtteranceId === utterance_id,
             TTS_PREFETCH_LOOKAHEAD,
             _discardPreparedSpeech,
+            _startBufferFilled,
           );
         } finally {
           if (_endSentenceQueueWait === endWait) _endSentenceQueueWait = null;
@@ -619,6 +637,8 @@ interface PreparedSpeech {
   audio: HTMLAudioElement;
   visemes: LipSyncFrame[] | null;
   deferredVisemes: Promise<LipSyncFrame[]> | null;
+  /** BF-930: the server's `duration_ms`; 0 when absent or not a positive number. */
+  durationMs: number;
 }
 
 /** AD-738 / AD-1071: synthesize ONE utterance via the server Piper backend, play
@@ -693,6 +713,9 @@ async function _prepareServerSpeech(
       audio: new Audio(`/api/chat/attachments/${data.audio_attachment_id}`),
       visemes: deferred ? null : (Array.isArray(data.visemes) ? data.visemes : []),
       deferredVisemes: deferred ? _fetchDeferredVisemes(data.audio_attachment_id) : null,
+      durationMs: typeof data.duration_ms === 'number' && Number.isFinite(data.duration_ms) && data.duration_ms > 0
+        ? data.duration_ms
+        : 0,
     };
   } catch {
     _invalidateTtsStatus();
