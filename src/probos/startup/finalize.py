@@ -30,7 +30,7 @@ from probos.startup.activation_receipts import (
 
 if TYPE_CHECKING:
     from probos.capability_request import CapabilityRequestStore
-    from probos.config import SystemConfig
+    from probos.config import CognitiveConfig, SystemConfig
 
 logger = logging.getLogger(__name__)
 
@@ -712,6 +712,23 @@ def _wire_mesh_intent_tools(*, runtime: Any) -> list[str]:
     return ids
 
 
+def _configured_api_key_pairs(cognitive: CognitiveConfig) -> tuple[tuple[str, str], ...]:
+    """``(f"llm_api_key_{tier}", key)`` for each tier of ``_LLM_TIERS`` whose resolved key is not empty (#1820 R1).
+
+    ``CognitiveConfig.tier_config`` resolves a tier without its own key to the shared one, so the shared key appears
+    once for each such tier. ``_wire_secret_masker`` gives these pairs to the secret masker, which reads them on
+    each pass.
+    """
+    from probos.cognitive.llm_client import _LLM_TIERS  # AD-732: single source of truth
+
+    pairs: list[tuple[str, str]] = []
+    for tier in _LLM_TIERS:
+        key = cognitive.tier_config(tier)["api_key"]
+        if key:
+            pairs.append((f"llm_api_key_{tier}", key))
+    return tuple(pairs)
+
+
 def _wire_secret_masker(*, runtime: Any) -> Any:
     """AD-1337 S2 (#1560): build the runtime's secret masker and start priming the GitHub value.
 
@@ -720,6 +737,7 @@ def _wire_secret_masker(*, runtime: Any) -> Any:
     ``ProbOSRuntime.__init__`` builds ``runtime.credential_store`` unconditionally, so a production runtime always has
     a masker; a runtime without a real store (a test double) gets None and masks nothing.
     """
+    from probos.config import SystemConfig
     from probos.credential_store import CredentialStore
     from probos.security.secret_masking import EnvSecretSource, SecretMasker, SecretRegistry, secret_registry_of
 
@@ -733,8 +751,11 @@ def _wire_secret_masker(*, runtime: Any) -> Any:
     if not isinstance(store, CredentialStore):
         logger.warning("AD-1337: no CredentialStore on the runtime; tool output is not masked")
         return None
+    # #1820 R1: the tiers' API keys, read from runtime.config at each pass; a double without a SystemConfig gets none.
+    has_config = isinstance(getattr(runtime, "config", None), SystemConfig)
     runtime.secret_masker = SecretMasker(
         credential_store=store, registry=runtime.secret_registry, env_source=EnvSecretSource(),
+        config_values=(lambda: _configured_api_key_pairs(runtime.config.cognitive)) if has_config else None,
     )
     masker = runtime.secret_masker
     # AD-1337 S2: every registry call waits for the priming (the masker bounds the wait), so the first one is masked

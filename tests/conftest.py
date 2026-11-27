@@ -179,6 +179,33 @@ def isolated_archive_path(_bf919_isolated_archive):
         pytest.fail(f"BF-919: this test opened a Ship's Archive outside the temporary roots: {refused}", pytrace=False)
 
 
+@pytest.fixture(autouse=True)
+def _ad1337_r23_credential_cli(monkeypatch):
+    """AD-1337 follow-up (#1820 R23): in-process, the credential store's CLI step meets a stand-in, not ``gh``.
+
+    A real boot primes the GitHub credential; with no token in the environment or the store, the credential store
+    runs ``gh auth token``. For each test, ``probos.credential_store.subprocess`` is replaced by a stand-in whose
+    ``run`` records the command in ``calls`` and fails it as if ``gh`` were not installed; ``TimeoutExpired`` is the
+    real class. The ``subprocess`` module is unchanged. A test that sets its own stand-in, or patches the stand-in's
+    ``run``, takes precedence for that test. Not covered: a ProbOS started in a child process, and a ``gh`` run that
+    does not go through the credential store (``cognitive/scout.py`` runs ``gh api`` through ``subprocess.run``).
+    """
+    import subprocess
+    from types import SimpleNamespace
+
+    import probos.credential_store as credential_store
+
+    calls: list[list[str]] = []
+
+    def _run(argv, **_kwargs):
+        calls.append(list(argv))
+        raise FileNotFoundError(argv[0])
+
+    stand_in = SimpleNamespace(run=_run, TimeoutExpired=subprocess.TimeoutExpired, calls=calls)
+    monkeypatch.setattr(credential_store, "subprocess", stand_in)
+    yield calls
+
+
 @pytest.fixture(scope="session", autouse=True)
 def _bf919_no_model_download(tmp_path_factory, worker_id):
     """BF-919 (#1632) M2: no test downloads Chroma's embedding model into the home directory.

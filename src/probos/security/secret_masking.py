@@ -1,6 +1,6 @@
 """AD-1337 (#1560): the one owner that masks known credential values in tool output before a model sees them.
 
-``SecretMasker`` replaces every form of every known value with ``<secret:NAME>``. It reads three sources again on
+``SecretMasker`` replaces every form of every known value with ``<secret:NAME>``. It reads four sources again on
 every pass, so a rotated value is masked from the next pass on and a released one no longer is:
 
 1. ``probos.credential_store.masked_credential_values``: what the credential store can name. No CLI command runs
@@ -9,6 +9,9 @@ every pass, so a rotated value is masked from the next pass on and a released on
 3. ``EnvSecretSource``: the environment's values under a name ``env_name_is_mask_shaped`` accepts. That rule only
    narrows BF-890's (``execution/command_env.py``, unchanged) and decides by name alone: a git config key name, a
    session id or a path is not a secret, and masking one would rewrite ordinary text.
+4. ``config_values``, when the runtime passes one: each LLM tier's API key in the running config, named
+   ``llm_api_key_<tier>`` (#1820 R1). It is read last, so its name labels a value only when no earlier source
+   names that value; the label shown is still subject to D3 and D9 (``_patterns``).
 
 ``secret_forms`` gives the forms of one value: raw, JSON-escaped (with and without ASCII escapes), URL-encoded from
 its UTF-8 bytes (both hex cases, ``quote_plus``) and base64 of its UTF-8 bytes (standard and URL-safe, padded and
@@ -31,7 +34,7 @@ import os
 import re
 import threading
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from typing import Any, NamedTuple
 from urllib.parse import quote, quote_plus
 
@@ -392,6 +395,7 @@ class SecretMasker:
         credential_store: CredentialStore,
         registry: SecretRegistry,
         env_source: EnvSecretSource,
+        config_values: Callable[[], Iterable[tuple[str, str]]] | None = None,
         floor: int = DEFAULT_FLOOR,
         max_depth: int = DEFAULT_MAX_DEPTH,
         max_nodes: int = DEFAULT_MAX_NODES,
@@ -402,11 +406,14 @@ class SecretMasker:
             raise TypeError("SecretMasker needs a SecretRegistry")
         if not isinstance(env_source, EnvSecretSource):
             raise TypeError("SecretMasker needs an EnvSecretSource")
+        if config_values is not None and not callable(config_values):
+            raise TypeError("SecretMasker needs config_values to be callable or None")
         if min(floor, max_depth, max_nodes) < 1:
             raise ValueError("floor, max_depth and max_nodes must each be at least 1")
         self._credential_store = credential_store
         self._registry = registry
         self._env_source = env_source
+        self._config_values = config_values
         self._floor = floor
         self._max_depth = max_depth
         self._max_nodes = max_nodes
@@ -489,12 +496,16 @@ class SecretMasker:
             return MaskedResult(withheld, frozenset(), True)
 
     def _values(self) -> tuple[tuple[str, str], ...]:
-        """``(value, label)`` for every value; the first source to name it wins: the store, the registry, the env."""
+        """``(value, label)`` for every value: the first source to name it gives the label (the store, the registry,
+        the env, the config), and within a source its alphabetically first name. The label shown is then subject to
+        D3 and D9 in ``_patterns``. A ``config_values`` that raises fails the pass (D7)."""
         chosen: dict[str, str] = {}
+        config_values = self._config_values
         for pairs in (
             masked_credential_values(self._credential_store),
             self._registry.values(),
             self._env_source.values(),
+            config_values() if config_values is not None else (),
         ):
             for name, value in sorted(pairs):
                 stripped = value.strip()
