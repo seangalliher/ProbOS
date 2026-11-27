@@ -26,6 +26,7 @@ import base64
 import dataclasses
 import json
 import logging
+import subprocess
 import threading
 from collections import OrderedDict
 from pathlib import Path
@@ -62,19 +63,6 @@ def _no_builtin_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """The built-in specs read these names; each test sets the ones it needs."""
     for name in BUILTIN_ENV:
         monkeypatch.delenv(name, raising=False)
-
-
-@pytest.fixture(autouse=True)
-def _no_cli(monkeypatch: pytest.MonkeyPatch) -> list[list[str]]:
-    """No test runs gh: the CLI step fails as if gh were not installed, and records the call."""
-    calls: list[list[str]] = []
-
-    def _run(argv: list[str], **_kwargs: Any) -> None:
-        calls.append(list(argv))
-        raise FileNotFoundError(argv[0])
-
-    monkeypatch.setattr("probos.credential_store.subprocess.run", _run)
-    return calls
 
 
 def _store(directory: Path, entries: dict[str, str] | None = None, **kwargs: Any) -> CredentialStore:
@@ -456,7 +444,9 @@ def test_a_value_only_the_cli_gave_is_kept_after_its_cache_expires(
         calls.append(list(argv))
         return SimpleNamespace(returncode=0, stdout="cli-only-token-77\n")
 
-    monkeypatch.setattr("probos.credential_store.subprocess.run", _gh)
+    monkeypatch.setattr(
+        "probos.credential_store.subprocess", SimpleNamespace(run=_gh, TimeoutExpired=subprocess.TimeoutExpired),
+    )
     store = _store(tmp_path, cache_ttl=0.0)
     assert ("github", "cli-only-token-77") not in masked_credential_values(store)
     assert calls == []
@@ -477,7 +467,9 @@ async def test_reading_the_values_runs_no_command_and_writes_no_access_row(
     def _forbidden(*_args: Any, **_kwargs: Any) -> None:
         raise AssertionError("masked_credential_values ran a command")
 
-    monkeypatch.setattr("probos.credential_store.subprocess.run", _forbidden)
+    monkeypatch.setattr(
+        "probos.credential_store.subprocess", SimpleNamespace(run=_forbidden, TimeoutExpired=subprocess.TimeoutExpired),
+    )
     monkeypatch.setenv("AD1337_GATED_TOKEN", "gated-env-token-9")
     store = _store(tmp_path, {"custom": "json-store-value-1"}, event_log=_Log())
     store.set_tier_enforcement(True)
