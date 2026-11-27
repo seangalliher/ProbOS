@@ -10,6 +10,15 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ## Era V — Civilization (Phases 31-36)
 
+### BF-1002 -- a full dream's dream_complete event reaches its listeners; one helper builds the payload for both emit sites (2026-11-27, #1820)
+
+- *Scope.* #1820 item bf-989 R6, part a. `cognitive/dreaming.py`: `_full_dream_complete_payload` (new), `DreamScheduler.force_dream`, `DreamScheduler._monitor_loop`. Contract `prompts/bf-1002-1820-full-dream-complete-event.md`.
+- *D1.* One module helper builds the full-dream payload for both sites and reads each `DreamReport` field directly. Not `getattr` with an int default at each site (it keeps the dict that held the defect twice), and not a typed `DreamCompleteEvent` (it declares 3 of the 6 keys; the producer-reader contract is part b).
+- *D2.* A payload failure at either site logs at WARNING with the site's name; at DEBUG it hid this loss on every full dream.
+- *D3.* Part a alone. The reminiscence branch of `Counselor._on_dream_complete` is unchanged and still unreachable: it reads `retrieval_results`, which no producer writes. Part b moves with bf-989 R1 and R5, because the concerns it would act on are scored from a memoryless recall (R1) and stored on a sovereign-keyed profile (R5).
+- *Effect.* A full completion now reaches the Counselor, so the AD-506a re-assessment of an agent that AD-505 sent to a forced dream runs on that dream's completion.
+- *Reversal.* Revert the commit; no persisted format changes (`DREAM_COMPLETE` is grandfathered in `event_persistence.py`, so events.db holds no row of it). A revert loses each full-dream completion again.
+
 ### BF-1001 -- The live crew-session projection test waits for its first semantic frame by a deadline (2026-11-27, #1861)
 
 - *Scope.* `tests/test_ad1133_live_crew_session_refresh.py` only. Contract: `prompts/bf-1001-1861-projection-frame-deadline.md`.

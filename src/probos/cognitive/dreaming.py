@@ -3126,6 +3126,23 @@ class DreamingEngine:
         return created
 
 
+def _full_dream_complete_payload(report: DreamReport) -> dict[str, Any]:
+    """The ``dream_complete`` payload of a full dream (AD-503; AD-531 and AD-551 fields).
+
+    ``DreamScheduler.force_dream`` and its monitor loop both emit it. The five numeric
+    values are the report's own fields: BF-1002 (#1820 bf-989 R6) removed a ``len()`` of
+    the ``int`` ``episodes_replayed``, whose ``TypeError`` lost the completion at both sites.
+    """
+    return {
+        "dream_type": "full",
+        "duration_ms": report.duration_ms,
+        "episodes_replayed": report.episodes_replayed,
+        "clusters_found": report.clusters_found,
+        "notebook_consolidations": report.notebook_consolidations,
+        "convergence_reports_generated": report.convergence_reports_generated,
+    }
+
+
 class DreamScheduler:
     """Background scheduler that triggers dream cycles during idle periods."""
 
@@ -3245,19 +3262,10 @@ class DreamScheduler:
             # AD-503: Emit dream complete event
             if self._emit_event_fn:
                 try:
-                    self._emit_event_fn(
-                        "dream_complete",
-                        {
-                            "dream_type": "full",
-                            "duration_ms": getattr(report, "duration_ms", 0),
-                            "episodes_replayed": len(getattr(report, "episodes_replayed", [])),
-                            "clusters_found": getattr(report, "clusters_found", 0),
-                            "notebook_consolidations": getattr(report, "notebook_consolidations", 0),
-                            "convergence_reports_generated": getattr(report, "convergence_reports_generated", 0),
-                        },
-                    )
+                    self._emit_event_fn("dream_complete", _full_dream_complete_payload(report))
                 except Exception:
-                    logger.debug("Dream complete event emission failed", exc_info=True)
+                    # BF-1002: WARNING; at DEBUG this line hid the loss of each full-dream completion.
+                    logger.warning("BF-1002: full dream_complete emission failed (force_dream)", exc_info=True)
             if self._post_dream_fn:
                 try:
                     self._post_dream_fn(report)
@@ -3344,19 +3352,10 @@ class DreamScheduler:
                         # AD-503: Emit dream complete event (monitor loop, full)
                         if self._emit_event_fn:
                             try:
-                                self._emit_event_fn(
-                                    "dream_complete",
-                                    {
-                                        "dream_type": "full",
-                                        "duration_ms": getattr(report, "duration_ms", 0),
-                                        "episodes_replayed": len(getattr(report, "episodes_replayed", [])),
-                                        "clusters_found": getattr(report, "clusters_found", 0),
-                                        "notebook_consolidations": getattr(report, "notebook_consolidations", 0),
-                                        "convergence_reports_generated": getattr(report, "convergence_reports_generated", 0),
-                                    },
-                                )
+                                self._emit_event_fn("dream_complete", _full_dream_complete_payload(report))
                             except Exception:
-                                logger.debug("Dream complete event emission failed", exc_info=True)
+                                # BF-1002: WARNING; at DEBUG this line hid the loss of each full-dream completion.
+                                logger.warning("BF-1002: full dream_complete emission failed (monitor loop)", exc_info=True)
                         if self._post_dream_fn:
                             try:
                                 self._post_dream_fn(report)
