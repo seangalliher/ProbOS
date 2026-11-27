@@ -235,7 +235,6 @@ export function _resetTtsStatusForTests(): void {
   _dispatchStartedAt = null;
   _sentenceEndedAt = null;
   _endSentenceQueueWait = null;
-  _endBrowserSentenceWait(); // BF-930 A2: a browser sentence a test left waiting, with its bound
 }
 
 /** AD-738: track the active <audio> so a second speakResponse cancels the first. */
@@ -259,10 +258,10 @@ let _activeUtteranceId: number | null = null;
 /** BF-918 (#1626): sentences synthesized ahead of the one playing under AD-1071
  *  pipelining. BF-930 (#1668): three (was one), so a stall of one sentence's synthesis
  *  or storage no longer than the audio already held (up to three sentences, about
- *  10-14 s) is not heard; a longer stall still pauses. A reply stopped while its first
- *  sentence waits for the start buffer can have spent four syntheses (that sentence and
- *  three ahead), and three once a sentence plays, with their stored WAVs and any viseme
- *  requests they started. */
+ *  10-14 s) is not heard; a longer stall still pauses. A stop discards what was
+ *  prepared and not played: up to four sentences while the first waits for the start
+ *  buffer (that sentence and three ahead), and up to three ahead while a sentence
+ *  plays, each with its stored WAV and any viseme request it started. */
 const TTS_PREFETCH_LOOKAHEAD = 3;
 
 /** BF-930 (#1668): audio the queue holds before the first sentence plays. A first
@@ -286,31 +285,6 @@ function _startBufferFilled(ready: Array<PreparedSpeech | null>): boolean {
  *  [0.25, 4.0]. The play half sets it; the start buffer divides durations by it. */
 function _playbackRate(rate: number | undefined): number {
   return Math.max(0.25, Math.min(4.0, rate ?? 0.95));
-}
-
-/** BF-930 A1/A2: the longest the AD-1071 play half waits for a sentence the browser
- *  speaks in place of a server one. A browser or voice can fail to report an
- *  utterance's end (onend can be lost in a backgrounded tab, or when the utterance
- *  object is collected); 20 s is past about 45 words at the default rate and inside
- *  SPEECH_JOIN_TIMEOUT_MS (45 s). A browser sentence that really speaks for longer is
- *  overlapped by the next sentence after the bound. */
-export const BROWSER_SENTENCE_MAX_WAIT_MS = 20000;
-
-/** BF-930 A2 (#1668): the `_fireBrowserEnd` of the browser sentence the AD-1071 play
- *  half waits on (a no-op once that sentence has ended), or null. Calling it fires the
- *  utterance's one terminal 'end' unless onend or onerror already did, clears its bound
- *  and resolves the wait. The queue plays one sentence at a time and every new dispatch
- *  ends any wait first, so at most one wait is live. */
-let _settleBrowserSentence: (() => void) | null = null;
-
-/** BF-930 A2: a stop (`stopSpeaking`) and a newer dispatch (`_playNow`) end the current
- *  browser-sentence wait here, after `speechSynthesis.cancel()`, which fires no event for
- *  an utterance whose engine has already gone quiet or lost its end. The test seam
- *  (`_resetTtsStatusForTests`) calls it too. */
-function _endBrowserSentenceWait(): void {
-  const settle = _settleBrowserSentence;
-  _settleBrowserSentence = null;
-  if (settle !== null) settle();
 }
 
 /** BF-918 (review round 1, D7a): the `dropped` reason of a dispatched utterance that
@@ -597,10 +571,6 @@ function _playNow(entry: SpeechQueueEntry, endWait: () => void): boolean {
   // BF-918: first audio is measured from here, where the device becomes this utterance's.
   _dispatchStartedAt = { id: utterance_id, at: _voiceNow() };
   _sentenceEndedAt = null;
-  // BF-930 A2 (#1668): an earlier reply's queue may still wait on a browser sentence that
-  // cancel() above ended without an event. Ended after the device changed hands, so its
-  // 'end' is final and that queue plays nothing more.
-  _endBrowserSentenceWait(); // BF-930 A2: a newer dispatch
 
   // Fast synchronous path: if fetch is unavailable OR the cached probe
   // already says "not piper", run the browser fallback synchronously.
@@ -795,25 +765,12 @@ async function _playPreparedSpeech(
   utterance_id: number,
   last?: boolean,
 ): Promise<void> {
-  // BF-930 A2 (#1668): only the AD-1071 queue (which sets `last`) waits for a sentence the
-  // browser speaks in its place; the single-call path resolves at once, as before.
-  const browserWaitMs = last === undefined ? undefined : BROWSER_SENTENCE_MAX_WAIT_MS;
   if (prepared === null) {
     _sentenceEndedAt = null; // a browser-spoken sentence is not a gap between two server ones
-    // BF-930 A1/A2: in the queue, resolve once the browser has spoken it (bounded), so the
-    // queue does not start the next sentence over it.
-    await _speakBrowserFallback(text, profile, agent_id, utterance_id, last, browserWaitMs);
+    _speakBrowserFallback(text, profile, agent_id, utterance_id, last);
     return;
   }
   const { audio, visemes, deferredVisemes } = prepared;
-  // BF-930 A1/A2: a browser fallback started below (play() refused, a media error, or a
-  // throw) is awaited once the server half and play() have both settled.
-  let browserDone = null as Promise<void> | null;
-  // BF-930 A2: Chromium fires a media 'error' (which settles the server half) BEFORE it
-  // rejects a pending play(), and that rejection starts the fallback. After an 'error'
-  // the half therefore waits for play() to settle (`playSettled`).
-  let playSettled: Promise<void> = Promise.resolve();
-  let mediaError = false as boolean;
   try {
     // Build a synthetic utterance object so existing 'start'/'end' listeners
     // (AD-718 / AD-721) keep firing the same shape. agent_id propagates.
@@ -842,8 +799,7 @@ async function _playPreparedSpeech(
         _sentenceEndedAt = { id: utterance_id, at: _voiceNow() };
         _finish(true);
       });
-      // BF-930 A2: a media error. If play() is still pending, Chromium rejects it next.
-      audio.addEventListener('error', () => { mediaError = true; _finish(true); });
+      audio.addEventListener('error', () => _finish(true));
       // BF-655 (refines AD-1071): a newer speakResponse, or a barge-in (BF-918),
       // pauses _activeAudio to end this utterance. Fire the terminal 'end' (same
       // agent_id, source:'server'): the utterance is genuinely over, so the
@@ -876,7 +832,7 @@ async function _playPreparedSpeech(
           }
         });
       }
-      playSettled = audio.play().then(undefined, () => {
+      audio.play().then(undefined, () => {
         // BF-918 (review round 1): pausing a play() that has not started playback
         // rejects it (AbortError) AFTER the 'pause' listener above fired this
         // utterance's one terminal 'end'. A stop or a newer dispatch did that, so it
@@ -884,18 +840,14 @@ async function _playPreparedSpeech(
         if (_activeUtteranceId !== utterance_id) { _finish(false); return; }
         // play() rejected — fall back to browser for THIS utterance, resolve.
         if (_activeAudio === audio) _activeAudio = null;
-        browserDone = _speakBrowserFallback(text, profile, agent_id, utterance_id, last, browserWaitMs);
+        _speakBrowserFallback(text, profile, agent_id, utterance_id, last);
         _finish(false);
       });
     });
-    // BF-930 A2: after a media 'error' the server half settled before play() rejected;
-    // wait for that rejection, which starts the fallback awaited below.
-    if (mediaError) await playSettled;
   } catch {
     _invalidateTtsStatus();
-    browserDone = _speakBrowserFallback(text, profile, agent_id, utterance_id, last, browserWaitMs); // a throw
+    _speakBrowserFallback(text, profile, agent_id, utterance_id, last);
   }
-  if (browserDone !== null) await browserDone;
 }
 
 /** BF-918: drop a prepared utterance that will never play (its reply was stopped). */
@@ -944,11 +896,7 @@ function _speakBrowserFallback(
   agent_id?: string,
   utterance_id?: number,
   last?: boolean,
-  maxWaitMs?: number,
-): Promise<void> {
-  // BF-930 A1/A2 (#1668): with `maxWaitMs` (the AD-1071 play half) it resolves once this
-  // utterance's one terminal 'end' has fired: onend, onerror, the bound, a stop or a newer
-  // dispatch. Without it, and when there is no engine, it resolves at once, as before.
+): void {
   if (!('speechSynthesis' in window)) {
     // BF-767 (review): this path used to return in silence, and the caller had
     // already been handed an ``utterance_id``. Correlating on that id turned a
@@ -975,7 +923,7 @@ function _speakBrowserFallback(
       utterance_id,
       ..._finalField(last, utterance_id),
     });
-    return Promise.resolve();
+    return;
   }
   const utterance = new SpeechSynthesisUtterance(text);
   const effective = _resolveEffectiveProfile(profile, agent_id);
@@ -996,31 +944,15 @@ function _speakBrowserFallback(
   // modulation icon, and head-bob would latch forever. General onend flakiness
   // (long text, backgrounded tab) is the same class.
   let _ended = false;
-  let _resolveSpoken: () => void = () => {};
-  const spoken = new Promise<void>((resolve) => { _resolveSpoken = () => resolve(); });
-  let bound: ReturnType<typeof setTimeout> | undefined;
   const _fireBrowserEnd = () => {
     if (_ended) return;
     _ended = true;
-    if (bound !== undefined) clearTimeout(bound);
     _fire({ type: 'end', agent_id, utterance, source: 'browser', utterance_id, ..._finalField(last, utterance_id) });
-    _resolveSpoken();
   };
   utterance.onend = _fireBrowserEnd;
   utterance.onerror = _fireBrowserEnd;
-  if (maxWaitMs !== undefined) {
-    // BF-930 A2 (#1668): a lost onend/onerror must not hold the reply. A stop or a newer
-    // dispatch ends the wait through `_settleBrowserSentence`; at the bound this
-    // utterance's 'end' fires here, which the arbiter counts as progress (GUARD 2).
-    _settleBrowserSentence = _fireBrowserEnd;
-    bound = setTimeout(() => {
-      console.warn(`[voice] BF-930: browser speech gave no end or error within ${maxWaitMs} ms; the reply goes on`);
-      _fireBrowserEnd();
-    }, maxWaitMs);
-  }
   // 'boundary' reserved for AD-721b phoneme work; not wired in v1.
   speechSynthesis.speak(utterance);
-  return maxWaitMs === undefined ? Promise.resolve() : spoken;
 }
 
 /** AD-1291: stopping the current utterance must ALSO empty the backlog.
@@ -1046,9 +978,6 @@ export function stopSpeaking(): void {
   if ('speechSynthesis' in window) {
     speechSynthesis.cancel();
   }
-  // BF-930 A2 (#1668): cancel() fires no event for an utterance whose engine has already
-  // gone quiet or lost its end; end the browser sentence the AD-1071 play half waits on.
-  _endBrowserSentenceWait(); // BF-930 A2: a stop
   // BF-918 (#1626): the server path too. Its <audio> used to play on after a
   // barge-in (only the browser engine was cancelled). Pausing fires that
   // utterance's one terminal 'end' (BF-655), and the sentence queue, whose
