@@ -1830,6 +1830,7 @@ AD-738g S1 shipped (PR #<PR>, contract prompts/ad-738g-s1-local-kokoro-voice.md)
 - S1, a local Kokoro voice on this machine's CPU, off until configured: tts.backend: kokoro runs scripts/kokoro_worker.py in the operator's venv tools/kokoro/venv (kokoro-onnx 0.6.1; scripts/kokoro-fetch.ps1 installs it and downloads kokoro-v1.0.onnx and voices-v1.0.bin with sizes and SHA-256 pinned, then speaks one test line through the worker). One resident process under python -I serves every voice over Piper's line protocol, so the BF-918 voice service owns start, restart, timeout and stop; a sentence the engine cannot speak degrades to the browser voice and leaves the process resident. Defaults: voice af_heart, 4 threads, 30 s timeout. The HXI takes the server path for any backend other than browser. Measured on the Ryzen 9 7950X3D: real-time factor 0.314 at 4 threads; the first sentence after a restart costs about 3.2 s more (model load and first-call initialisation), so speak one line before recording. Lip-sync is unchanged. 28 Python tests and 3 UI tests; 19 mutation rows killed.
 - Finding for S3: the shipped kokoro-v1.0.onnx has a single output (audio) and no duration output, so kokoro-onnx's create_timed returns no timings. Timing-derived lip-sync needs a different model export: S3 must first establish which file exposes phoneme durations, its licence, size and hash, that kokoro-onnx reads it, its real-time factor here, and the mapping from phoneme durations to viseme frames.
 - Licence: phonemizer and espeak-ng (GPL-3.0-or-later) run only in the operator-installed worker process, which exchanges text, a voice id and a speed in and a WAV path out; the worker venv cannot import probos (checked by the install script). THIRD_PARTY_LICENSES.md has the entry.
+- Limit: the worker venv must live under an ASCII-only path (espeak-ng cannot open its data from a non-ASCII one); the install script refuses a non-ASCII destination before creating anything. Model, voices and output paths may be anything.
 - Next: AD-738f S1 (#1868, per-role voices) on the tree after BF-930; then S2 prewarm. If the live run shows the first sentence too slow, the GPU slice (S4) moves ahead of S3.
 ```
 
@@ -1852,7 +1853,7 @@ PR title: `A local Kokoro voice behind the TTS backend seam, off until configure
 4. If `lipsync.backend` is `rhubarb` on the Captain's machine: post one sentence to a vessel run from the worktree with `tts.backend: kokoro` and check the `/api/avatars/lipsync` frames are non-empty (rhubarb on 24 kHz is unverified).
 
 **The Captain, in `D:\ProbOS`, after the merge:**
-1. `powershell -ExecutionPolicy Bypass -File scripts\kokoro-fetch.ps1` (about 350 MB; same pass condition as check 3).
+1. `powershell -ExecutionPolicy Bypass -File scripts\kokoro-fetch.ps1` (about 350 MB; same pass condition as check 3). The venv must be under an ASCII-only path; `D:\ProbOS\tools\kokoro` is. On a checkout whose path is not ASCII, the script stops at once and says so: pass `-DestDir` to an ASCII folder and set `tts.kokoro.python_path`, `model_path` and `voices_path` to the absolute paths there.
 2. In his own `config/system.yaml`:
    ```yaml
    tts:
@@ -2381,7 +2382,7 @@ Focused tests (the orchestrator; `-n 0`):
 ```text
 d:/ProbOS/.venv/Scripts/pytest.exe tests/test_ad738g_kokoro_voice.py tests/test_ad738f_per_agent_voices.py tests/test_ad738_piper_tts.py tests/test_bf918_tts_latency.py tests/test_bf918_tts_retention.py tests/test_bf930_voice_path_timing.py tests/test_ad1025_path_anchoring.py tests/test_ad1270e1_config_facade.py tests/test_ad1270e2c_experience_models.py tests/test_ad741_section_registry.py tests/test_ad741_config_api.py tests/test_ad705a_offline_stt_config.py tests/test_bf_codebase_index_config_models.py -n 0 -q
 ```
-**Installer end-to-end (the orchestrator, by hand; G9 has no automated test).** From an interactive console, with a destination whose folder name is non-ASCII and the two model files copied in so the hash check skips the download:
+**Installer end-to-end: superseded by 16.11.1 (A1.1, which replaces G9); kept for the record, do not run.** (Was: the orchestrator, by hand; G9 has no automated test.) From an interactive console, with a destination whose folder name is non-ASCII and the two model files copied in so the hash check skips the download:
 ```text
 $Dest = "G:\speech-kokoro-probe\voix-$([char]0xE9)"
 New-Item -ItemType Directory -Force $Dest | Out-Null
@@ -2444,7 +2445,7 @@ Tests with no row, by design: **R1** (Piper's line without fields is the base's 
 
 1. The worker's protocol stdout is the process's fd 1; a native library write to fd 1 would reach the pipe (injected-only; fails closed to the browser). Fix sketch in 16.1 row 5.
 2. Piper's `tts.timeout_seconds` (`experience.py`:715, plain `float = 30.0`) accepts infinity and values past `threading.TIMEOUT_MAX`, as Kokoro's did.
-3. The installer's answer comparison relies on setting `[Console]::OutputEncoding`; a host with no console keeps its own decoding and may fail the comparison for a non-ASCII destination (reported as failure, never as success).
+3. Replaced by 16.11.4 (A1.1 removed the console-encoding swap). Was: the installer's answer comparison relies on setting `[Console]::OutputEncoding`.
 4. AD-741's secret rule treats a dictionary key as a field name; any future dict-valued config whose keys are data meets the same redaction (here closed at parse time for `agent_voices` only).
 
 ### 16.9 Verified Against Codebase (A1, 2026-11-27, tree `f573a703`)
@@ -2492,3 +2493,137 @@ FOUND: is_secret_field_id is not re-exported                                    
 ### 16.10 Prior art (A1)
 
 Repair round; no new design. The escape is the standard JSON `\uXXXX` form (RFC 8259 section 7, which allows each UTF-16 unit of a surrogate pair to be escaped separately); reading native output requires `[Console]::OutputEncoding` in both PowerShell 5.1 and 7 (`about_Character_Encoding`). No external search was run.
+
+### 16.11 Amendment A1.1: the installer guard replaces G9 (2026-11-27)
+
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-27. **Base:** `7c63d3dc` (A1 applied and committed). Source: the orchestrator's probes `G:\speech-kokoro-probe\probe_g9_ascii_venv.ps1` and `probe_isolate_espeak.ps1` (2026-11-27).
+
+**Decision: (b).** G9's transport is correct, but its premise in 16.1 row 2 ("a non-ASCII destination" is a valid one) is refuted: espeak-ng cannot open its data from a venv whose path has a non-ASCII character (isolation: non-ASCII venv + ASCII model paths = exit 1, `...espeak-ng-data\phontab: No such file or directory`; ASCII venv + non-ASCII model and output paths = wav written). The installer always puts the venv and the probe under `$DestDir`, so the escape and the console-encoding swap are reachable only on a run that cannot succeed. A guard on the resolved `$DestDir`, before anything is created, is the real protection; the dead code goes with it, and the script no longer touches the user's console state. (a) keeps unreachable code; (c) leaves the obscure failure after a 350 MB download and a venv build.
+
+**Order.** H1 to H3 to `scripts/kokoro-fetch.ps1`, then H4 to `DECISIONS.md`. Working copies CRLF, blocks LF: match after normalising. Each SEARCH occurs once in its file at its turn (counted on `7c63d3dc`). The orchestrator commits: subject `Speech: the Kokoro installer refuses a non-ASCII destination up front (espeak-ng limit) instead of escaping its pipe`, body ends `Refs #1662.`; stage exactly `scripts/kokoro-fetch.ps1`, `DECISIONS.md`, and this contract.
+
+**H1.** `scripts/kokoro-fetch.ps1` header. SEARCH:
+```powershell
+#   3. One test sentence spoken through scripts/kokoro_worker.py, the worker ProbOS runs.
+#
+```
+REPLACE:
+```powershell
+#   3. One test sentence spoken through scripts/kokoro_worker.py, the worker ProbOS runs.
+#
+# The destination must be an ASCII-only path: espeak-ng, inside the venv, cannot open its
+# data under a path with a non-ASCII character (measured 2026-11-27), so the script refuses
+# one before creating anything. The model files and the output may live anywhere. If this
+# checkout's path is not ASCII, pass -DestDir to an ASCII folder and set tts.kokoro.python_path,
+# model_path and voices_path in config/system.yaml to the absolute paths there.
+#
+```
+
+**H2.** The guard, right after `$DestDir` is resolved and before `uv` is looked up or any folder is made. SEARCH:
+```powershell
+if (-not [System.IO.Path]::IsPathRooted($DestDir)) { $DestDir = Join-Path $Root $DestDir }
+```
+REPLACE:
+```powershell
+if (-not [System.IO.Path]::IsPathRooted($DestDir)) { $DestDir = Join-Path $Root $DestDir }
+if ($DestDir -match '[^\x00-\x7F]') {
+    throw "The destination '$DestDir' contains a non-ASCII character. espeak-ng (inside the Kokoro venv) cannot open its data under such a path. Run again with -DestDir set to an ASCII-only folder (for example C:\kokoro), then set tts.kokoro.python_path, model_path and voices_path in config/system.yaml to the absolute paths there. Nothing was created."
+}
+```
+
+**H3.** G9 reverted to the pre-A1 pipe, with one comment. SEARCH:
+```powershell
+# Windows PowerShell 5.1 pipes text to a native program as ASCII ($OutputEncoding), so a
+# non-ASCII destination would reach the worker as '?': escape each non-ASCII UTF-16 unit as
+# \uXXXX, which the worker's json.loads decodes. The worker answers in UTF-8; the console
+# decodes it as UTF-8 for the comparison and gets its own encoding back afterwards.
+$ProbeJson = [regex]::Replace((ConvertTo-Json $Probe), '[^\x00-\x7F]', { param($m) '\u{0:x4}' -f [int][char]$m.Value })
+$Line = '{"text": "Kokoro is ready, Captain.", "output_file": ' + $ProbeJson + ', "voice": "af_heart", "speed": 1.0}'
+$ConsoleEncoding = [Console]::OutputEncoding
+try { [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false } catch { Write-Host "[warn] cannot set the console encoding; a non-ASCII path may fail the comparison" -ForegroundColor Yellow }
+try {
+    $Answer = $Line | & $Python -I $Worker --model $Model --voices $Voices --threads 4 --default-voice af_heart
+    $Exit = $LASTEXITCODE
+} finally {
+    try { [Console]::OutputEncoding = $ConsoleEncoding } catch { }
+}
+if ($Exit -ne 0 -or -not (Test-Path $Probe) -or "$Answer".Trim() -ne $Probe) {
+    throw "The Kokoro worker did not speak the test line (exit $Exit, answer '$Answer'); its messages are above."
+}
+```
+REPLACE:
+```powershell
+# $Probe lies under $DestDir, which the guard above keeps ASCII, so the piped line and the
+# worker's answer are ASCII under any console encoding (PowerShell 5.1 pipes ASCII).
+$Line = '{"text": "Kokoro is ready, Captain.", "output_file": ' + (ConvertTo-Json $Probe) + ', "voice": "af_heart", "speed": 1.0}'
+$Answer = $Line | & $Python -I $Worker --model $Model --voices $Voices --threads 4 --default-voice af_heart
+if ($LASTEXITCODE -ne 0 -or -not (Test-Path $Probe) -or "$Answer".Trim() -ne $Probe) {
+    throw "The Kokoro worker did not speak the test line (exit $LASTEXITCODE, answer '$Answer'); its messages are above."
+}
+```
+
+**H4.** `DECISIONS.md`, the AD-738g S1 entry: one bullet after *Licence*. SEARCH (the end of the *Licence* line; occurs once):
+```markdown
+that venv does not contain `probos` (the install script checks it cannot import it), and `python -I` keeps `PYTHON*` variables and the user site out.
+```
+REPLACE: the same text, then a new line:
+```markdown
+- *Limit.* The venv must live under an ASCII-only path: espeak-ng cannot open its data from a path with a non-ASCII character (measured 2026-11-27). `scripts/kokoro-fetch.ps1` refuses such a destination before creating anything; the model, voices and output paths may be anything. An escaped installer pipe (A1's G9) was replaced by this guard, because the run it served cannot succeed.
+```
+
+`PROGRESS.md`: no pair. Its AD-738g paragraph (line 5) does not mention the pipe or the escape (searched: `ASCII|pipe|test line` find nothing on line 5). The A1 repair commit `7c63d3dc` names "an ASCII installer pipe" in its subject; commits are history and stay as they are; the A1.1 commit supersedes it.
+
+**Contract text changed in place by A1.1** (no pair; already edited in this file): section 12's licence bullet gains the limit; section 13's Captain step 1 gains the ASCII-path note; 16.3's installer paragraph is marked superseded; 16.8 follow-up 3 is replaced. 16.1 row 2 and 16.10 stay as written: the audit trail of what A1 decided.
+
+#### 16.11.1 Installer end-to-end (replaces the 16.3 installer paragraph; the orchestrator, by hand)
+
+From the worktree root, PowerShell 5.1 and 7 both:
+```text
+$Bad = "G:\speech-kokoro-probe\voix-$([char]0xE9)-a11"
+Test-Path $Bad                                                            # must be False before
+powershell -ExecutionPolicy Bypass -File scripts\kokoro-fetch.ps1 -DestDir $Bad; $LASTEXITCODE
+pwsh -ExecutionPolicy Bypass -File scripts\kokoro-fetch.ps1 -DestDir $Bad; $LASTEXITCODE
+Test-Path $Bad                                                            # must still be False
+powershell -ExecutionPolicy Bypass -File scripts\kokoro-fetch.ps1
+powershell -ExecutionPolicy Bypass -File scripts\kokoro-fetch.ps1
+```
+Pass: (1) each non-ASCII run exits 1 at once (seconds, no `uv` output, no `[get ]`) with the message `The destination '...voix-<e-acute>-a11' contains a non-ASCII character. espeak-ng ...`, and `$Bad` does not exist afterwards; (2) the first ASCII run (default `tools/kokoro`, models present) ends `[ ok ] the Kokoro worker spoke the test line (...)` and `Kokoro is installed at: ...`; (3) the second prints two `[skip]` lines and ends the same way. No `[warn]` line can appear (the line is gone).
+
+**Mutation (campaign of record: the orchestrator's probe, not rerun).** The mutant "guard removed" is exactly the pre-A1.1 script on a non-ASCII `-DestDir`, which the orchestrator ran on 2026-11-27: the venv was built, the worker loaded 54 voices, synthesis failed with the espeak `phontab` error, exit 1. The guard is therefore load-bearing for the message and for "nothing created", not for success. No other row changes: K1 to K36 touch no installer line.
+
+#### 16.11.2 Tests
+
+None added. The installer has no automated test by design; the only cheap test would spawn `powershell.exe` (Windows-only, skipped in CI) or scan the script's source (a `?raw`-style pin that cannot tell a required line from a shipped one). The hand check above discriminates, and the mutant's result is on record. The test count stays 32.
+
+#### 16.11.3 Finding 2 for the round-2 reviewer (Readings, for its Assumptions check)
+
+Finding 2 is **fixed by a different repair than A1 recorded**. Give the reviewer:
+- *Reading.* Finding 2 said a non-ASCII destination reaches the worker as `?` under PowerShell 5.1. True, and G9 fixed that transport (orchestrator probe, ASCII venv + non-ASCII output path: plain `ConvertTo-Json` fails on 5.1 and 7, G9 succeeds on both). But a non-ASCII destination is not a valid install: the venv lives under it, and espeak-ng cannot open its data from a non-ASCII venv path (isolation run, 2026-11-27). So the finding's premise "a valid destination fails" does not hold; what remained was an obscure failure after a full download and venv build.
+- *Repair.* A1.1 (H2) refuses a non-ASCII resolved `-DestDir` with a named message before anything is created, and (H3) removes G9's escape and console-encoding swap, which are unreachable once the guard holds. Check: H2 tests the resolved path (after `Join-Path $Root`), throws before `uv` and `New-Item`, and names the path; H3's comparison is ASCII under any console encoding because `$Probe` is under `$DestDir`.
+- *Assumption to check.* That the probe path cannot become non-ASCII other than through `$DestDir` (it is `Join-Path $DestDir "fetch-check.wav"`), and that the model, voices and worker paths are passed as arguments (Unicode-safe), not through the pipe.
+
+#### 16.11.4 Follow-up (replaces 16.8 item 3)
+
+3. A non-ASCII `tts.kokoro.python_path` (or a default install under a non-ASCII checkout) passes config and fails at the first sentence with espeak's error in the worker's stderr. A WARNING at backend start naming the limit (one check in `kokoro_backend.py`, one test) would make it visible. Not in this batch: no supported install produces it once the guard holds, and the Captain's `D:\ProbOS` is ASCII.
+
+#### 16.11.5 Verified Against Codebase (A1.1, 2026-11-27, tree `7c63d3dc`)
+
+```text
+grep -n "IsPathRooted\|New-Item -ItemType Directory\|uv venv --python" scripts/kokoro-fetch.ps1   27, 38, 45 (guard goes before 35's uv check)
+grep -n "ProbeJson\|OutputEncoding\|\$Probe = Join-Path \$DestDir" scripts/kokoro-fetch.ps1        91-92, 93-99, 85
+grep -n "\$Venv = Join-Path \$DestDir" scripts/kokoro-fetch.ps1                                    41
+grep -n "that venv does not contain .probos." DECISIONS.md                                        31 (count 1)
+```
+Absence Verified (A1.1):
+```text
+CLAIM: no test pins the installer's text
+RUN:   Grep "kokoro-fetch|OutputEncoding|ProbeJson" tests
+FOUND: test_ad738g_kokoro_voice.py:489 (a log substring naming the script); test_bf957 (git's logOutputEncoding, unrelated)   HOLDS: yes
+CLAIM: PROGRESS.md's AD-738g paragraph does not mention the pipe or the escape
+RUN:   Grep "ASCII|pipe|test line|speaks one" PROGRESS.md
+FOUND: lines 43, 47, 49, 174, 205+ (other entries); none on line 5                                 HOLDS: yes
+```
+
+#### 16.11.6 Prior art
+
+No new design: an up-front input check. The espeak-ng limit is the orchestrator's measurement; no external search was run, and none is cited as its cause (the C library falling back to its build-time data path is what the error shows, not a documented contract). Considered, deferred: a worker-side workaround (copying `espeak-ng-data` to an ASCII temp folder or using an 8.3 short path), which would widen the protocol slice for a case no supported install reaches.
