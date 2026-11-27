@@ -1,7 +1,8 @@
 # How Literally Should ProbOS Take "Ledger"?
 
-**Status:** Design note; the Captain's decisions of 2026-10-30 are in section 7. Not an AD; it allocates no number and creates no work by itself.
+**Status:** Design note; the Captain's decisions of 2026-10-30 are in section 7. Step 1 of the sequence in section 6 (BF-942) is done and step 2 is next. Not an AD; it allocates no number and creates no work by itself.
 **Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-30. Verified against `main` at `1ffbdc61`.
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-27, for the BF-942 fix. Re-verified against `main` at `32997b18`: every statement about BF-942 and BF-980, the "Verified in production?" and "Known gaps" cells of the EventLog, Identity Ledger, security AuditLog and Ship's Records rows, section 6's step 3 candidates, and every citation into a file that changed since `1ffbdc61` (`event_log.py`, `runtime.py`, `startup/finalize.py`, `records_store.py`, `config.py`, `config_models/knowledge.py`, `acm.py`, `workforce.py`, `routers/workforce.py`, `admission/store.py`) or did not exist then (`doctor/checks/records_git_check.py`), and the four records step 1 names (`prompts/bf-942-eventlog-truncation-anchor.md`, `PROGRESS.md`, `DECISIONS.md`, `deterministic-ship.md`). Citations into the other files, unchanged since `1ffbdc61`, stand as verified then.
 **Placement:** a companion to [Probabilistic Crew, Deterministic Ship](deterministic-ship.md), invariant 4 ("a fixed past").
 
 > **Question (the Captain's).** The thesis of the deterministic ship speaks of "a system of record, like a ledger".
@@ -15,10 +16,10 @@
 - **ProbOS already keeps ledgers, plural.** Three stores are hash-chained (the EventLog, the Identity Ledger and the
   security AuditLog), Ship's Records is a git repository, and about a dozen other tables are append-only by rule.
   "Ledger" is already literal in the sense that matters: an append-only record whose past entries are not rewritten.
-- **What it lacks is one thing a ledger implies: the ability to prove the whole record is unchanged.** One chain breaks
-  in normal operation (BF-942, #1706), one is never verified in production, the others are verified only at boot or on
-  request, and nothing ties the separate stores together. Every guarantee is held on the same disk as the data it
-  protects.
+- **What it lacks is one thing a ledger implies: the ability to prove the whole record is unchanged.** The EventLog's
+  chain survives pruning since BF-942 (#1706, fixed 2026-11-09), but no production code verifies it; the Identity
+  Ledger is verified on request, the security AuditLog at boot, and nothing ties the separate stores together.
+  Every guarantee is held on the same disk as the data it protects.
 - **The literal step worth taking is small:** a ship's log of chain heads. Every so often, record each store's
   current head hash in one append-only, hash-chained record, signed with the ship's key when one is configured. Then
   copy that head off the ship to a witness. Without a witness it protects against bugs and stray writers, not against
@@ -38,24 +39,24 @@
 
 | Store | Chained? | Verified in production? | Owner and anchor | Known gaps |
 |---|---|---|---|---|
-| **EventLog** (AD-490), the system of record for events | Yes: SHA-256 over `prev_hash` and the row (`substrate/event_log.py:90-110`, `:745-763`) | **No.** `verify_chain` (`event_log.py:1211`) has no production caller; only tests call it | `EventLog` | `prune` deletes the oldest rows, which severs the chain (`event_log.py:1250-1262`; BF-942, #1706). It runs hourly with a 7-day, 100,000-row retention by default (`runtime.py:4027-4045`, `config_models/core.py:148-150`), so the chain fails on any vessel older than a week. |
+| **EventLog** (AD-490), the system of record for events | Yes: SHA-256 over `prev_hash` and the row (`substrate/event_log.py:105-116`, `:772-806`) | **No.** `verify_chain` (`event_log.py:1263`) has no production caller; only tests call it | `EventLog` | Pruning no longer severs the chain (BF-942, #1706, PR #1778, fixed 2026-11-09). `prune` runs hourly with a 7-day, 100,000-row retention by default (`runtime.py:4092-4111`, `config_models/core.py:148-150`); each stage that deletes first writes the id and `row_hash` of the last row it deletes to the one-row `events_truncation_anchor` table, in the transaction of the delete (`event_log.py:95-101`, `:1404-1419`). `verify_chain` walks from that anchor (`:1263-1325`): a pruned log whose kept rows verify reports `truncated` with `ok` True; a store pruned before the fix whose first kept row does not link to genesis reports `unanchored` with `ok` False until its next prune deletes rows; an edited row in the middle reports `broken` at the first row that fails. BF-980 (#1811, PR #1831, 2026-11-18) chains the first row after a prune that empties the table from the anchor (`:799-805`). Limits: the anchor sits in `events.db` beside the rows it describes, so it shows what a prune recorded and does not guard against a writer of that file; and the walk takes no lock, so a prune that commits during it can report a break that is not there (`:1274-1275`). |
 | **Identity Ledger** (AD-441) | Yes: `LedgerBlock` (`identity.py:350-369`) | On request: `GET /api/identity/ledger` (`routers/identity.py:52-58`). Foreign chains are checked on import when federation is armed (`identity.py:372-379`) | `AgentIdentityRegistry` | Blocks are not individually signed. An operator's peer reset deletes one foreign ship's stored chain by design (`identity.py:1641`, AD-1198 slice 2c). |
-| **Key events** (AD-1196) | Anchored in the Identity Ledger and signed with Ed25519 (`identity_keys.py:1-10`) | When armed, on every chain import (`federation/continuity.py:1-30`) | Same | Off by default: `federation.identity_keys_enabled = False` (`config.py:2521`). |
+| **Key events** (AD-1196) | Anchored in the Identity Ledger and signed with Ed25519 (`identity_keys.py:1-10`) | When armed, on every chain import (`federation/continuity.py:1-30`) | Same | Off by default: `federation.identity_keys_enabled = False` (`config.py:2520`). |
 | **Transfer marks** (AD-1198 2b-ii) | No, append-only; each row names the chain head it was judged against (`identity_transfer_marks.py:11-13`) | Re-judged on armed start | Same | Federation-only. |
-| **Security AuditLog** (AD-456, AD-1278) | Yes, with a truncation anchor so a capped log reads as truncated, not tampered (`security/audit.py:1-29`, `:89-110`) | At boot, on rehydrate (`startup/finalize.py:4751-4764`) | `AuditLog` | A failure only logs a warning; the message itself says the Captain alert path is still to come. |
+| **Security AuditLog** (AD-456, AD-1278) | Yes, with a truncation anchor so a capped log reads as truncated, not tampered (`security/audit.py:1-29`, `:89-110`) | At boot, on rehydrate (`startup/finalize.py:4765-4782`) | `AuditLog` | A failure only logs a warning; the message itself says the Captain alert path is still to come. |
 | **Assistant audit log** (AD-754; a second class also named `AuditLog`) | No | No | `security/audit_log.py` | Deletes rows after 90 days (`audit_log.py:182-188`) and redacts in place to `[DELETED]` (`:96-109`). Correct for erasure, but it is not a fixed-past record. |
-| **Ship's Records** | Git: each commit hashes its parent (`knowledge/records_store.py:207-212`, `:363-366`) | No. Nothing runs `git fsck` or compares heads | `RecordsStore` | `auto_commit` can be turned off (`config_models/knowledge.py:285`). A failed commit is logged at debug and swallowed (`records_store.py:1312-1320`), so a write can sit on disk uncommitted with no notice. The `_commit` docstring says "Debounced", but the body does not debounce. Commits are unsigned, and git's default object hash is SHA-1. |
+| **Ship's Records** | Git: each commit hashes its parent (`knowledge/records_store.py:673-678`, `:858-861`) | No. Nothing runs `git fsck` on its repository or compares heads. `probos doctor` reports a stale `index.lock`, too many uncommitted paths and an old last commit while paths are uncommitted (`doctor/checks/records_git_check.py:1-6`, BF-957, #1760): whether the history still grows, not whether it is unchanged | `RecordsStore` | `auto_commit` can be turned off (`config_models/knowledge.py:322`). A failed commit is not raised; since BF-957 it is logged at WARNING, once per distinct error until a git add or commit succeeds, and the last 32 distinct errors are remembered (`records_store.py:25`, `:1898-1961`, `:1963-1975`, `:1987-2010`), so a write can sit on disk uncommitted behind one warning. The `_commit` docstring says "Debounced", but the body does not debounce. The store does not sign its commits (a git configuration can), and git's default object hash is SHA-1. |
 | **Ship's Archive** (AD-524, AD-1341) | No; append-only by rule, one write path (`knowledge/archive_store.py:1-17`) | No | `ArchiveStore` | The Captain's erase deletes the row and leaves a marker that deliberately holds **no hash** (`archive_store.py:593-621`). |
 | **Archive snapshot ledger** (AD-1341 S6) | No; rows never deleted, each with the snapshot file's SHA-256 (`knowledge/archive_ledger.py:1-17`) | No | `ArchiveLedger` | Written only by the offline CLI. |
 | **ACM lifecycle transitions** | No; append rows with `initiated_by` (`acm.py:90-96`) | No | ACM | The current-state row is updated in place (`acm.py:282`), which is fine: the transitions are the history. |
 | **Trust** | No. `trust_outcome_receipts` keep `payload_sha256` and `evidence_sha256` (`consensus/trust.py:39-50`) | No | `TrustNetwork` | `trust_scores` is current state, updated in place and deleted on reset or identity merge (`trust.py:1223`, `:1315`); `trust_snapshots` keep pre-merge rows (`:53`). |
-| **Workforce booking timestamps** | No; documented as append-only (`workforce.py:11`, `:1308`) | No | `WorkItemStore` | **Not append-only in practice:** `delete_work_item` deletes them (`workforce.py:10853-10876`), reachable from `DELETE` on the workforce API (`routers/workforce.py:810-818`). |
+| **Workforce booking timestamps** | No; documented as append-only (`workforce.py:11`, `:1310`) | No | `WorkItemStore` | **Not append-only in practice:** `delete_work_item` deletes them (`workforce.py:10858-10894`), reachable from `DELETE` on the workforce API (`routers/workforce.py:813-822`). |
 | **Completion calibration** (`economic_calibration.py:639`) | No; outcome and resolution rows are inserted (`:235-292`) | No | `CompletionCalibrationLedger` | Derived statistics are updated in place (`:995`), which is fine. |
 | **Episode eviction audit** (AD-541f) | No, explicitly "no hash-chain" (`cognitive/eviction_audit.py:1-8`) | No | `EvictionAuditLog` | Log-and-degrade: an audit failure never blocks an eviction. |
 | **Directives** (AD-386) | No | No | `DirectiveStore` | Revocation sets `revoked_at` in place (`directive_store.py:187`); there is no separate history. |
 
 **Not ledgers, and should not be treated as ones:** the AD-1346 shadow admission store is bounded telemetry and is
-pruned by design (`admission/store.py:1-25`). Work permits carry a mutable `closed` flag (`tools/work_permits.py:449`)
+pruned by design (`admission/store.py:1-55`). Work permits carry a mutable `closed` flag (`tools/work_permits.py:449`)
 and nothing consumes them yet (`:9-13`). Consensus outcomes have no store of their own: in `consensus/` only
 `trust.py` creates tables, and `governance/` creates none. The federation envelope store is forward-only state, not
 history (`federation_envelope_store.py:1-13`). Classes named "ledger" for in-turn bookkeeping (`WriteLedger`,
@@ -67,8 +68,10 @@ writer and no consensus; calling it a blockchain invites exactly the confusion t
 
 ## 3. The gaps
 
-1. **A chain breaks in normal operation.** EventLog pruning severs the AD-490 chain (BF-942). Rehashing the kept rows
-   would forge history; the fix is a durable truncation anchor like AD-1278's (`event_log.py:1255-1261`).
+1. **A chain broke in normal operation; closed 2026-11-09.** EventLog pruning severed the AD-490 chain. BF-942 (#1706,
+   PR #1778) leaves the kept rows unchanged, since rehashing them would forge history, and records a durable
+   truncation anchor like AD-1278's in the transaction of each prune's delete (`event_log.py:1337-1419`). The anchor
+   is held in `events.db` with the rows, so gap 4 applies to it.
 2. **Verification is patchy and silent.** The EventLog is never verified, the Identity Ledger only when someone asks,
    and the AuditLog at boot with a warning nobody is alerted to. Under invariant 6, a check that never runs or
    that reports only to a log is close to no check.
@@ -90,7 +93,7 @@ JWS (AD-1144). Otherwise it says plainly that it is unsigned.
 
 | Store | Head | Cost to read |
 |---|---|---|
-| EventLog | `(id, row_hash)` of the last row, plus the truncation anchor once BF-942 lands | One indexed read |
+| EventLog | `(id, row_hash)` of the last row, plus the truncation anchor (BF-942) | One indexed read |
 | Identity Ledger | `(block_index, block_hash)` of the tip | One read |
 | Security AuditLog | `(sequence, entry_hash)` of the last persisted entry, plus `_truncated_at` | In memory |
 | Ship's Records | `git rev-parse HEAD`, plus whether the working tree is clean | One subprocess |
@@ -138,7 +141,7 @@ costs a network call per checkpoint, or none if the Captain copies the digest by
    pattern for erasure on append-only logs (EPRS, 2019); (c) record an erasure as a new head with a signed reason
    and accept that the erased segment can no longer be re-verified. Option (b) changes the Archive's "no hash"
    rule, so it is the Captain's call.
-4. **Retention.** Once BF-942 adds an anchor, every checkpoint older than the anchor refers to rows that are gone.
+4. **Retention.** With BF-942's anchor, every checkpoint older than the anchor refers to rows that are gone.
    The verifier should report such checkpoints as "covering pruned history" and check only that the anchor sits on
    the recorded path. The signed head log is also what keeps the anchor itself from being forged: an attacker who
    rewrites rows and resets the anchor no longer matches earlier checkpoints.
@@ -199,13 +202,19 @@ prove to itself.
 
 ## 6. Recommended sequence
 
-1. **BF-942 (#1706).** A durable truncation anchor for the EventLog, after the AD-1278 pattern. Nothing later is
-   sound without it.
-2. **Verify what exists and say so.** One verification service for the three chains plus `git fsck` on Ship's
-   Records, run at boot and on demand, reporting intact, truncated, broken or not verified, with a Captain alert on
-   failure. This also takes on the AuditLog's missing alert. It could be a BF or a small AD.
-3. **Fix the false "append-only" claims found here.** Booking timestamps deleted by `delete_work_item`, and Ship's
-   Records' swallowed commit failure. These are candidate BFs; file them only after confirming reach.
+1. **BF-942 (#1706). Done on 2026-11-09.** A durable truncation anchor for the EventLog, after the AD-1278 pattern,
+   merged in PR #1778 and recorded in `prompts/bf-942-eventlog-truncation-anchor.md`, `PROGRESS.md`, `DECISIONS.md`
+   and invariant 4 of `deterministic-ship.md`. BF-980 (#1811, PR #1831, 2026-11-18) chains the first row after a
+   prune that empties the table from that anchor.
+2. **Verify what exists and say so. The next step.** One verification service for the three chains plus `git fsck` on
+   Ship's Records, run at boot and on demand, reporting intact, truncated, broken or not verified, with a Captain alert
+   on failure. This also takes on the AuditLog's missing alert. It could be a BF or a small AD. What `unanchored`
+   means to an operator (history cut and no anchor records where, as in a store pruned before BF-942) is not decided;
+   it is decided before `verify_chain` is wired to a doctor check or an integrity report (BF942-F4, #1754).
+3. **Fix the false "append-only" claims found here.** Booking timestamps deleted by `delete_work_item`: a candidate
+   BF, not filed by 2026-11-27; file it only after confirming reach. The second candidate, Ship's Records' commit
+   failure logged at debug, was fixed by BF-957 (#1760, closed 2026-11-08): it is now logged at WARNING and
+   `probos doctor` reports the repository's state, and it is still not raised (`records_store.py:1990-1994`).
 4. **The head log (a future AD).** Version 1 over the chained stores, with a manual or RFC 3161 witness.
 5. **Version 2 coverage** of the Archive and other append-only tables, after the erasure decision below.
 6. **A federation transparency log**, as a new issue when federation resumes, built on AD-1196 to AD-1198.
@@ -219,6 +228,8 @@ The Captain took the recommended option on all five:
 3. **Erasure versus coverage:** the Archive keeps its "no hash of erased content" rule and stays out of the head log for now. Salted commitments (option b in section 4) are not adopted.
 4. **Signing:** the head log is signed only when the ship's key is configured, and records say "unsigned" otherwise. The key is not a prerequisite.
 5. **Blockchain:** ProbOS uses hash chains and transparency logs, not a blockchain, unless a future need appears for agreement among parties with no common authority.
+
+**Status, 2026-11-27.** Step 1 of the sequence in section 6 is done: BF-942 (#1706) was fixed on 2026-11-09 (PR #1778). Step 2, verification with an alert, is next. The head-log AD is filed only after step 2 (decision 1).
 
 ## 8. Prior art
 
