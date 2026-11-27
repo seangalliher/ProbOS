@@ -602,3 +602,36 @@ After the merge, tick the four boxes, post this comment, then close #1861 as com
 - [ ] Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.
 
 ## 15. Results on the oracle trees (the orchestrator fills this in)
+
+Recorded 2026-11-27 (UTC) on trees outside the main checkout: `b1861-ab` (the base `d6a744d7`, clean) and `b1861-oracle` (the base with P1 to P8 applied by `contract_tools.py apply`), on the gate host (Windows, CPython 3.12.13, `os.cpu_count()` 32). Test file blobs: base `1a6f61d5e78d29c2a5fc791a52ca7c271148c74f`, candidate `471dc04c24bc2ba3871aace3828990486202a41e` (+102 -16 by `git diff --numstat`). The Builder applied P1 to P6 by hand in the build worktree and its blob is the oracle's. Row names are those of sections 8.1 to 8.4.
+
+| Row | Result |
+|---|---|
+| O1 | the SEARCH of each of P1 to P8 occurs once in its file at its turn (the apply tool's `must be 1` check) |
+| O2 | `git grep -n -E "_SEMANTIC_FRAME_TIMEOUT_S\|_LateFrames\|timeout_s"` on the base test file: no match (exit 1); a case-insensitive search also finds `SEND_TIMEOUT_SECONDS` at :1572, which is not a match |
+| O3 | the focused command of 8.2 on the base: 202 passed (51.43 s); on the candidate: 206 passed (49.46 s), the base plus 4. The same four files plus `tests/test_ad1250_detail_first_render_policy.py`, `tests/test_architect_agent.py`, `tests/test_codebase_index.py` and `tests/test_standing_orders_layout.py` (the readers of the trackers), on the candidate with P7 and P8: 348 passed |
+| O4 | L1 and L2 on the base: below |
+| O5 | W11 and W12 on the base (a 23-case selector, all passing unmutated): both killed; W11 by the three `..._rejects_malformed_heartbeat` cases, W12 by the three one-budget cases (`..._later_than_500_polls` does not exist on the base, as 8.4 says) |
+| AB1 | the base plus the overlay of 8.2: `1 failed`, `AssertionError: condition did not become true` at :445; the candidate: `1 passed` |
+| Ledger | P7 and P8 applied, `gen_ad_ledger.py` run in the build worktree and in the oracle: the two pairs agree except `captured_at`, `head` and `subject_count` and the report line that prints them; `gen_ad_ledger.py --check`: current; the BF ceiling is BF-1001 and the next number BF-1002 |
+| L1 | quiet host, 3 runs each, interleaved: base 3 of 3 exit 0 and candidate 3 of 3; the large frame wait (the second wait) was 1.000 to 1.078 s on the base and 1.031 to 1.078 s on the candidate; the first wait was at most 0.016 s |
+| L2 | 32 burners (`os.cpu_count()`), 10 runs each, interleaved, 06:35:39Z to 06:53:07Z: candidate 10 of 10 exit 0, large frame waits 1.703 to 2.562 s (median 1.922 s), so D3 stands (the bound is 5.0 s); base 4 of 10 exit 0, the other six `raised` after 1.391 to 1.859 s in the large wait, which is the flake: the load reproduces it |
+
+W1 to W12, the campaign of record (`mutants_bf1001.py`): tree `b1861-oracle`, candidate test file sha256 `008c1e3dd310e9bcc19c4b928e0ee988ebdf04aaa1116f740e998231c0e9b91d`, a 27-case selector (the `receive_semantic_frame` tests, the two `_wait_until` tests and the deadline pin) that passes unmutated; one mutant at a time as an exact-once replacement, the file restored from its original bytes and its sha256 checked after each: 12 of 12 killed, 0 survived, 0 invalid. Failing cases per row, "one-budget" being the three cases of `..._valid_heartbeats_share_one_budget` and "late" being `..._receives_a_frame_later_than_500_polls`:
+
+| Row | Failing cases |
+|---|---|
+| W1 | late; one-budget (4) |
+| W2 | `..._empty_queue_fails_at_its_deadline` (1) |
+| W3 | the deadline pin (1) |
+| W4 | late; the deadline pin (2) |
+| W5 | `..._empty_queue_fails_at_its_deadline`; late; one-budget (5) |
+| W6 | `..._empty_queue_fails_at_its_deadline` (1) |
+| W7 | `..._reads_a_queued_frame_at_a_zero_deadline` (1) |
+| W8 | `test_wait_until_without_a_deadline_keeps_its_500_polls` (1) |
+| W9 | `test_wait_until_without_a_deadline_keeps_its_500_polls` (1) |
+| W10 | late; one-budget (4) |
+| W11 | `..._rejects_malformed_heartbeat[extra-data]`, `[extra-stream]`, `[missing-timestamp]` (3) |
+| W12 | late; one-budget (4) |
+
+Harness note. L1 and L2 ran with the orchestrator's copy of `burn_ab.py` and `frame_probe.py`: the same loop and the same probe, with a temporary `HOME`, `-B`, `-p no:cacheprovider`, `PYTHONPATH` holding the tree's `src` and the tree, a 600 s bound per run, and start and end lines of another shape. L3 in G1 and G2 uses the two files exactly as 8.3 prints them, written from this contract by tool: `burn_ab.py` sha256 `878a6361f4775b0b25ac03886da38dee06c17d2737101201a3742e85148fdc4c`, `frame_probe.py` sha256 `f6a64c370b374ea937331395d68f58d4d9b6def161bcb8699681db662ff3d669`.
