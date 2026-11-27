@@ -3,10 +3,11 @@
 **Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-27
 **Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-27, after review round 1 and the BF-932 overlap decision (A1, section 16)
 **Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-27, after review round 2 (A2, section 17: D8 hardened, claims corrected)
-**Status:** M1, M2, M4 built (`fcba563e`, `a44dd0ff`, `08a88fd0`); S3/M3 dropped; A1 built (`6a22d505`); A2 (section 17) ready to build against `6a22d505`. **Owning issue:** #1668 (stays open: the live re-measurement is the Captain's). Commits and the PR say `Refs #1668.`, never a closing keyword.
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-27, after the round-three brake (A3, section 18: split; D8 withdrawn, so A1's D8 parts and all of A2 are withdrawn; the R3-2 claim corrected). Where an earlier section and section 18 disagree, section 18 governs.
+**Status:** M1, M2, M4 built (`fcba563e`, `a44dd0ff`, `08a88fd0`); S3/M3 dropped; A1 built (`6a22d505`); A2 built (`1d9d5c48`); A3 (section 18) ready to build against `1d9d5c48`. **Owning issue:** #1668 (stays open: the live re-measurement is the Captain's). Commits and the PR say `Refs #1668.`, never a closing keyword.
 **Base:** main `32997b18f3b12da4a58566b82b4a106193df56d5`; branch `fix/bf930-spoken-reply-stall-20261127` (worktree `D:\ProbOS-worktrees\speech-bf930`). **Number:** BF-930 is already allocated to #1668; this contract allocates no new AD or BF number.
 **Line endings:** working copies may be CRLF and the blocks below are LF; match after normalising. Every SEARCH starts at the beginning of a line and occurs once in its file at its turn. All new text is ASCII.
-**Estimated tests:** Python 8 new in 1 new file; UI 20 new (18 in `voice.prefetch.bf918.test.tsx`: V1-V18, 2 in `voiceChunking.test.ts`: Q7-Q8), 6 changed in place against the base (P1, P2, P14, P19, and two in `voice.pipelining.test.tsx`), 0 removed. A2's share: V13-V18 new, V9 (an A1 test) rewritten in place, the file's `afterEach` and `FakeAudio` extended.
+**Estimated tests (after A3):** Python 8 new in 1 new file; UI 11 new (9 in `voice.prefetch.bf918.test.tsx`: V1-V9, 2 in `voiceChunking.test.ts`: Q7-Q8), 5 changed in place against the base (P1, P2, P14 and the two `voice.pipelining.test.tsx` tests, each for lookahead 3 only); P19 is byte-identical to the base again; 0 removed against the base. A3 removes V10-V18 (they pinned D8), and returns the file's `afterEach` and `FakeAudio` to the base.
 **Scope (files):** `ui/src/audio/voiceChunking.ts`, `ui/src/audio/voice.ts`, three UI test files; `src/probos/cognitive/dreaming.py`, `src/probos/routers/avatars.py`; one new Python test file; `PROGRESS.md`, `DECISIONS.md`, the regenerated ledger files. Nothing of BF-932 (#1670): `cognitive_agent.py`, `concurrency_manager.py`, `routers/agents.py`, `utils/step_timing.py`, `tests/test_bf932_reply_path_timing.py` are not touched. Nothing AD-738g owns: the backend gate (`voice.ts`:555, :567) and the `voice_name` resolution (`avatars.py`:250-262) are not touched.
 
 ## 1. Problem (premise table)
@@ -26,7 +27,7 @@
 
 Two slices, both on by default, neither needing a Captain decision:
 
-- **S1, client buffer (M1, repaired by A1).** The pipelined queue prepares up to three sentences ahead, and holds the first sentence until at least 3 s of audio, counted at the profile's playback rate, is ready (or all lookahead items are ready). A stall of one sentence no longer than the audio already held (about 10-14 s) is not heard; a longer one still pauses, for less time. In the queue, a sentence the browser speaks in place of a failed one ends before the next sentence starts; its end, a stop, a newer reply or a 20 s bound ends the wait (D8, hardened by A2). Backend-independent (Piper today, Kokoro in AD-738g).
+- **S1, client buffer (M1, repaired by A1).** The pipelined queue prepares up to three sentences ahead, and holds the first sentence until at least 3 s of audio, counted at the profile's playback rate, is ready (or all lookahead items are ready). A stall of one sentence no longer than the audio already held (about 10-14 s) is not heard; a longer one still pauses, for less time. A sentence the browser speaks in place of a failed one is spoken as on the base, and the next server sentence can overlap it (BF-918's registered R3, a known pre-existing limit; A3 withdrew D8, the follow-up redesigns it). Backend-independent (Piper today, Kokoro in AD-738g).
 - **S2, speech holds off the idle full dream (M2).** The TTS route records each accepted request on the dream scheduler through a new bounded method, so while spoken replies come less than `idle_threshold_seconds` apart an idle full dream does not start; one stretch of speech can hold it off for at most `SPEECH_DREAM_DEFER_CAP_SECONDS` (2 h). Past the cap speech stops resetting the idle clock, and the dream starts when the monitor's conditions hold (`idle_threshold_seconds` since the last activity, `dream_interval_seconds` since the last dream). The idle full dream logs its start and finish, so the Captain can see the dream state before recording.
 
 Rejected, one line each:
@@ -35,9 +36,8 @@ Rejected, one line each:
 - A separate store or lock domain for `tts_audio`; audio inline in the response: rejected in the consult (they break `filesystem_store.py`:473-475's one-instance rule or AD-731, `avatars.py`:289-290).
 - Making lookahead or the start buffer config fields: D2.
 - `record_activity()` unbounded from the route: continuous machine-driven speech (crew meetings through `useMeetingVoice.ts`:158) could starve the full dream for ever.
-- (A1) A rate- or length-scaled browser wait: a fixed 20 s bound covers the measured failure (an end event that never comes) with one constant; a sentence longer than the bound degrades to the old overlap, logged.
-- (A2) Removing D8 and stating the overlap as a pre-existing limit: the base overlaps too (section 17.1), but the overlap is ordinary reach, which convergence fixes whether or not it is a regression; removal would also bring back round 1's finding.
-- (A2) Bounding the single-call path's browser fallback: it can speak a whole reply (well past 20 s), and an 'end' fired at the bound would let the arbiter cut it; nothing in that path needs the wait, so it resolves at once, as on the base.
+- (A1, withdrawn by A3) A rate- or length-scaled browser wait. (A2, withdrawn by A3) Bounding the single-call path's browser fallback.
+- (A3) Keeping D8 and guarding its late `start` (round 3's smallest fix): the wait emulates an end the browser engine has not reported, and every round found a new collision between the emulated event and a real one; the guard would leave a late utterance audible with the PTT gate open (section 18.1). The round-three brake chose split: the overlap is the base's registered R3, deferred to a follow-up with a design that owns the utterance's lifecycle.
 
 ## 3. Decisions
 
@@ -50,7 +50,7 @@ Rejected, one line each:
 | D5 | Superseded by A1 (S3 dropped) | - |
 | D6 | Superseded by A1 (S3 dropped) | - |
 | D7 | The S1 buffer counts a sentence of unknown duration (0 or missing) or a failed prepare (`null`) as a full 3000 ms | both then start exactly as today; only a known-short first sentence waits |
-| D8 | (A1, hardened by A2) In the AD-1071 queue (`last` set), `_playPreparedSpeech` awaits each browser fallback (failed prepare, refused `play()`, a media `error` followed by the `play()` rejection, a throw in the play half). `_speakBrowserFallback(..., maxWaitMs)` is the one helper: with `maxWaitMs` it registers the utterance's single-settle `_fireBrowserEnd` as the module's `_settleBrowserSentence` and arms the bound. The wait ends exactly once, on the first of: `onend`, `onerror`, a stop (`stopSpeaking`), a newer dispatch (`_playNow`), the test seam, or `BROWSER_SENTENCE_MAX_WAIT_MS` = 20000, where it logs one `console.warn`. Every exit fires the utterance's one terminal 'end' (so the arbiter's GUARD 2 counts the bound as progress) and clears the timer. After a media `error` the play half also waits for `play()` to settle, because Chromium rejects it after the event. The single-call path and `speakResponse`'s callers pass no `maxWaitMs`: no timer, no settler, resolved at once, as on the base | the queue starts sentence N+1 only after `play` resolves (`voiceChunking.ts`:134-139); the base overlaps in the common case too (section 17.1). 20 s: past about 45 words at the default rate, inside `SPEECH_JOIN_TIMEOUT_MS` (45 s). A browser or voice can fail to report an end (round 2 found no ~15 s cut-off for the local Microsoft David voice: 25 s with only `start`); a sentence that really speaks longer than 20 s is overlapped after the bound, with one warning |
+| D8 | **Withdrawn by A3 (section 18): the browser fallback behaves as on the base; the overlap is the known pre-existing limit R3, redesigned in the follow-up.** Record of what was built and withdrawn: (A1, hardened by A2) In the AD-1071 queue (`last` set), `_playPreparedSpeech` awaits each browser fallback (failed prepare, refused `play()`, a media `error` followed by the `play()` rejection, a throw in the play half). `_speakBrowserFallback(..., maxWaitMs)` is the one helper: with `maxWaitMs` it registers the utterance's single-settle `_fireBrowserEnd` as the module's `_settleBrowserSentence` and arms the bound. The wait ends exactly once, on the first of: `onend`, `onerror`, a stop (`stopSpeaking`), a newer dispatch (`_playNow`), the test seam, or `BROWSER_SENTENCE_MAX_WAIT_MS` = 20000, where it logs one `console.warn`. Every exit fires the utterance's one terminal 'end' (so the arbiter's GUARD 2 counts the bound as progress) and clears the timer. After a media `error` the play half also waits for `play()` to settle, because Chromium rejects it after the event. The single-call path and `speakResponse`'s callers pass no `maxWaitMs`: no timer, no settler, resolved at once, as on the base | the queue starts sentence N+1 only after `play` resolves (`voiceChunking.ts`:134-139); the base overlaps in the common case too (section 17.1). 20 s: past about 45 words at the default rate, inside `SPEECH_JOIN_TIMEOUT_MS` (45 s). A browser or voice can fail to report an end (round 2 found no ~15 s cut-off for the local Microsoft David voice: 25 s with only `start`); a sentence that really speaks longer than 20 s is overlapped after the bound, with one warning |
 | D9 | (A1) `PreparedSpeech.playMs` = server `duration_ms` / `_playbackRate(profile?.rate)` (0.95 when unset, clamped to [0.25, 4.0]); the play half uses the same helper for `audio.playbackRate` | the buffer must count the time the sentence plays. Limit: with an `agent_id` the play half applies emotional modulation (`_resolveEffectiveProfile`), whose rate can differ from the profile's; the buffer uses the unmodulated rate |
 
 ## 4. Milestones and commits
@@ -64,18 +64,19 @@ Commit each milestone separately, explicit paths only. No subject carries an `AD
 | M3 | removed by A1 (S3 dropped; its pairs 6.9-6.11 are gone) | - |
 | M4 | 6.12-6.13, then `d:/ProbOS/.venv/Scripts/python.exe -P scripts/gen_ad_ledger.py` (no `--online`); stage `docs/development/ad-ledger-snapshot.json` and `docs/development/open-ads-report.md` when they change | `Trackers record the spoken-reply buffer, the speech dream guard and the loop-lag probe` (committed as `08a88fd0`; stands) |
 | A1 | A1.1-A1.18 (section 16), then `gen_ad_ledger.py` as in M4 | `Spoken replies wait for a sentence the browser speaks, count the start buffer at playback speed, and state their limits` (committed as `6a22d505`) |
-| A2 | A2.1-A2.17 (section 17), then `gen_ad_ledger.py` as in M4 | `A browser-spoken sentence in the reply queue ends on a stop, a new reply or its bound, and a media error's fallback is awaited` |
+| A2 | A2.1-A2.17 (section 17), then `gen_ad_ledger.py` as in M4 | `A browser-spoken sentence in the reply queue ends on a stop, a new reply or its bound, and a media error's fallback is awaited` (committed as `1d9d5c48`; withdrawn by A3) |
+| A3 | A3.1-A3.19 (section 18), then `gen_ad_ledger.py` as in M4 | `The reply queue speaks a failed sentence through the browser as before, and the bounded browser wait is withdrawn` |
 
 Each body ends `Refs #1668.` and the attribution lines of the session.
 
 ## 5. Builder: may and may not
 
-- **May:** apply the pairs in order (for A1: the A1 pairs against the tree at `08a88fd0`; for A2: the A2 pairs against `6a22d505`), create the new files the pairs name (A1 creates none), run `gen_ad_ledger.py`, `git diff --check`, `git diff --stat`.
+- **May:** apply the pairs in order (for A1: the A1 pairs against the tree at `08a88fd0`; for A2: the A2 pairs against `6a22d505`; for A3: the A3 pairs against `1d9d5c48`, after the orchestrator has replaced every `#<new>` in section 18 with the follow-up's number), create the new files the pairs name (A1 creates none), run `gen_ad_ledger.py`, `git diff --check`, `git diff --stat`.
 - **May not:** run tests, commit, edit an unnamed file (never `config/system.yaml`), add `skip` or a retry, reword an anchor, or touch `voice.ts`:548-570 or `avatars.py`:250-262. If a SEARCH does not match exactly once, stop and report.
 
 ## 6. The pairs
 
-6.1-6.8 and 6.12-6.13 were applied by M1, M2 and M4 and are kept as the record of what those commits did. Where A1 (section 16) changes their text (P3, P5, P6, P19's comment, the `record_speech_activity` docstring, the trackers), A1 governs; where A2 (section 17) changes A1's (the browser wait, V9, the lookahead comment, the trackers), A2 governs. 6.9-6.11 (S3) are removed.
+6.1-6.8 and 6.12-6.13 were applied by M1, M2 and M4 and are kept as the record of what those commits did. Where A1 (section 16) changes their text (P3, P5, P6, P19's comment, the `record_speech_activity` docstring, the trackers), A1 governs; where A2 (section 17) changes A1's (the browser wait, V9, the lookahead comment, the trackers), A2 governs; A3 (section 18) withdraws the browser wait of A1 and A2 (restoring the base text of those hunks), keeps V9 as A2 wrote it, and governs the lookahead comment and the trackers. 6.9-6.11 (S3) are removed.
 
 ### 6.1 `ui/src/audio/voiceChunking.ts`
 
@@ -916,15 +917,13 @@ REPLACE:
 | `runPrefetchQueue` signature | `voice.ts`:588 (only production caller); `voiceChunking.test.ts` Q1-Q6 pass 5-6 args | the 7th arg defaults to `() => true`: Q1-Q6 unchanged |
 | `TTS_PREFETCH_LOOKAHEAD` | the pipelined path only (`status.sentence_pipelining_enabled`, `voice.ts`:579); pipelined UI tests exist only in `voice.prefetch.bf918.test.tsx` and `voice.pipelining.test.tsx` (Absence Verified) | P1, P2, P14 and two pipelining tests changed in place; P3, P6, P8, P9, P15-P18, P20 hold (two-sentence replies, holds, or post-hoc assertions); P19 changed in place by A1 (it pinned the overlap) |
 | `PreparedSpeech` | built only at `voice.ts`:712-719 (at `08a88fd0`); its fields read by `_startBufferFilled` (:275, the duration), `_playPreparedSpeech` (:761) and `_discardPreparedSpeech` (:845-846, `audio` only) | gains `durationMs` (M1), renamed `playMs` and divided by the playback rate (A1) |
-| `_speakBrowserFallback` (A1: returns `Promise<void>`; A2: optional 6th arg `maxWaitMs`) | calls at `voice.ts`:595, :599, :611 (`_playNow`; no `maxWaitMs`, result ignored, byte-identical) and :788, :864, :870 (`_playPreparedSpeech`, at `6a22d505`; A2 passes `browserWaitMs`, which is `undefined` on the single-call path) | the `_playNow` callers behave as on the base; in the queue the play half waits (bounded, settled by stop and dispatch); A2: `_synthesizeAndPlay` (single call) resolves at once again, as on the base |
-| `stopSpeaking`, `_playNow`, `_resetTtsStatusForTests` (A2) | each gains one `_endBrowserSentenceWait()` call | a no-op unless the queue waits on a browser sentence; then that utterance's one 'end' fires (final) and the wait resolves |
-| arbiter GUARD 2 (`voice.ts`:514-516) | re-arms on each non-final 'end' | A2: the bound's 'end' re-arms it, so successive bounded sentences no longer exhaust the 45 s |
-| browser-fallback UI tests | `voice.prefetch.bf918` P11, P13 (single call), V6, P19, V10-V18; `voice.pipelining` honest-degrade; `voice.serverTts` :129, :159 (single call) | single-call tests: A2 holds no wait or timer there (as on the base); P19 and honest-degrade changed in place by A1 and pass unchanged under A2; V6's wait is ended by the file's `afterEach` (A2) |
+| `_speakBrowserFallback`, `stopSpeaking`, `_playNow`, `_resetTtsStatusForTests`, `_playPreparedSpeech`'s fallback paths | (A3) every caller and the arbiter (GUARD 2, `_awaitEntry`) | byte-identical to the base after A3: A1's and A2's changes there (`Promise<void>`, `maxWaitMs`, the settler and its three calls, `browserDone`, `playSettled`, `mediaError`) are withdrawn |
+| browser-fallback UI tests | `voice.prefetch.bf918` P11, P13 (single call), V6, P19; `voice.pipelining` honest-degrade; `voice.serverTts` :129, :159 (single call) | (A3) P19 byte-identical to the base again; honest-degrade back to its M1 text (the lookahead assertion only); V6 unchanged (it asserts the base behaviour); V10-V18 removed with D8 |
 | `ProfileChatTab.bf918.test.tsx` M6/M7 (:533-680) | pipelined two-sentence replies with no `duration_ms` | unknown duration: start at once; lookahead irrelevant for two sentences |
 | TTS route | `test_bf918_tts_latency.py`, `test_bf930_voice_path_timing.py`, `test_ad738_piper_tts.py`, `test_ad738e_1_per_emotion_prosody.py`, `test_bf291_piper_voice_catalog.py`, `test_ad721b1_rhubarb_backend.py`, `test_ad721e_animation_manifest.py`, `test_ad1071_tts_pipelining.py`, `test_bf918_tts_retention.py`, `test_bf918_attachment_io.py` | their stand-in runtimes have no `dream_scheduler` (SimpleNamespace) or a MagicMock one: skipped or a no-op call |
 | `DreamScheduler` | `runtime.py`:3286 (holds it), `test_dreaming.py` (:420, :448, :489-504, :619-627 set or read `_last_activity_time`), `test_bf1002_full_dream_complete_event.py` | one new field, one new method, two INFO lines; `record_activity` unchanged |
 | live log readers | the Captain's live check (section 12) | two new line kinds (`BF-930: idle full dream starting/finished`); loop-block lines are BF-932's |
-| HXI devtools console | the operator | at most one `[voice] BF-930: browser speech gave no end or error ...` warning per queued browser sentence that hits the 20 s bound (A2: never on the single-call path, never after a stop or a newer dispatch ended the wait) |
+| HXI devtools console | the operator | (A3) no new line: the `[voice] BF-930: browser speech gave no end or error ...` warning went with D8 |
 
 ## 8. Gates (the orchestrator runs all of them)
 
@@ -935,6 +934,7 @@ REPLACE:
   - Python: `test_a_spoken_reply_keeps_a_due_idle_full_dream_from_starting` fails on main at `await_count == 0` (the route does not touch the scheduler) once the import of `SPEECH_DREAM_DEFER_CAP_SECONDS` is satisfied; record the rest of that file as new-API cases (they fail on import on main), not as A/B evidence. The control test passes on both trees apart from its log-line asserts.
 - A1 A/B (the A1 test pairs on `08a88fd0` without the A1 source pairs A1.1-A1.11): V7 (`played` false expected, plays at once), V8 (expected to play at once, waits), V10 (`spoken()` is `['One.', 'Two.']`: Two plays while still blocked), V11 and V12 (Three already played), changed P19 and the changed honest-degrade test (`createdAudios[1].played` is true before the browser's end) fail on assertions. V9 passes on both trees (it guards the clamp; R2 kills it). A1.12-A1.14 count once each on `08a88fd0`.
 - A2 A/B (the A2 test pairs A2.12-A2.15 on `6a22d505` without the A2 source pairs A2.1-A2.11): V13 (`createdAudios[1].played` true right after the media `error`), V14 (`f.posted` contains `Next.` at 65 s), V15 (`end:Two.` missing after the stop), V16 (`end:One.` missing at 45 s), V17 and V18 (one BF-930 warning at 20 s) fail on assertions. The rewritten V9 passes on `6a22d505` and fails on the base `32997b18` (raw 6400 ms starts at once): the whole-repair reversion the round-2 reviewer ran. V18 passes on the base (preservation). Each A2 SEARCH counts once at its turn on `6a22d505`.
+- (A3) The A1 and A2 A/B bullets above are history: their D8 tests are removed. The A3 A/B and SEARCH counts are in section 18.6.
 
 ### 8.2 Focused checks on the candidate
 ```text
@@ -966,6 +966,7 @@ The broad gate does not run vitest; the vitest line and `npm run build` (tsc) ar
 | D5 | dreaming.py: `logger.info("BF-930: idle full dream starting idle_s=%.0f", idle_time)` | (line deleted) | control test |
 | R1 | voice.ts: `? data.duration_ms / _playbackRate(profile?.rate)` | `? data.duration_ms` | V7, V8, V9 (A2) |
 | R2 | voice.ts: `return Math.max(0.25, Math.min(4.0, rate ?? 0.95));` | `return rate ?? 0.95;` | V9 |
+| B1-B5, C1-C11 | **Retired by A3** (their lines and killing tests went with D8; the rows below are the record) | - | - |
 | B1 | (A2 locator) voice.ts: `await _speakBrowserFallback(text, profile, agent_id, utterance_id, last, browserWaitMs);` | `_speakBrowserFallback(text, profile, agent_id, utterance_id, last, browserWaitMs);` | P19, V11, V12, pipelining honest-degrade |
 | B2 | (A2 locator) voice.ts: `if (browserDone !== null) await browserDone;` | (line deleted) | V10, V13 |
 | B3 | (A2 locator) voice.ts: `}, maxWaitMs);` | `}, maxWaitMs * 1000);` | V12, V14 |
@@ -985,27 +986,27 @@ The broad gate does not run vitest; the vitest line and `npm run build` (tsc) ar
 
 Equivalent, not a row (A2): `return maxWaitMs === undefined ? Promise.resolve() : spoken;` to `return spoken;` makes only the single-call path's IIFE (`voice.ts`:603-652) finish later; nothing consumes its completion.
 
-L1-L8 (the probe) went with S3. (A2) Run R1, R2, B1-B3, B5 and C1-C11 on the A2 head; the other rows stand unless their files' code lines differ from `6a22d505` (A2 changes only comments in the region of U1). The orchestrator's campaign of record for U1-U7 and D1-D5 ran on the pre-drop candidate; rerun U4, U5 and U6 (their locators moved) and the new R and B rows on the A1 head. D1-D5 stand unless `dreaming.py` or `avatars.py` code lines differ (A1 changes only a docstring and a comment there).
+(A3) The live rows are U1-U7, D1-D5, R1 and R2, with the locators above unchanged on the A3 head (section 18.7); A3 adds no row (it adds no code). L1-L8 (the probe) went with S3. (A2, history) Run R1, R2, B1-B3, B5 and C1-C11 on the A2 head; the other rows stand unless their files' code lines differ from `6a22d505` (A2 changes only comments in the region of U1). The orchestrator's campaign of record for U1-U7 and D1-D5 ran on the pre-drop candidate; rerun U4, U5 and U6 (their locators moved) and the new R and B rows on the A1 head. D1-D5 stand unless `dreaming.py` or `avatars.py` code lines differ (A1 changes only a docstring and a comment there).
 
 ### 8.4 The gate
 `d:/ProbOS/.venv/Scripts/python.exe scripts/run_test_gate.py --label bf-930-speech --receipt logs/gates/bf-930-speech.receipt.json` once on the committed head, after merging the base. The gate lock is shared with the main orchestrator: queue behind its gate, never run two at once.
 
 ## 9. Diff Reviewer: properties to verify
 
-The change claims that a spoken reply's later sentences are synthesized up to three ahead and a first sentence that plays for less than 3 s waits for the next, that a sentence the browser speaks in place of a server one ends (or hits a 20 s bound) before the next starts, and that a spoken request keeps an idle full dream from starting for at most two hours of continuous speech. Consumers that must accept it: the HXI voice path (`speakResponse` through `runPrefetchQueue`), the dream monitor loop, and the operator reading `probos.log` and the devtools console.
+(A3: properties 6, 12 and the browser-wait part of 13 are withdrawn; the one review a split allows uses section 18.8.) The change claims that a spoken reply's later sentences are synthesized up to three ahead and a first sentence that plays for less than 3 s waits for the next, that a sentence the browser speaks in place of a server one behaves as on the base, and that a spoken request keeps an idle full dream from starting for at most two hours of continuous speech. Consumers that must accept it: the HXI voice path (`speakResponse` through `runPrefetchQueue`), the dream monitor loop, and the operator reading `probos.log` and the devtools console.
 1. With the default `startWhen`, `runPrefetchQueue` behaves byte-for-byte as before (Q1-Q6 unchanged); with `startWhen`, the first item starts after at most `lookahead` more preparations, and a stop during the wait plays nothing and discards each prepared item exactly once.
 2. A sentence whose duration is unknown, or whose preparation failed, never delays the first audio.
 3. `voice.ts`:548-570 (the backend gate) and `avatars.py`:250-262 (`voice_name`) are byte-identical to the base.
 4. `record_speech_activity` cannot write `_last_activity_time` once its stretch is at or past the cap, so speech alone cannot keep the monitor's full-dream predicate false; a full dream completed after the stretch began starts a new stretch; `record_activity` is unchanged.
 5. The route records activity once per accepted request, after validation and before synthesis, and a runtime without a scheduler is unaffected.
-6. (A1, A2) In the AD-1071 queue, a sentence the browser speaks in place of a server one (failed preparation, refused `play()`, a media `error` then the `play()` rejection, or a throw in the play half) resolves its `play` only when that utterance's wait ends. The wait ends exactly once, on the first of `onend`, `onerror`, `stopSpeaking`, a newer `_playNow`, `_resetTtsStatusForTests`, or `BROWSER_SENTENCE_MAX_WAIT_MS` (20 s, one `console.warn`). Each exit fires the one terminal 'end' (`_fireBrowserEnd`), clears the timer and resolves; a later engine callback is a no-op. The bound's 'end' re-arms the arbiter's GUARD 2. After a stop or a newer dispatch the 'end' is final and the queue plays nothing more. On the single-call path no wait, timer or settler exists (as on the base).
+6. (Withdrawn by A3; replaced by 18.8 P1.) (A1, A2) In the AD-1071 queue, a sentence the browser speaks in place of a server one (failed preparation, refused `play()`, a media `error` then the `play()` rejection, or a throw in the play half) resolves its `play` only when that utterance's wait ends. The wait ends exactly once, on the first of `onend`, `onerror`, `stopSpeaking`, a newer `_playNow`, `_resetTtsStatusForTests`, or `BROWSER_SENTENCE_MAX_WAIT_MS` (20 s, one `console.warn`). Each exit fires the one terminal 'end' (`_fireBrowserEnd`), clears the timer and resolves; a later engine callback is a no-op. The bound's 'end' re-arms the arbiter's GUARD 2. After a stop or a newer dispatch the 'end' is final and the queue plays nothing more. On the single-call path no wait, timer or settler exists (as on the base).
 7. (A1) The start buffer counts each prepared sentence's server duration divided by `_playbackRate(profile?.rate)`, the helper the play half uses for `audio.playbackRate`; an unknown duration or a failed prepare still counts as a full 3000 ms. The calls of `_speakBrowserFallback` in `_playNow` (`voice.ts`:595, :599, :611 at `6a22d505`) are byte-identical.
-8. Each changed UI test keeps every assertion it had, changed only where lookahead 3 (M1) or the awaited browser fallback (A1) changes the value, with the reason inline; nothing is deleted or skipped.
+8. Each changed UI test keeps every assertion it had, changed only where lookahead 3 (M1) changes the value, with the reason inline; nothing that existed on the base is deleted or skipped (A3 removes only V10-V18, which A1 and A2 added to pin D8).
 9. No file of BF-932 changes; ASCII and LF in the new text; no file outside the scope line changes; `config/system.yaml` is untouched; no `loop_lag` or `__main__.py` change is on the branch.
 10. Each absolute word of the new text (each, every, no, only, never, none), including A1's code comments, tracker text and issue text, holds against sections 1 and 7 and the Absence Verified list.
 11. (A1) No claim says a reply never pauses: the PROGRESS, DECISIONS, issue and `voice.ts` text bound the coverage by the audio held, and the dream text names both monitor conditions.
-12. (A2) No test leaves a browser-sentence timer running past its own end: `voice.prefetch.bf918`'s `afterEach` calls `_resetTtsStatusForTests()`, which ends any wait, and the single-call tests create none.
-13. (A2) The claims hold: a stopped reply spends at most four syntheses (three once a sentence plays); no text states a general ~15 s Chromium cut-off; the route records each **accepted** request.
+12. (Withdrawn by A3: no browser-sentence timer exists.)
+13. (A2, corrected by A3) The claims hold: a stop discards up to four unplayed preparations while the first sentence waits for the start buffer and up to three unplayed ones ahead while a sentence plays (no claim about total synthesis spend); no text states a general ~15 s Chromium cut-off; the route records each **accepted** request.
 
 ## 10. Verified Against Codebase (2026-11-27, tree `32997b18`)
 
@@ -1021,6 +1022,8 @@ The change claims that a spoken reply's later sentences are synthesized up to th
 - (A1, tree `08a88fd0`) `voice.ts`: `SPEECH_JOIN_TIMEOUT_MS = 45000` :25; `VoiceProfile.rate` (0.1-10.0) :34; listener `console.warn('[voice] ...')` :100; `speakResponse(text, profile?, agent_id?, ...)` :370-377; lookahead comment :258-262; `_startBufferFilled` :269-278; fallback calls :569, :573, :585; queue call :605-613 (`_prepareServerSpeech(sentence, profile, emotion)` :607); `PreparedSpeech` :636-642; `_synthesizeAndPlay` :652-663 (awaited at :625); `_prepareServerSpeech(text, profile, emotion)` :668-724 (`durationMs` :716-718); `_playPreparedSpeech` :748-839 (null path :756-760, `playbackRate` :769, reject path :823-833, catch :835-838); `_resolveEffectiveProfile` :852-878 (modulated rate :864-872); `_speakBrowserFallback` :881-944 (no-engine return :914, `_fireBrowserEnd` :934-941, `speak` :943); `stopSpeaking` :960 (`cancel()` :966-968). `voiceChunking.ts`: play then `played += 1` :134-139, loop top re-check :117, `finally` discard :141-146. `dreaming.py`: `record_speech_activity` docstring :3196-3204; monitor conditions :3358-3364. `avatars.py`: comment :270-272. Tests: `voice.prefetch.bf918.test.tsx` `vi` import :5, `FakeUtterance.onend/onerror` :17-18, `playMode` :30, `speechSynthesis.cancel: vi.fn()` :81, P16 fake timers :619, P19 :695-720, V6 :837-844 (end of file :845); `voice.pipelining.test.tsx` `FakeAudio.played` :32, honest-degrade :177-219. `PROGRESS.md`:3; `DECISIONS.md`:13-20. BF-932 contract (`D:\ProbOS-worktrees\b932\prompts\bf-932-reply-never-waits.md`): blocked line :811, resumed line :820, innermost first :692, `suppressed=N` :665, selector frames mean a paused process :1771, :1792.
 
 - (A2, tree `6a22d505`) `voice.ts`: `SPEECH_JOIN_TIMEOUT_MS` export :25; `_resetTtsStatusForTests` :229-238 (`_activeUtteranceId = null` :234, `_endSentenceQueueWait = null` :237); lookahead comment :258-263; `BROWSER_SENTENCE_MAX_WAIT_MS` comment and const :288-292; `_awaitBrowserSentence` :294-304; `_endSentenceQueueWait` :316; `_awaitEntry` :480-529 (non-final 'end' re-arms GUARD 2 :514-516, GUARD 2 :527); `_playNow` :561 (`speechSynthesis.cancel()` :574, `_activeUtteranceId = utterance_id` :586, `_sentenceEndedAt = null` :589, unbounded fallbacks :595, :599, :611, queue call :631-639 with `index === last` :634); `_synthesizeAndPlay` :680-691 (`_playPreparedSpeech` without `last` :689); `_playPreparedSpeech` :776-873 (null path :784-790, `browserDone` :794, `error` listener :823, `pause` :831, `audio.play().then` :856, reject fallback :864, catch :868-871, wait :872); `_speakBrowserFallback` :915-984 (signature :920-921, `_fireBrowserEnd` :973-978, `speak` :982, `return spoken` :983); `stopSpeaking` :1000-1025 (`cancel()` :1007). Tests: `voice.prefetch.bf918.test.tsx` `FakeAudio` :32-69 (`_rejectPlay` :40, `pause` :41-46, `play` hold :54, `load` :57), `_flush` :91-94, `_voice` :161-165, `afterEach` :168, P11 :446, P13 :500-537 (only `'hold'` user, :516), V6 :840-847, V9 :873-881, V12 :924-946 (end of file :947). `voiceChunking.ts` start hold :123-133. `speechQueueStore.ts` `resetSpeechArbiterForTests` :83-94 (global `beforeEach`, `ui/src/test/setup.ts`:26-30). `PROGRESS.md`:3; `DECISIONS.md`:20 (D5). Base `32997b18`: `voiceChunking.ts`:111-117 (`ensure(i)`, `await pending[i]`, `ensure(k)` for `k <= i + lookahead`, `await play`); `voice.ts`:261 (`TTS_PREFETCH_LOOKAHEAD = 1`), :733-737 (null path: `_speakBrowserFallback` then `return`), :808 and :814 (unawaited fallbacks).
+
+- (A3, tree `1d9d5c48`): see section 18.10.
 
 ### Absence Verified (2026-11-27)
 
@@ -1051,6 +1054,7 @@ The change claims that a spoken reply's later sentences are synthesized up to th
 - Dream step 7g's pairwise Jaccard (`dreaming.py`:1079-1088): BF-932's to change; its sampler's stacks decide.
 - Any config field or default; `config/system.yaml`.
 - (A1) `__main__._serve` and any loop monitor (BF-932's). The single-call path's code (`_synthesizeAndPlay`) and the `speakResponse` fallback calls. The arbiter, `SPEECH_JOIN_TIMEOUT_MS` and `runPrefetchQueue`.
+- (A3) The browser fallback, everywhere: `_speakBrowserFallback`, `_playPreparedSpeech`'s fallback paths, `stopSpeaking`, `_playNow` (apart from the S1 `_startBufferFilled` argument) and `_resetTtsStatusForTests` are the base's. The overlap of a browser-spoken sentence (BF-918's R3) is a known pre-existing limit, redesigned in the follow-up (section 18.11).
 - (A2) The single-call path's browser fallback: no wait, timer or settler (A1's bounded wait there is withdrawn). The arbiter's code (`_awaitEntry`), `flushSpeechQueue`, `speechQueueStore.ts` and `ui/src/test/setup.ts`. The server-path 'end' an `error` fires (BF-655), and the last-sentence ordering in section 17.6.
 
 ## 12. Issue text (#1668, on merge) and the Captain's live check
@@ -1059,7 +1063,7 @@ Wave comment:
 
 ```text
 BF-930 shipped in PR #<PR> (contract prompts/bf-930-spoken-reply-pause-fix.md). Refs #1668; the issue stays open for the live re-measurement.
-- Client buffer: the sentence queue synthesizes up to three sentences ahead (was one) and holds a first sentence that plays for less than 3 s (counted at the voice's rate) until the next is ready. A stall of one sentence no longer than the audio held (about 10-14 s) is not heard; a longer one, like the 17.8 s of 2026-10-30, still pauses, for less time. Unknown durations and failed syntheses start as before. In the sentence queue, a sentence the browser speaks in place of a failed one now ends before the next starts; a stop, a newer reply, or 20 s with no end report from the browser ends that wait.
+- Client buffer: the sentence queue synthesizes up to three sentences ahead (was one) and holds a first sentence that plays for less than 3 s (counted at the voice's rate) until the next is ready. A stall of one sentence no longer than the audio held (about 10-14 s) is not heard; a longer one, like the 17.8 s of 2026-10-30, still pauses, for less time. Unknown durations and failed syntheses start as before. Known limit, unchanged from before (BF-918's registered R3): a sentence the browser speaks in place of a failed one can be overlapped by the next server sentence; a bounded wait for it was built and withdrawn before merge (a late browser start locked push-to-talk after the reply ended), and its redesign is #1869.
 - Dream guard: each accepted TTS request counts as activity for the idle full dream, so while replies come less than idle_threshold_seconds apart an idle dream does not start; one stretch of speech holds it off for at most 2 h, after which the dream starts once the monitor's idle and interval conditions hold. The idle dream now logs "BF-930: idle full dream starting/finished".
 - Loop blocks: the loop-lag probe was dropped from this change; BF-932's loop-stall sampler (#1670) logs "BF-932: event loop blocked ... loop thread at: ..." instead.
 - Not built: write-behind of spoken audio. The 2026-10-30 stalls silenced every logger (a blocked loop). It is drafted only if, on a vessel running BF-932's sampler, a live window shows a store stall with behind>0 or lock_wait_ms>=500 and no "BF-932: event loop blocked" line within 5 s.
@@ -1088,10 +1092,11 @@ PR title: `Spoken replies hold three sentences ahead and hold off the idle dream
   - `faulthandler.dump_traceback_later`: rejected; it dumps every thread to a stream with no rate limit or lag value.
   - The client buffer is a playout (jitter) buffer of whole sentences; no search needed.
   - (A1) The loop-probe references above informed S3, which A1 dropped; they now bear on BF-932's sampler, not on this change.
-  - (A1, one search, 2026-11-27) Reports that Chromium cuts off an utterance at about 15 s and fires neither `end` nor `error` ([PhET utterance-queue #60](https://github.com/phetsims/utterance-queue/issues/60), [Stack Overflow 21947730](https://kiwix.lema.org/stackoverflow.com_en_all_2023-11/questions/21947730/chrome-speech-synthesis-with-longer-texts)); the common advice is sentence-sized utterances plus a timeout fallback, which D8 adopts. (A2) The cut-off is not general: review round 2 measured the local Microsoft David voice in Chromium still speaking at 25,156 ms with only `start` reported; the text now says a browser or voice can fail to report an end. The pause/resume keep-alive: rejected (it reportedly breaks on Android Chrome, same PhET thread).
+  - (A1, one search, 2026-11-27) Reports that Chromium cuts off an utterance at about 15 s and fires neither `end` nor `error` ([PhET utterance-queue #60](https://github.com/phetsims/utterance-queue/issues/60), [Stack Overflow 21947730](https://kiwix.lema.org/stackoverflow.com_en_all_2023-11/questions/21947730/chrome-speech-synthesis-with-longer-texts)); the common advice is sentence-sized utterances plus a timeout fallback, which D8 adopted (withdrawn by A3: a timeout that emulates the end collides with the engine's late events; section 18.1). (A2) The cut-off is not general: review round 2 measured the local Microsoft David voice in Chromium still speaking at 25,156 ms with only `start` reported; the text now says a browser or voice can fail to report an end. The pause/resume keep-alive: rejected (it reportedly breaks on Android Chrome, same PhET thread).
   - (A2, no search) The media-failure order (the `error` event, then the pending `play()` rejected with `NotSupportedError`) is the reviewer's Chromium measurement (round 2, finding 1); the HTML standard's "dedicated media source failure steps" describe the same order (not fetched for this amendment).
 - Blind spots:
-  - Barge-in now discards up to three syntheses instead of one (A2: four when the stop comes while the first sentence waits for the start buffer), with their stored WAVs and any viseme requests they started (Kokoro costs more per sentence).
+  - Barge-in now discards up to three unplayed preparations ahead instead of one (four while the first sentence waits for the start buffer), each with its stored WAV and any viseme request it started (Kokoro costs more per sentence). (A3 wording: a count of unplayed preparations, not of total synthesis spend.)
+  - (A3) The A2 and A1 bullets on the 20 s bound and the collected utterance below are history: D8 is withdrawn. Lookahead 3 can lengthen the base's R3 overlap by at most one synthesis (section 17.1, a reading).
   - (A2) At the bound the browser sentence's 'end' fires while a voice that lost its end report may still be speaking: the PTT gate re-arms and the next server sentence overlaps it, and on a reply's last sentence the arbiter may dispatch the next reply, whose `cancel()` cuts it. Bounded to sentences that speak past 20 s or lose their end; logged.
   - The orchestrator's "boot dream" was not located in `src`; if one exists it is a dream outside the idle monitor and is not held off (section 11).
   - (A1) A browser-spoken sentence longer than 20 s (a very long sentence, or a rate well below 0.95) is overlapped by the next server sentence after the bound, with one warning: the base's behaviour, now bounded and visible.
@@ -1100,14 +1105,16 @@ PR title: `Spoken replies hold three sentences ahead and hold off the idle dream
 
 ## 14. Acceptance criteria
 
-1. The A/B of 8.1 holds, the A1 and A2 A/Bs included; U1-U7, D1-D5, R1-R2, B1-B3, B5 and C1-C11 are killed as 8.3 says (the R, B and C rows run on the A2 head; B4 retired).
-2. The focused checks of 8.2 pass, the `rg` list and the vitest and build lines included; the pre-existing tests in those files pass unchanged apart from the six changed in place.
+1. (A3) The A/B of 18.6 holds; U1-U7, D1-D5, R1 and R2 are killed as 8.3 and 18.7 say; B1-B5 and C1-C11 are retired.
+2. The focused checks of 8.2 pass, the `rg` list and the vitest and build lines included; the pre-existing tests in those files pass unchanged apart from the five changed in place (A3); the absence checks of 18.5 find nothing.
 3. `git diff --check` is clean, the new text is ASCII, and no file outside the scope line changes; no BF-932 file and no `config/system.yaml` change.
 4. The Diff Reviewer approves against section 9.
 5. One receipted broad gate on the committed head is green.
 6. Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.
 
-## 16. Amendment A1 (2026-11-27, after review round 1 and the BF-932 overlap decision)
+## 16. Amendment A1 (2026-11-27, after review round 1 and the BF-932 overlap decision) -- D8 parts withdrawn by A3
+
+> **Audit trail, not instructions (A3, section 18).** A1-c (D8, the awaited browser fallback: every A1 pair touching `_playPreparedSpeech`'s fallback paths or `_speakBrowserFallback`, and the tests V10-V12, the changed P19 and the changed honest-degrade test) is withdrawn by A3. A1-a, A1-b, A1-d (D9), A1-e and A1-f stand as built, as A2 and A3 amended them. Do not apply any pair of this section again.
 
 ### 16.1 What changes, why, and what it replaces
 
@@ -1603,7 +1610,9 @@ REPLACE:
 2. `git diff --check`; `git diff --stat` shows only `voice.ts`, the two UI test files, `dreaming.py`, `avatars.py`, `PROGRESS.md`, `DECISIONS.md` and the ledger files.
 3. The orchestrator commits with the A1 subject of section 4 (no `AD-`/`BF-` token, none of close, fix, resolve), body ending `Refs #1668.`, then runs 8.1 (A1 A/B), 8.2, the 8.3 rows named there, and the gate (8.4).
 
-## 17. Amendment A2 (2026-11-27, after review round 2)
+## 17. Amendment A2 (2026-11-27, after review round 2) -- withdrawn by A3
+
+> **Audit trail, not instructions (A3, section 18).** All of A2's code and tests are withdrawn by A3 except V9 as A2 rewrote it (kept) and A2-f's claim corrections ("each accepted request", no general ~15 s cut-off; kept; the four/three wording is corrected again by A3). 17.1's convergence argument is superseded by the round-three brake's split decision (18.1). Do not apply any pair of this section again.
 
 ### 17.1 Is the overlap a regression? No: the base overlaps in the common case
 
@@ -2245,3 +2254,511 @@ REPLACE:
 1. `d:/ProbOS/.venv/Scripts/python.exe -P scripts/gen_ad_ledger.py` (no `--online`); stage `docs/development/ad-ledger-snapshot.json` and `docs/development/open-ads-report.md` if they change.
 2. `git diff --check`; `git diff --stat` shows only `voice.ts`, `voice.prefetch.bf918.test.tsx`, `PROGRESS.md`, `DECISIONS.md`, the contract and the ledger files.
 3. The orchestrator commits with the A2 subject, then runs 8.1 (A2 A/B), 8.2 (the vitest line and `npm run build` cover the A2 change), the 8.3 rows named in 17.5, and the gate (8.4).
+
+## 18. Amendment A3 (2026-11-27, round-three brake: split; D8 withdrawn)
+
+### 18.1 Decision and why
+
+Round 3 (`6a22d505..1d9d5c48`) returned NOT READY with R3-1 (P2, ordinary, regression), R3-2 (P3, claim) and R3-3 (P4, size). The round-three brake decision (Architect, 2026-11-27, recorded on #1668) is **split**: land S1, D9, S2 and the claim fixes; withdraw D8 completely; the browser-fallback overlap returns to what it is on the base, BF-918's registered residual R3, and its redesign is filed as follow-up #1869 under the filing policy (not kept as a slice of #1668).
+
+The design is what keeps producing findings. D8 makes the play half emulate the browser engine's end, but the engine is a shared global queue (`speechSynthesis`) whose events D8 does not own, and the 20 s bound counts from `speak()` (`voice.ts`:1016-1019 at `1d9d5c48`), not from `onstart`, so time spent behind an earlier utterance in the engine's queue counts against it. Each round found a new place where an emulated event met a real one: round 2 found the media `error`/`play()` order, the arbiter deadline, stop and teardown; round 3 found a late `start` (R3-1: real Chromium 148, Three's bounded 'end' at 41.3 s, its native `start` at 50.1 s, the PTT gate still locked at 54.7 s). Guarding `onstart` with `_ended` would leave that utterance audible with no 'start' and no 'end', with the PTT gate and wake word open while the agent speaks (18.13 a).
+
+Disposition of every finding:
+
+| Round | Finding | Disposition after A3 |
+|---|---|---|
+| 1 | M1-a (P2, ordinary; "regression: yes", refuted: base P19 says "R3, unchanged", 17.1) | deferred to #1869: pre-existing, registered, not a regression, does not break the next run |
+| 1 | M1-b (P2, playback rate) | fixed by D9; kept |
+| 1 | M1 claims P3, M2 P3 | fixed; kept |
+| 1 | M3 (loop-lag probe) | moot (S3 dropped; BF-932 D2) |
+| 2 | F1 (P2), F2 (P2), F3 (P3), F4 (P3) | removed with D8 (their code no longer exists) |
+| 2 | claims x3 ("each accepted request", no general ~15 s cut-off, four/three) | kept; the four/three wording corrected again (R3-2) |
+| 3 | R3-1 (P2, regression) | removed with D8 |
+| 3 | R3-2 (P3, claim) | fixed here (A3.2, section 9 property 13, section 13) |
+| 3 | R3-3 (P4, size) | moot: the allocation goes with D8 |
+
+Every regression a repair introduced (F2, F3, F4, R3-1, R3-3) is removed together with its code, not deferred. The only deferred finding, M1-a, is base behaviour.
+
+### 18.2 What changes and what stays
+
+| Part | After A3 |
+|---|---|
+| S1 (`TTS_PREFETCH_LOOKAHEAD = 3`, `TTS_START_BUFFER_MS`, `_startBufferFilled`, the `startWhen` argument, `voiceChunking.ts`) | unchanged from `1d9d5c48` apart from the lookahead comment (R3-2) |
+| D9 (`_playbackRate`, `PreparedSpeech.playMs`, the `_prepareServerSpeech` return object, `audio.playbackRate = _playbackRate(...)`) | unchanged |
+| S2 (`dreaming.py`, `avatars.py`, the Python test file) | unchanged |
+| D8 (`BROWSER_SENTENCE_MAX_WAIT_MS`, `_settleBrowserSentence`, `_endBrowserSentenceWait` and its three calls, `browserWaitMs`, `browserDone`, `playSettled`, `mediaError`, `_speakBrowserFallback`'s `Promise<void>`/`maxWaitMs`/`spoken`/`bound`) | removed; those hunks are the base's text again |
+| Tests | V10-V18 removed (18.6); P19 and the `afterEach` and `FakeAudio` of `voice.prefetch.bf918` byte-identical to the base; `voice.pipelining.test.tsx` byte-identical to `08a88fd0` (M1); V1-V9 kept, V9 as A2 wrote it |
+| Trackers | PROGRESS and DECISIONS: D8 text replaced by the known limit with a pointer to #1869; "each accepted request" kept |
+
+`afterEach`: back to the base. Its async reset (A2.13) existed only to end a browser-sentence wait and its 20 s timer; no such timer exists after A3, and V1-V6 passed under the base `afterEach` at `08a88fd0` (campaign 1). `FakeAudio.rejectPlay()` (A2.12): removed; only V13 used it (18.10). The base's `_rejectPlay` field stays (P13's `'hold'` mode uses it).
+
+**Orchestrator, before the Builder starts:** file the follow-up (18.11), then replace every `#<new>` in this section (A3.18, A3.19) and in section 12 with its number. A Builder that finds `#<new>` in a REPLACE stops.
+
+### 18.3 The pairs (against `1d9d5c48`; CRLF working copies, LF blocks; each SEARCH occurs once at its turn)
+
+#### `ui/src/audio/voice.ts`
+
+**A3.1** (test seam: base). SEARCH:
+```ts
+  _endSentenceQueueWait = null;
+  _endBrowserSentenceWait(); // BF-930 A2: a browser sentence a test left waiting, with its bound
+}
+```
+REPLACE:
+```ts
+  _endSentenceQueueWait = null;
+}
+```
+
+**A3.2** (R3-2: the lookahead comment counts unplayed preparations). SEARCH:
+```ts
+ *  pipelining. BF-930 (#1668): three (was one), so a stall of one sentence's synthesis
+ *  or storage no longer than the audio already held (up to three sentences, about
+ *  10-14 s) is not heard; a longer stall still pauses. A reply stopped while its first
+ *  sentence waits for the start buffer can have spent four syntheses (that sentence and
+ *  three ahead), and three once a sentence plays, with their stored WAVs and any viseme
+ *  requests they started. */
+const TTS_PREFETCH_LOOKAHEAD = 3;
+```
+REPLACE:
+```ts
+ *  pipelining. BF-930 (#1668): three (was one), so a stall of one sentence's synthesis
+ *  or storage no longer than the audio already held (up to three sentences, about
+ *  10-14 s) is not heard; a longer stall still pauses. A stop discards what was
+ *  prepared and not played: up to four sentences while the first waits for the start
+ *  buffer (that sentence and three ahead), and up to three ahead while a sentence
+ *  plays, each with its stored WAV and any viseme request it started. */
+const TTS_PREFETCH_LOOKAHEAD = 3;
+```
+
+**A3.3** (the bound, the settler and its helper: removed). SEARCH:
+```ts
+/** BF-930 A1/A2: the longest the AD-1071 play half waits for a sentence the browser
+ *  speaks in place of a server one. A browser or voice can fail to report an
+ *  utterance's end (onend can be lost in a backgrounded tab, or when the utterance
+ *  object is collected); 20 s is past about 45 words at the default rate and inside
+ *  SPEECH_JOIN_TIMEOUT_MS (45 s). A browser sentence that really speaks for longer is
+ *  overlapped by the next sentence after the bound. */
+export const BROWSER_SENTENCE_MAX_WAIT_MS = 20000;
+
+/** BF-930 A2 (#1668): the `_fireBrowserEnd` of the browser sentence the AD-1071 play
+ *  half waits on (a no-op once that sentence has ended), or null. Calling it fires the
+ *  utterance's one terminal 'end' unless onend or onerror already did, clears its bound
+ *  and resolves the wait. The queue plays one sentence at a time and every new dispatch
+ *  ends any wait first, so at most one wait is live. */
+let _settleBrowserSentence: (() => void) | null = null;
+
+/** BF-930 A2: a stop (`stopSpeaking`) and a newer dispatch (`_playNow`) end the current
+ *  browser-sentence wait here, after `speechSynthesis.cancel()`, which fires no event for
+ *  an utterance whose engine has already gone quiet or lost its end. The test seam
+ *  (`_resetTtsStatusForTests`) calls it too. */
+function _endBrowserSentenceWait(): void {
+  const settle = _settleBrowserSentence;
+  _settleBrowserSentence = null;
+  if (settle !== null) settle();
+}
+
+/** BF-918 (review round 1, D7a): the `dropped` reason of a dispatched utterance that
+```
+REPLACE:
+```ts
+/** BF-918 (review round 1, D7a): the `dropped` reason of a dispatched utterance that
+```
+
+**A3.4** (`_playNow`: base). SEARCH:
+```ts
+  _sentenceEndedAt = null;
+  // BF-930 A2 (#1668): an earlier reply's queue may still wait on a browser sentence that
+  // cancel() above ended without an event. Ended after the device changed hands, so its
+  // 'end' is final and that queue plays nothing more.
+  _endBrowserSentenceWait(); // BF-930 A2: a newer dispatch
+```
+REPLACE:
+```ts
+  _sentenceEndedAt = null;
+```
+
+**A3.5** (`_playPreparedSpeech` head and null path: base). SEARCH:
+```ts
+  // BF-930 A2 (#1668): only the AD-1071 queue (which sets `last`) waits for a sentence the
+  // browser speaks in its place; the single-call path resolves at once, as before.
+  const browserWaitMs = last === undefined ? undefined : BROWSER_SENTENCE_MAX_WAIT_MS;
+  if (prepared === null) {
+    _sentenceEndedAt = null; // a browser-spoken sentence is not a gap between two server ones
+    // BF-930 A1/A2: in the queue, resolve once the browser has spoken it (bounded), so the
+    // queue does not start the next sentence over it.
+    await _speakBrowserFallback(text, profile, agent_id, utterance_id, last, browserWaitMs);
+    return;
+  }
+  const { audio, visemes, deferredVisemes } = prepared;
+  // BF-930 A1/A2: a browser fallback started below (play() refused, a media error, or a
+  // throw) is awaited once the server half and play() have both settled.
+  let browserDone = null as Promise<void> | null;
+  // BF-930 A2: Chromium fires a media 'error' (which settles the server half) BEFORE it
+  // rejects a pending play(), and that rejection starts the fallback. After an 'error'
+  // the half therefore waits for play() to settle (`playSettled`).
+  let playSettled: Promise<void> = Promise.resolve();
+  let mediaError = false as boolean;
+  try {
+```
+REPLACE:
+```ts
+  if (prepared === null) {
+    _sentenceEndedAt = null; // a browser-spoken sentence is not a gap between two server ones
+    _speakBrowserFallback(text, profile, agent_id, utterance_id, last);
+    return;
+  }
+  const { audio, visemes, deferredVisemes } = prepared;
+  try {
+```
+
+**A3.6** (media `error` listener: base). SEARCH:
+```ts
+      // BF-930 A2: a media error. If play() is still pending, Chromium rejects it next.
+      audio.addEventListener('error', () => { mediaError = true; _finish(true); });
+```
+REPLACE:
+```ts
+      audio.addEventListener('error', () => _finish(true));
+```
+
+**A3.7** (`play()`: base). SEARCH:
+```ts
+      playSettled = audio.play().then(undefined, () => {
+```
+REPLACE:
+```ts
+      audio.play().then(undefined, () => {
+```
+
+**A3.8** (refused and throw fallbacks, the final wait: base). SEARCH:
+```ts
+        browserDone = _speakBrowserFallback(text, profile, agent_id, utterance_id, last, browserWaitMs);
+        _finish(false);
+      });
+    });
+    // BF-930 A2: after a media 'error' the server half settled before play() rejected;
+    // wait for that rejection, which starts the fallback awaited below.
+    if (mediaError) await playSettled;
+  } catch {
+    _invalidateTtsStatus();
+    browserDone = _speakBrowserFallback(text, profile, agent_id, utterance_id, last, browserWaitMs); // a throw
+  }
+  if (browserDone !== null) await browserDone;
+}
+```
+REPLACE:
+```ts
+        _speakBrowserFallback(text, profile, agent_id, utterance_id, last);
+        _finish(false);
+      });
+    });
+  } catch {
+    _invalidateTtsStatus();
+    _speakBrowserFallback(text, profile, agent_id, utterance_id, last);
+  }
+}
+```
+
+**A3.9** (`_speakBrowserFallback` signature: base). SEARCH:
+```ts
+  last?: boolean,
+  maxWaitMs?: number,
+): Promise<void> {
+  // BF-930 A1/A2 (#1668): with `maxWaitMs` (the AD-1071 play half) it resolves once this
+  // utterance's one terminal 'end' has fired: onend, onerror, the bound, a stop or a newer
+  // dispatch. Without it, and when there is no engine, it resolves at once, as before.
+  if (!('speechSynthesis' in window)) {
+```
+REPLACE:
+```ts
+  last?: boolean,
+): void {
+  if (!('speechSynthesis' in window)) {
+```
+
+**A3.10** (no-engine return: base). SEARCH:
+```ts
+      ..._finalField(last, utterance_id),
+    });
+    return Promise.resolve();
+  }
+```
+REPLACE:
+```ts
+      ..._finalField(last, utterance_id),
+    });
+    return;
+  }
+```
+
+**A3.11** (body: base). SEARCH:
+```ts
+  let _ended = false;
+  let _resolveSpoken: () => void = () => {};
+  const spoken = new Promise<void>((resolve) => { _resolveSpoken = () => resolve(); });
+  let bound: ReturnType<typeof setTimeout> | undefined;
+  const _fireBrowserEnd = () => {
+    if (_ended) return;
+    _ended = true;
+    if (bound !== undefined) clearTimeout(bound);
+    _fire({ type: 'end', agent_id, utterance, source: 'browser', utterance_id, ..._finalField(last, utterance_id) });
+    _resolveSpoken();
+  };
+  utterance.onend = _fireBrowserEnd;
+  utterance.onerror = _fireBrowserEnd;
+  if (maxWaitMs !== undefined) {
+    // BF-930 A2 (#1668): a lost onend/onerror must not hold the reply. A stop or a newer
+    // dispatch ends the wait through `_settleBrowserSentence`; at the bound this
+    // utterance's 'end' fires here, which the arbiter counts as progress (GUARD 2).
+    _settleBrowserSentence = _fireBrowserEnd;
+    bound = setTimeout(() => {
+      console.warn(`[voice] BF-930: browser speech gave no end or error within ${maxWaitMs} ms; the reply goes on`);
+      _fireBrowserEnd();
+    }, maxWaitMs);
+  }
+  // 'boundary' reserved for AD-721b phoneme work; not wired in v1.
+  speechSynthesis.speak(utterance);
+  return maxWaitMs === undefined ? Promise.resolve() : spoken;
+}
+```
+REPLACE:
+```ts
+  let _ended = false;
+  const _fireBrowserEnd = () => {
+    if (_ended) return;
+    _ended = true;
+    _fire({ type: 'end', agent_id, utterance, source: 'browser', utterance_id, ..._finalField(last, utterance_id) });
+  };
+  utterance.onend = _fireBrowserEnd;
+  utterance.onerror = _fireBrowserEnd;
+  // 'boundary' reserved for AD-721b phoneme work; not wired in v1.
+  speechSynthesis.speak(utterance);
+}
+```
+
+**A3.12** (`stopSpeaking`: base). SEARCH:
+```ts
+    speechSynthesis.cancel();
+  }
+  // BF-930 A2 (#1668): cancel() fires no event for an utterance whose engine has already
+  // gone quiet or lost its end; end the browser sentence the AD-1071 play half waits on.
+  _endBrowserSentenceWait(); // BF-930 A2: a stop
+```
+REPLACE:
+```ts
+    speechSynthesis.cancel();
+  }
+```
+
+#### `ui/src/audio/__tests__/voice.prefetch.bf918.test.tsx`
+
+**A3.13** (`FakeAudio.rejectPlay()`: removed; only V13 used it). SEARCH:
+```ts
+  load = vi.fn();
+  /** BF-930 A2: the second half of Chromium's media failure. After 'error' (sent with
+   *  `emit('error')`), a pending play() rejects with NotSupportedError. */
+  rejectPlay(): void {
+    const reject = this._rejectPlay;
+    this._rejectPlay = null;
+    if (reject !== null) reject(new DOMException('The element has no supported sources.', 'NotSupportedError'));
+  }
+  constructor(src: string) {
+```
+REPLACE:
+```ts
+  load = vi.fn();
+  constructor(src: string) {
+```
+
+**A3.14** (`afterEach`: base). SEARCH:
+```ts
+afterEach(async () => {
+  vi.restoreAllMocks(); vi.unstubAllGlobals(); cleanup();
+  // BF-930 A2 (review round 2): end any browser sentence a test left the AD-1071 play
+  // half waiting on (V6 does), so its 20 s bound does not outlive the test.
+  (await import('../voice'))._resetTtsStatusForTests();
+  await _flush();
+});
+```
+REPLACE:
+```ts
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); cleanup(); });
+```
+
+**A3.15** (P19: the base text; it pins R3, which is the base behaviour again). SEARCH:
+```ts
+      // Two failed: the browser speaks it. BF-930 A1 (#1668, review round 1): Three now
+      // waits for the browser's end; it used to play meanwhile (R3), which with lookahead 3
+      // overlapped Two. The played-true assertion moves after Two's end.
+      expect(spoken()).toEqual(['Two.']);
+      expect(createdAudios[1].played).toBe(false);
+      (speakCalls[0] as FakeUtterance).onend?.();
+      await _flush();
+      expect(createdAudios[1].played).toBe(true);
+      expect(f.posted).not.toContain('Next.');
+```
+REPLACE:
+```ts
+      // Two failed: the browser speaks it, and Three plays meanwhile (R3, unchanged).
+      expect(spoken()).toEqual(['Two.']);
+      expect(createdAudios[1].played).toBe(true);
+      (speakCalls[0] as FakeUtterance).onend?.();
+      await _flush();
+      expect(f.posted).not.toContain('Next.');
+```
+
+**A3.16** (V10-V18: removed with D8). This is an anchored range deletion, not a SEARCH block (239 lines). Delete from the blank line directly above `  it('V10 A1: a sentence whose play() is refused is spoken by the browser, and the next waits for its end', async () => {` (it is line 902 at `1d9d5c48`; after A3.13-A3.15 it is line 886) through the line `  });` directly above the file's last line `});`, inclusive. Both anchors occur once: the V10 title line, and the file's last line. After the deletion the file ends with V9's last three lines and the describe's close:
+```ts
+    expect(createdAudios[0].playbackRate).toBe(4);
+  });
+});
+```
+Check: before A3.13-A3.16 the file has 1141 lines; after them, 1141 - 7 - 6 - 3 - 239 = 886 lines (A3.13 removes 7, A3.14 removes 6, A3.15 removes 3, A3.16 removes 239) (`wc -l`, which counts CRLF lines the same).
+
+#### `ui/src/audio/__tests__/voice.pipelining.test.tsx`
+
+**A3.17** (the honest-degrade test: its M1 text; the file then equals `08a88fd0`). SEARCH:
+```ts
+    // Sentence[1] fell back to the browser in its turn. BF-930 A1 (#1668): the queue now
+    // waits for that utterance's end before sentence[2] plays; it used to resolve at once
+    // and play sentence[2] over it.
+    expect(speakCalls.length).toBe(1);
+    expect(posted).toEqual(['Alpha.', 'Bravo.', 'Charlie.']);
+    expect(createdAudios[1].played).toBe(false);
+    (speakCalls[0] as { onend: (() => void) | null }).onend?.();
+    await _flush();
+    expect(createdAudios[1].played).toBe(true);
+  });
+```
+REPLACE:
+```ts
+    // Sentence[1] fell back to the browser in its turn and resolved at once,
+    // so the queue already moved on to sentence[2] without a new 'ended'.
+    expect(speakCalls.length).toBe(1);
+    expect(posted).toEqual(['Alpha.', 'Bravo.', 'Charlie.']);
+  });
+```
+
+#### `PROGRESS.md`
+
+**A3.18** (line 3, the whole line). SEARCH:
+```text
+**BF-930 (2026-11-27), #1668 -- a spoken reply rides out a stall of one sentence's synthesis or storage, up to the audio already held.** The AD-1071 sentence queue now synthesizes up to three sentences ahead (was one) and holds a first sentence that plays for less than 3 s until the next is ready (`ui/src/audio/voice.ts`, `voiceChunking.ts`: `runPrefetchQueue` gains `startWhen`); the buffer counts each sentence's playing time at the profile's rate. A stall no longer than the audio held (about 10-14 s) is not heard; a longer one, like the 17.8 s of 2026-10-30, still pauses, for less time. An unknown duration or a failed synthesis starts as before. In the queue, a sentence the browser speaks in place of a failed one (failed synthesis, refused playback or a media error) now ends before the next sentence starts; its end, a stop, a newer reply, or 20 s with no end report (`BROWSER_SENTENCE_MAX_WAIT_MS`, one console warning) ends that wait. The TTS route records each accepted request on the dream scheduler (`DreamScheduler.record_speech_activity`), so while replies come less than `idle_threshold_seconds` apart an idle full dream does not start; one stretch of speech holds it off for at most `SPEECH_DREAM_DEFER_CAP_SECONDS` (2 h), after which the dream starts once the monitor's idle and interval conditions hold. The idle full dream logs `BF-930: idle full dream starting/finished`. The contract's loop-lag probe was dropped: BF-932's loop-stall sampler (#1670) logs loop blocks. Write-behind of spoken audio is not built: the 2026-10-30 stalls silenced every logger (a blocked loop), and it waits for `behind=` evidence. #1668 stays open for the Captain's live re-measurement. New `tests/test_bf930_speech_defers_idle_dream.py` (8 tests); UI V1-V18, Q7-Q8; P1, P2, P14, P19 and two pipelining tests updated in place. Contract `prompts/bf-930-spoken-reply-pause-fix.md`.
+```
+REPLACE:
+```text
+**BF-930 (2026-11-27), #1668 -- a spoken reply rides out a stall of one sentence's synthesis or storage, up to the audio already held.** The AD-1071 sentence queue now synthesizes up to three sentences ahead (was one) and holds a first sentence that plays for less than 3 s until the next is ready (`ui/src/audio/voice.ts`, `voiceChunking.ts`: `runPrefetchQueue` gains `startWhen`); the buffer counts each sentence's playing time at the profile's rate. A stall no longer than the audio held (about 10-14 s) is not heard; a longer one, like the 17.8 s of 2026-10-30, still pauses, for less time. An unknown duration or a failed synthesis starts as before. Known limit, unchanged from before (BF-918's registered R3): a sentence the browser speaks in place of a failed one (failed synthesis, refused playback or a media error) can be overlapped by the next server sentence; a bounded wait for it was built and withdrawn before merge, and its redesign is #1869. The TTS route records each accepted request on the dream scheduler (`DreamScheduler.record_speech_activity`), so while replies come less than `idle_threshold_seconds` apart an idle full dream does not start; one stretch of speech holds it off for at most `SPEECH_DREAM_DEFER_CAP_SECONDS` (2 h), after which the dream starts once the monitor's idle and interval conditions hold. The idle full dream logs `BF-930: idle full dream starting/finished`. The contract's loop-lag probe was dropped: BF-932's loop-stall sampler (#1670) logs loop blocks. Write-behind of spoken audio is not built: the 2026-10-30 stalls silenced every logger (a blocked loop), and it waits for `behind=` evidence. #1668 stays open for the Captain's live re-measurement. New `tests/test_bf930_speech_defers_idle_dream.py` (8 tests); UI V1-V9, Q7-Q8; P1, P2, P14 and two pipelining tests updated in place. Contract `prompts/bf-930-spoken-reply-pause-fix.md`.
+```
+
+#### `DECISIONS.md`
+
+**A3.19** (D5, the whole line). SEARCH:
+```text
+- *D5.* In the sentence queue, a sentence the browser speaks in place of a server one (failed synthesis, refused playback, a media error, or a throw) is awaited before the next sentence plays. The wait ends once, on the utterance's end or error event, a stop, a newer dispatch, or 20 s (`BROWSER_SENTENCE_MAX_WAIT_MS`); every exit fires the utterance's one terminal 'end', so the arbiter counts a bounded sentence as progress, and the bound logs one console warning. A browser or voice can fail to report an end; a browser sentence that really speaks for longer than 20 s is overlapped after the bound. The single-call path does not wait, as before.
+```
+REPLACE:
+```text
+- *D5.* Known limit, not changed here: in the sentence queue a sentence the browser speaks in place of a server one (failed synthesis, refused playback, a media error, or a throw) is not awaited, so the next server sentence can start over it. This is BF-918's registered residual R3, the base behaviour; lookahead 3 can lengthen the overlap by about one synthesis at most. A bounded wait for that sentence was built and withdrawn before merge: it emulated an end the browser engine had not reported, and a late browser `start` then locked push-to-talk after the reply ended (review round 3). The redesign, a wait that owns the utterance's lifecycle, is #1869.
+```
+
+### 18.4 After the pairs
+
+1. `d:/ProbOS/.venv/Scripts/python.exe -P scripts/gen_ad_ledger.py` (no `--online`); stage `docs/development/ad-ledger-snapshot.json` and `docs/development/open-ads-report.md` if they change.
+2. `git diff --check`; `git diff --stat` against `1d9d5c48` shows only `voice.ts`, the two UI test files, `PROGRESS.md`, `DECISIONS.md`, the contract (if not committed first) and the ledger files.
+3. The orchestrator commits with the A3 subject (18.12), body ending `Refs #1668.`, then runs 18.5, 18.6, 8.2 (the vitest line and `npm run build` cover A3), the rows of 18.7 named there, the one review (18.8), and the gate (8.4).
+
+### 18.5 Absence checks (run on the A3 head; each must print nothing)
+
+```text
+rg -n "BROWSER_SENTENCE_MAX_WAIT_MS|_settleBrowserSentence|_endBrowserSentenceWait|browserWaitMs|browserDone|playSettled|mediaError|maxWaitMs|_resolveSpoken|\brejectPlay" ui/src
+rg -n "BROWSER_SENTENCE_MAX_WAIT_MS|20 s with no end report|is awaited before the next sentence plays" PROGRESS.md DECISIONS.md
+rg -n "V1[0-8] A[12]:" ui/src
+git diff 08a88fd0 HEAD -- ui/src/audio/__tests__/voice.pipelining.test.tsx
+```
+On `1d9d5c48` the first command finds 42 hits (`voice.ts` 31, `voice.prefetch.bf918.test.tsx` 11; 18.10), all in the hunks A3 removes. `\brejectPlay` does not match the base's `_rejectPlay` field.
+
+Presence checks (each prints exactly one line): `rg -n "const TTS_PREFETCH_LOOKAHEAD = 3;" ui/src/audio/voice.ts`; `rg -n "each accepted request" PROGRESS.md`; `rg -n "R3, unchanged" ui/src/audio/__tests__/voice.prefetch.bf918.test.tsx`.
+
+### 18.6 Counts and A/B
+
+- **Vitest:** 31 files / 359 tests on `1d9d5c48`; **31 files / 350 tests** after A3.
+- **Removed (9), each pinned D8 only:** V10 (refused `play()` waits for the browser's end), V11 (stop during a browser wait), V12 (the 20 s bound and its warning), V13 (media `error` then `play()` rejection), V14 (consecutive bounds re-arm the arbiter), V15 (stop ends a wait with a lost end), V16 (newer dispatch ends the wait), V17 (test seam ends the wait), V18 (single-call path unbounded). V18 passed on the base too; its subject, the bound, no longer exists, and the single-call fallback's base behaviour stays pinned by P11, P13 and `voice.serverTts` :129, :159.
+- **Changed in place by A3:** P19 (back to the base text), the honest-degrade test (back to its M1 text), the `afterEach` and `FakeAudio` (back to the base). Against the base, the branch's changed-in-place tests are P1, P2, P14 and the two pipelining tests (lookahead 3 only).
+- **Python:** unchanged, 230 tests in the 8.2 file list; A3 touches no Python file.
+- **`git diff --stat 32997b18 <A3 head>`, expected (record the actual):** `voice.ts` +39/-4; `voice.prefetch.bf918.test.tsx` +165/-7; `voice.pipelining.test.tsx` +9/-8 (equal to `08a88fd0`); `voiceChunking.ts` +18, `voiceChunking.test.ts` +39, `dreaming.py` +34, `avatars.py` +8, `test_bf930_speech_defers_idle_dream.py` +186 (all unchanged); `PROGRESS.md`, `DECISIONS.md`, the ledger files and the contract also differ. A count that differs by a line or two in a test file is a counting difference, not a failure; a hunk outside 18.8 P1-P3 is a failure.
+- **SEARCH counts:** A3.1-A3.15 and A3.17-A3.19 each count once at their turn on `1d9d5c48`; A3.16's two anchors each occur once.
+- **A/B on the base `32997b18`** (the A3 head's test files on the base's source): fail on assertions: V1, V4, V5, V7 (plays at once), V9 (raw 6400 ms starts at once), Q7, P1, P2, P14 and the first pipelining test, and the second pipelining test (its `posted` has two); Q8 fails by vitest's timeout. Pass on both trees: V2, V3, V6, V8 (with no start buffer it plays at once, as V8 expects), P19, and every other pre-existing test. The base half of A1's and A2's A/Bs is moot (their D8 tests are gone).
+
+### 18.7 Mutation rows
+
+- **Retired (16):** B1, B2, B3, B5 (B4 was already retired) and C1-C11: their lines are removed and their killing tests went with D8.
+- **Live:** U1-U7, D1-D5, R1, R2, with the locators of 8.3. On the A3 head, R1's stripped line is `? data.duration_ms / _playbackRate(profile?.rate)` and R2's is `return Math.max(0.25, Math.min(4.0, rate ?? 0.95));`, both unchanged and each occurring once in `voice.ts`. U4's and U5's line `held += prepared !== null && prepared.playMs > 0 ? prepared.playMs : TTS_START_BUFFER_MS;`, U6's (as R1's), U1's `const TTS_PREFETCH_LOOKAHEAD = 3;` and U7's `_startBufferFilled,` are unchanged and occur once.
+- **Killers after A3:** U1 by V4, P1, P2, P14, pipelining; U5 by V3, V6; R1 by V7, V8, V9; R2 by V9; the others as 8.3 says (none of their killers is among V10-V18).
+- **New rows:** none (A3 adds no code; every line it writes is the base's or a comment).
+- **Campaign of record:** A3 changes no code line of `voiceChunking.ts`, `dreaming.py` or `avatars.py`, and in `voice.ts` only removes lines outside every live locator, so the earlier campaigns stand for U2, U3, D1-D5. Rerun U1, U4-U7, R1 and R2 on the A3 head, because their killing test file lost tests and its `afterEach` changed.
+
+### 18.8 Diff Reviewer brief (the one round the split allows)
+
+The change claims that it removes the browser-sentence wait (D8) completely, so every browser-fallback path behaves as on the base, and keeps S1, D9 and S2 exactly as reviewed in rounds 2 and 3. Consumers that must accept it: the HXI voice path (`speakResponse`, the AD-1071 queue, the arbiter's GUARD 2, `stopSpeaking`), the PTT gate and wake word (speech events), and the reader of `PROGRESS.md` and `DECISIONS.md`. Delta: `git diff 1d9d5c48 <A3 head>`; whole candidate: `git diff 32997b18 <A3 head>`.
+
+1. **P1 `voice.ts` is the base plus S1 and D9 only.** `git diff 32997b18 <A3 head> -- ui/src/audio/voice.ts` has exactly these hunks: the lookahead comment, `TTS_PREFETCH_LOOKAHEAD = 3`, `TTS_START_BUFFER_MS`, `_startBufferFilled`, `_playbackRate`; the `_startBufferFilled,` argument; `PreparedSpeech.playMs`; the `playMs` field of `_prepareServerSpeech`'s return; `audio.playbackRate = _playbackRate(effective.rate);`. Nothing in `_resetTtsStatusForTests`, `_playNow` (beyond the argument), `_playPreparedSpeech` (beyond the rate line), `_speakBrowserFallback` or `stopSpeaking`.
+2. **P2 the converged parts are byte-identical to `1d9d5c48`.** `git diff 1d9d5c48 <A3 head> -- ui/src/audio/voiceChunking.ts ui/src/audio/__tests__/voiceChunking.test.ts src tests` prints nothing; in `git diff 1d9d5c48 <A3 head> -- ui/src/audio/voice.ts` every added line is a base line or the lookahead comment.
+3. **P3 tests.** `git diff 08a88fd0 <A3 head> -- ui/src/audio/__tests__/voice.pipelining.test.tsx` prints nothing. `git diff 32997b18 <A3 head> -- ui/src/audio/__tests__/voice.prefetch.bf918.test.tsx` touches only `_flush`, `Plan.durations`, the `duration_ms` answer, P1, P2, P14 and the BF-930 describe (V1-V9); `FakeAudio`, the `afterEach` and P19 are not in it. V9's body equals `1d9d5c48`'s.
+4. **P4 no D8 leftovers:** the absence checks of 18.5 print nothing.
+5. **P5 claims.** The lookahead comment, PROGRESS line 3, DECISIONS D5 and section 12's issue text are true against the code: four/three count unplayed preparations, the overlap is stated as the base's R3 with a pointer to the follow-up, "each accepted request" holds against `avatars.py`, and no text claims the queue waits for a browser-spoken sentence.
+
+Not in scope for this round: S1, D9 and S2 behaviour (clean in rounds 2 and 3, byte-identical by P2), and the overlap itself (deferred by the brake decision, 18.1; see Readings).
+
+### 18.9 Readings for the reviewer's Assumptions check
+
+- **R-a** The overlap of a browser-spoken sentence by the next server sentence is the base's behaviour: base P19 says "Three plays meanwhile (R3, unchanged)", BF-918's contract registers it as R3, and round 3 confirmed it separately. Deferring it is the brake's split decision, not an oversight.
+- **R-b** Lookahead 3 can lengthen that overlap by at most about one synthesis, because the next sentence is usually ready already on the base (17.1, a code reading, not measured).
+- **R-c** A reply's last sentence whose media fails while another entry is queued is skipped (17.6). That is base behaviour, unchanged here, and listed in the follow-up.
+- **R-d** The single-call path's browser fallback is the base's (unbounded, resolves at once).
+- **R-e** R3-3 (the wasted promise) is moot: `_speakBrowserFallback` returns `void` again and allocates no promise.
+
+### 18.10 Verified Against Codebase (2026-11-27, tree `1d9d5c48`)
+
+- `voice.ts` (1139 lines): `_resetTtsStatusForTests` tail :236-239 (`_endBrowserSentenceWait()` :238); lookahead comment and const :259-266; `_startBufferFilled` :277-283 (`held +=` :280); `_playbackRate` :285-289 (`return Math.max(...)` :288); `BROWSER_SENTENCE_MAX_WAIT_MS` to `_endBrowserSentenceWait` :291-314; `_playNow` `_sentenceEndedAt = null` :599 and the A2 call :600-603; `playMs` :759; `_playPreparedSpeech` :790-899 (`browserWaitMs` :800, null path :801-807, D8 declarations :809-816, `error` listener :845-846, `playSettled = audio.play()` :879, refused fallback :887, `if (mediaError)` :891-893, catch :894-897, `await browserDone` :898); `_speakBrowserFallback` :941-1024 (signature :946-948, comment :949-951, no-engine `return Promise.resolve()` :978, `onstart` :991, `_ended` :998, `spoken` :1000, bound block :1011-1020, return :1023); `stopSpeaking` :1040 (`cancel()` :1047, A2 call :1049-1051).
+- `voice.prefetch.bf918.test.tsx` (1141 lines): `rejectPlay` :58-64; `_voice` :168-172; `afterEach` :175-181; P19 :708-735 (A1 lines :719-726); V9 ends :901; V10 :903; V18 ends :1140; describe close :1141.
+- `voice.pipelining.test.tsx`: honest-degrade A1 lines :215-223; `git diff 32997b18 08a88fd0` of this file shows only the `_flush` and the two lookahead hunks.
+- `git diff 32997b18 1d9d5c48 -- ui/src/audio/voice.ts`: the base text each A3 REPLACE restores (null path, `audio.play().then`, both unawaited fallbacks, `error` listener, `): void {`, `return;`, the base `_fireBrowserEnd`).
+- `PROGRESS.md`:3 and `DECISIONS.md`:13-21 (D5 :20) as quoted in A3.18 and A3.19.
+
+#### Absence Verified (2026-11-27)
+
+- CLAIM: the D8 names occur only in `voice.ts` and `voice.prefetch.bf918.test.tsx`. RUN: Grep `BROWSER_SENTENCE_MAX_WAIT_MS|_settleBrowserSentence|_endBrowserSentenceWait|browserWaitMs|browserDone|playSettled|mediaError|maxWaitMs|_resolveSpoken|\brejectPlay` over `ui/src` (count). FOUND: `voice.ts` 31, `voice.prefetch.bf918.test.tsx` 11 (V12, V13, V14 x2, V15-V18, and `rejectPlay`'s definition and V13's call). HOLDS.
+- CLAIM: no kept test uses `rejectPlay` or `BROWSER_SENTENCE_MAX_WAIT_MS`. RUN: the same Grep, read against `git diff 32997b18 1d9d5c48` of the test file. FOUND: every hit lies in V12-V18 or the `rejectPlay` definition. HOLDS.
+
+### 18.11 Text to file
+
+**Follow-up issue checklist item** (the wave's consolidated follow-up, or its own issue under the filing policy; this is #1869):
+
+```text
+- [ ] Browser-fallback overlap (BF-918 R3), redesign. When a sentence's synthesis or playback fails, the browser speaks it and the next server sentence can start over it (base behaviour; BF-930 left it as is). BF-930's attempt (D8: await the browser utterance, bounded at 20 s from speak(), emulating its 'end') was withdrawn at the round-three brake (#1668, contract prompts/bf-930-spoken-reply-pause-fix.md sections 16-18). The design must own the utterance's lifecycle rather than emulate an end the engine has not reported: start the bound at onstart, with a separate short bound for starting; at the bound, call speechSynthesis.cancel() so the end is real and no late event can follow (trade-off: a sentence that speaks past the bound is cut off). Test with a fake engine that models the queue (late start, late end, cancel). Cases that must pass, from D8's measured failures: (1) R3-1: an utterance whose start comes after its bounded end must not re-lock PTT (real Chromium 148: bounded end 41.3 s, native start 50.1 s, gate still locked at 54.7 s); (2) that utterance must not play out loud with no start/end, leaving PTT and wake word open while the agent speaks; (3) utterances queued behind an over-long one must not pile up and play after the reply's final end; (4) round 2's cases: a media 'error' before the play() rejection, consecutive bounds against the arbiter's 45 s, a stop or a newer dispatch when the end is lost, a test-seam teardown.
+- [ ] Last-sentence media failure while another entry is queued (base behaviour, BF-930 contract 17.6): the 'error' fires the final 'end', the arbiter hands over, and the play() rejection then speaks nothing, so the sentence is skipped. Fixing it means deferring a server 'end' until play() settles, which changes the BF-655 start/end contract.
+```
+
+The wave's consolidated follow-up must hold, for BF-930: the R3 redesign above (with D8's measured failures and corners (2) and (3)), and the last-sentence limit. The round-3 size finding R3-3 (an abandoned promise in `_speakBrowserFallback`) is moot, because D8 is gone; record it as moot, not as an item.
+
+**#1668 decision comment:**
+
+```text
+Round-three brake, 2026-11-27: split (Architect). D8, the browser-fallback wait added in A1/A2, is withdrawn. Its findings F1-F4, R3-1 and R3-3 are removed together with the code, not deferred. M1-a is the pre-existing BF-918 R3 overlap (base P19 says "R3, unchanged"), not a regression; it is filed as follow-up #1869 with a design where the play half owns the utterance's lifecycle. S1, D9, S2 and the claim fixes, including R3-2, land after one review of the reduced candidate (contract section 18, A3). Reason: D8 pretended to report end events for an engine it does not own, and every round found a new collision. Build and review so far: about 208 min, of which 96 were review. Any finding from that one review round needs a new decision.
+```
+
+### 18.12 Commit subjects
+
+- Contract (this amendment, committed before the Builder starts): `Contract amendment withdraws the browser-sentence wait after the round-three brake`
+- Repair (A3.1-A3.19 and the ledger files): `The reply queue speaks a failed sentence through the browser as before, and the bounded browser wait is withdrawn`
+
+Neither carries an `AD-` or `BF-` token or the words close, fix or resolve. Bodies end `Refs #1668.` and the session's attribution lines.
+
+### 18.13 What the one review will still see (known)
+
+- **a. The overlap**, as base behaviour (R-a). A reviewer who classes it as ordinary reach is answered by the brake decision (18.1); it is filed, with D8's measured failures, as #1869.
+- **b. The last-sentence skip** (R-c), base behaviour, filed.
+- **c. History in the contract:** sections 16 and 17 and several rows of 3, 8.1, 8.3 and 13 still describe D8, each marked withdrawn or history. They are the audit trail, not the shipped text.
+- **d. Possibly `voice.ts`'s `_playPreparedSpeech` docstring** ("`null` ... speaks it through the browser instead, as before"): it is the base's text and true again.
+- Nothing new in S1, D9 or S2: P2 makes them byte-identical to the tree rounds 2 and 3 found clean.
