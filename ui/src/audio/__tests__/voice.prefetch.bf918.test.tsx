@@ -55,6 +55,13 @@ class FakeAudio {
   });
   removeAttribute = vi.fn(() => { this.discarded = true; });
   load = vi.fn();
+  /** BF-930 A2: the second half of Chromium's media failure. After 'error' (sent with
+   *  `emit('error')`), a pending play() rejects with NotSupportedError. */
+  rejectPlay(): void {
+    const reject = this._rejectPlay;
+    this._rejectPlay = null;
+    if (reject !== null) reject(new DOMException('The element has no supported sources.', 'NotSupportedError'));
+  }
   constructor(src: string) {
     this.src = src;
     createdAudios.push(this);
@@ -165,7 +172,13 @@ async function _voice() {
 }
 
 beforeEach(() => { _installGlobals(); playMode = 'resolve'; });
-afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); cleanup(); });
+afterEach(async () => {
+  vi.restoreAllMocks(); vi.unstubAllGlobals(); cleanup();
+  // BF-930 A2 (review round 2): end any browser sentence a test left the AD-1071 play
+  // half waiting on (V6 does), so its 20 s bound does not outlive the test.
+  (await import('../voice'))._resetTtsStatusForTests();
+  await _flush();
+});
 
 describe('BF-918 prefetch (AD-1071 pipelining on)', () => {
   it('P1 synthesizes the next sentence while one plays, and plays them in order', async () => {
@@ -870,11 +883,18 @@ describe('BF-930 (#1668): a buffer of sentences, and a short first sentence wait
     expect(createdAudios[0].playbackRate).toBe(0.5);
   });
 
-  it('V9 A1: the rate is clamped to 4 as at play time, so 13 s at rate 10 holds 3.25 s and starts at once', async () => {
-    const f = _makeFetch({ pipelining: true, durations: [13000, 4000], holdTts: [2] });
+  it('V9 A1: the rate is clamped to 4 as at play time, so at rate 10 a 6.4 s sentence holds 1.6 s, and two hold 3.2 s', async () => {
+    // BF-930 A2 (review round 2): the old body (13 s at rate 10) also started at once with
+    // no division at all, so it could not tell the repair from the base. Here raw 6400 ms
+    // would start at once; unclamped (/10) 640 ms a sentence would still wait after Two;
+    // clamped (/4) 1600 ms waits for Two and then starts. Both old assertions are kept.
+    const f = _makeFetch({ pipelining: true, durations: [6400, 6400, 6400, 6400], holdTts: [2, 3] });
     (globalThis as any).fetch = f.fetchMock;
     const voiceMod = await _voice();
-    voiceMod.speakResponse('One. Two.', { rate: 10 });
+    voiceMod.speakResponse('One. Two. Three. Four.', { rate: 10 });
+    await _flush();
+    expect(createdAudios[0].played).toBe(false);
+    f.release(); // Two answers: 3200 ms held
     await _flush();
     expect(createdAudios[0].played).toBe(true);
     expect(createdAudios[0].playbackRate).toBe(4);
@@ -940,6 +960,180 @@ describe('BF-930 (#1668): a buffer of sentences, and a short first sentence wait
       await _flush();
       expect(createdAudios[1].played).toBe(true);
       expect(warn.mock.calls.filter((c) => String(c[0]).includes('BF-930')).length).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('V13 A2: a media error and then the play() rejection (Chromium order) are spoken by the browser, and the next waits for its end', async () => {
+    playMode = 'hold';
+    const f = _makeFetch({ pipelining: true, durations: [4000, 4000] });
+    (globalThis as any).fetch = f.fetchMock;
+    const voiceMod = await _voice();
+    voiceMod.speakResponse('One. Two.');
+    await _flush();
+    expect(createdAudios[0].played).toBe(true); // play() is pending: its WAV still loads
+    playMode = 'resolve';
+    createdAudios[0].emit('error'); // the server half settles here ...
+    await _flush();
+    expect(createdAudios[1].played).toBe(false); // ... and the queue waits for play() to settle
+    createdAudios[0].rejectPlay(); // ... which Chromium rejects after the 'error'
+    await _flush();
+    expect(spoken()).toEqual(['One.']);
+    expect(createdAudios[1].played).toBe(false); // Two waits for the browser's One
+    (speakCalls[0] as FakeUtterance).onend?.();
+    await _flush();
+    expect(createdAudios[1].played).toBe(true);
+  });
+
+  it('V14 A2: browser sentences that hit the bound one after another keep the reply: each bound fires its end, which re-arms the arbiter', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const f = _makeFetch({ pipelining: true, failTts: [2, 3], durations: [4000, 4000, 4000, 4000] });
+      (globalThis as any).fetch = f.fetchMock;
+      const voiceMod = await _voice();
+      const r = await _recordAll();
+      try {
+        voiceMod.speakResponse('One. Two. Three. Four.');
+        voiceMod.speakResponse('Next.');
+        await _flush();
+        createdAudios[0].end();
+        await _flush();
+        expect(spoken()).toEqual(['Two.']); // its end never comes
+        vi.advanceTimersByTime(voiceMod.BROWSER_SENTENCE_MAX_WAIT_MS);
+        await _flush();
+        expect(spoken()).toEqual(['Two.', 'Three.']); // nor does Three's
+        vi.advanceTimersByTime(voiceMod.BROWSER_SENTENCE_MAX_WAIT_MS);
+        await _flush();
+        expect(createdAudios[1].played).toBe(true); // Four, at 40 s
+        // 65 s: past the 45 s after which the arbiter used to hand the device to Next.
+        vi.advanceTimersByTime(voiceMod.SPEECH_JOIN_TIMEOUT_MS - voiceMod.BROWSER_SENTENCE_MAX_WAIT_MS);
+        await _flush();
+        expect(f.posted).not.toContain('Next.');
+        expect(createdAudios[1].pause).not.toHaveBeenCalled();
+        createdAudios[1].end();
+        await _flush();
+        expect(f.posted).toContain('Next.');
+        expect(r.events.filter((e) => e === 'end:Two.' || e === 'end:Three.')).toEqual(['end:Two.', 'end:Three.']);
+        expect(warn.mock.calls.filter((c) => String(c[0]).includes('BF-930')).length).toBe(2);
+      } finally {
+        r.off();
+      }
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('V15 A2: a stop ends the wait for a browser sentence whose end never comes, and its bound with it', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const f = _makeFetch({ pipelining: true, failTts: [2], durations: [4000, 4000, 4000] });
+      (globalThis as any).fetch = f.fetchMock;
+      const voiceMod = await _voice();
+      const r = await _recordAll();
+      try {
+        voiceMod.speakResponse('One. Two. Three.');
+        await _flush();
+        createdAudios[0].end();
+        await _flush();
+        expect(spoken()).toEqual(['Two.']);
+        voiceMod.stopSpeaking(); // the engine had already gone quiet: cancel() fires no onerror
+        await _flush();
+        expect(r.events.filter((e) => e === 'end:Two.')).toEqual(['end:Two.']);
+        expect(createdAudios[1].played).toBe(false);
+        expect(createdAudios[1].discarded).toBe(true);
+        vi.advanceTimersByTime(voiceMod.BROWSER_SENTENCE_MAX_WAIT_MS);
+        await _flush();
+        expect(warn.mock.calls.filter((c) => String(c[0]).includes('BF-930')).length).toBe(0);
+        expect(r.events.filter((e) => e === 'end:Two.')).toEqual(['end:Two.']);
+      } finally {
+        r.off();
+      }
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('V16 A2: a newer dispatch ends the wait for a browser sentence whose end never comes', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const f = _makeFetch({ pipelining: true, failTts: [1], holdTts: [1], durations: [4000, 4000] });
+      (globalThis as any).fetch = f.fetchMock;
+      const voiceMod = await _voice();
+      const r = await _recordAll();
+      try {
+        voiceMod.speakResponse('One. Two.');
+        voiceMod.speakResponse('Next.');
+        await _flush();
+        vi.advanceTimersByTime(30000); // One's synthesis stalls for 30 s ...
+        f.release(); // ... and then fails: the browser speaks it, and its end never comes
+        await _flush();
+        expect(spoken()).toEqual(['One.']);
+        // At 45 s the arbiter's GUARD 2 gives the device to Next, whose dispatch ends the wait.
+        vi.advanceTimersByTime(voiceMod.SPEECH_JOIN_TIMEOUT_MS - 30000);
+        await _flush();
+        expect(f.posted).toContain('Next.');
+        expect(r.events.filter((e) => e === 'end:One.')).toEqual(['end:One.']);
+        expect(createdAudios[0].played).toBe(false); // Two never plays
+        vi.advanceTimersByTime(voiceMod.BROWSER_SENTENCE_MAX_WAIT_MS);
+        await _flush();
+        expect(warn.mock.calls.filter((c) => String(c[0]).includes('BF-930')).length).toBe(0);
+      } finally {
+        r.off();
+      }
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('V17 A2: the test seam ends a browser sentence a test left waiting, so its bound does not outlive the test', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const f = _makeFetch({ pipelining: true, failTts: [1], durations: [4000, 4000] });
+      (globalThis as any).fetch = f.fetchMock;
+      const voiceMod = await _voice();
+      voiceMod.speakResponse('One. Two.');
+      await _flush();
+      expect(spoken()).toEqual(['One.']); // as in V6, its end never comes
+      voiceMod._resetTtsStatusForTests();
+      await _flush();
+      vi.advanceTimersByTime(voiceMod.BROWSER_SENTENCE_MAX_WAIT_MS);
+      await _flush();
+      expect(warn.mock.calls.filter((c) => String(c[0]).includes('BF-930')).length).toBe(0);
+      expect(createdAudios[0].played).toBe(false); // the ended queue plays nothing more
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('V18 A2: on the single-call path a browser reply is not bounded: nothing ends it early or starts the next over it', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const f = _makeFetch({ pipelining: false, failTts: [1] });
+      (globalThis as any).fetch = f.fetchMock;
+      const voiceMod = await _voice();
+      const r = await _recordAll();
+      try {
+        voiceMod.speakResponse('A long reply. Its synthesis failed.');
+        voiceMod.speakResponse('Next.');
+        await _flush();
+        expect(spoken()).toEqual(['A long reply. Its synthesis failed.']);
+        vi.advanceTimersByTime(voiceMod.BROWSER_SENTENCE_MAX_WAIT_MS);
+        await _flush();
+        expect(f.posted).not.toContain('Next.');
+        expect(r.events.filter((e) => e.startsWith('end'))).toEqual([]);
+        expect(warn.mock.calls.filter((c) => String(c[0]).includes('BF-930')).length).toBe(0);
+        (speakCalls[0] as FakeUtterance).onend?.();
+        await _flush();
+        expect(f.posted).toContain('Next.');
+      } finally {
+        r.off();
+      }
     } finally {
       vi.useRealTimers();
     }
