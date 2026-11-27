@@ -10,6 +10,15 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ## Era V — Civilization (Phases 31-36)
 
+### BF-930 -- A spoken reply buffers three sentences, holds off the idle full dream, and a probe names what blocks the loop (2026-11-27, #1668)
+
+- *Scope.* `ui/src/audio/voice.ts`, `ui/src/audio/voiceChunking.ts`, `cognitive/dreaming.py` (`record_speech_activity`, `SPEECH_DREAM_DEFER_CAP_SECONDS`, idle-dream start/finish lines), `routers/avatars.py`, `utils/loop_lag.py` (new), `__main__._serve`. Contract `prompts/bf-930-spoken-reply-pause-fix.md`.
+- *D1.* Client buffer: lookahead 3 and a 3000 ms start buffer, module constants (a config field would cross the wire into the browser with no measured need). Unknown duration and a failed synthesis count as a full buffer.
+- *D2.* Speech is activity for the idle full dream, bounded: a stretch begins at the first spoken reply after the last full dream, and past 2 h speech stops resetting the idle clock, so the dream starts `idle_threshold_seconds` later at the latest. Not `record_activity()` from the route: machine-driven speech could starve dreaming for ever.
+- *D3.* The loop-lag probe is log-only, started only by the vessel's `_serve`, and its `stop()` never joins (it runs on the loop thread).
+- *D4.* Write-behind of spoken audio is deferred until a live window shows a store stall with `behind=` > 0 or `lock_wait_ms` >= 500 and no loop-block report within 5 s.
+- *Reversal.* Revert the commits; no persisted format changes.
+
 ### BF-1002 -- a full dream's dream_complete event reaches its listeners; one helper builds the payload for both emit sites (2026-11-27, #1820)
 
 - *Scope.* #1820 item bf-989 R6, part a. `cognitive/dreaming.py`: `_full_dream_complete_payload` (new), `DreamScheduler.force_dream`, `DreamScheduler._monitor_loop`. Contract `prompts/bf-1002-1820-full-dream-complete-event.md`.
