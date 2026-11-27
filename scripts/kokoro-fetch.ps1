@@ -31,6 +31,10 @@ $ProgressPreference = "SilentlyContinue"  # Invoke-WebRequest is many times slow
 
 $Root = Split-Path -Parent $PSScriptRoot
 if (-not [System.IO.Path]::IsPathRooted($DestDir)) { $DestDir = Join-Path $Root $DestDir }
+# IsPathRooted is also true for a drive-relative "G:kokoro" or a root-relative "\kokoro",
+# which name a folder under a current directory. Check the full path, and hand that one
+# absolute path to New-Item, uv and Python alike.
+$DestDir = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($DestDir)
 if ($DestDir -match '[^\x00-\x7F]') {
     throw "The destination '$DestDir' contains a non-ASCII character. espeak-ng (inside the Kokoro venv) cannot open its data under such a path. Run again with -DestDir set to an ASCII-only folder (for example C:\kokoro), then set tts.kokoro.python_path, model_path and voices_path in config/system.yaml to the absolute paths there. Nothing was created."
 }
@@ -93,12 +97,22 @@ $Voices = Join-Path $DestDir "voices-v1.0.bin"
 $Worker = Join-Path $Root "scripts\kokoro_worker.py"
 $Probe = Join-Path $DestDir "fetch-check.wav"
 if (Test-Path $Probe) { Remove-Item $Probe -Force }
-# $Probe lies under $DestDir, which the guard above keeps ASCII, so the piped line and the
-# worker's answer are ASCII under any console encoding (PowerShell 5.1 pipes ASCII).
+# $Probe lies under $DestDir, which the guard above keeps ASCII, so the piped line needs no
+# escaping (PowerShell 5.1 pipes ASCII). The worker answers in UTF-8, and PowerShell decodes
+# a native program's output with [Console]::OutputEncoding, which need not be ASCII-compatible
+# (a UTF-16 console garbles even an ASCII answer): the console decodes UTF-8 for this one
+# call and gets its own encoding back afterwards.
 $Line = '{"text": "Kokoro is ready, Captain.", "output_file": ' + (ConvertTo-Json $Probe) + ', "voice": "af_heart", "speed": 1.0}'
-$Answer = $Line | & $Python -I $Worker --model $Model --voices $Voices --threads 4 --default-voice af_heart
-if ($LASTEXITCODE -ne 0 -or -not (Test-Path $Probe) -or "$Answer".Trim() -ne $Probe) {
-    throw "The Kokoro worker did not speak the test line (exit $LASTEXITCODE, answer '$Answer'); its messages are above."
+$ConsoleEncoding = [Console]::OutputEncoding
+try { [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false } catch { Write-Host "[warn] cannot set the console encoding; the answer comparison may fail" -ForegroundColor Yellow }
+try {
+    $Answer = $Line | & $Python -I $Worker --model $Model --voices $Voices --threads 4 --default-voice af_heart
+    $Exit = $LASTEXITCODE
+} finally {
+    try { [Console]::OutputEncoding = $ConsoleEncoding } catch { }
+}
+if ($Exit -ne 0 -or -not (Test-Path $Probe) -or "$Answer".Trim() -ne $Probe) {
+    throw "The Kokoro worker did not speak the test line (exit $Exit, answer '$Answer'); its messages are above."
 }
 $Bytes = (Get-Item $Probe).Length
 Remove-Item $Probe -Force

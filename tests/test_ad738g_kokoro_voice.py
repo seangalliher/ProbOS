@@ -619,7 +619,9 @@ def test_c4_a_timeout_the_timer_cannot_take_and_a_path_no_file_can_have_are_refu
     import threading
 
     # threading.Timer raises OverflowError past TIMEOUT_MAX (4294967.0 on Windows) inside its
-    # own thread, so the deadline would silently never fire; infinity and NaN never fire either.
+    # own thread, so the deadline would silently never fire; infinity is past it too. NaN is
+    # the opposite: Condition.wait treats it as no wait, so the timer fires at once and every
+    # sentence would time out (measured 2026-11-27).
     assert 600.0 <= threading.TIMEOUT_MAX
     for value in (float("inf"), float("nan"), 600.01, 4294968.0, 1e30):
         with pytest.raises(ValueError):
