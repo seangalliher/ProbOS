@@ -11,6 +11,12 @@
 #      huggingface.co/fastrtc/kokoro-onnx, and matched a download on 2026-11-27).
 #   3. One test sentence spoken through scripts/kokoro_worker.py, the worker ProbOS runs.
 #
+# The destination must be an ASCII-only path: espeak-ng, inside the venv, cannot open its
+# data under a path with a non-ASCII character (measured 2026-11-27), so the script refuses
+# one before creating anything. The model files and the output may live anywhere. If this
+# checkout's path is not ASCII, pass -DestDir to an ASCII folder and set tts.kokoro.python_path,
+# model_path and voices_path in config/system.yaml to the absolute paths there.
+#
 # Usage (from anywhere):
 #   powershell -ExecutionPolicy Bypass -File scripts\kokoro-fetch.ps1
 #   powershell -ExecutionPolicy Bypass -File scripts\kokoro-fetch.ps1 -Force   # rebuild the venv, re-download
@@ -25,6 +31,9 @@ $ProgressPreference = "SilentlyContinue"  # Invoke-WebRequest is many times slow
 
 $Root = Split-Path -Parent $PSScriptRoot
 if (-not [System.IO.Path]::IsPathRooted($DestDir)) { $DestDir = Join-Path $Root $DestDir }
+if ($DestDir -match '[^\x00-\x7F]') {
+    throw "The destination '$DestDir' contains a non-ASCII character. espeak-ng (inside the Kokoro venv) cannot open its data under such a path. Run again with -DestDir set to an ASCII-only folder (for example C:\kokoro), then set tts.kokoro.python_path, model_path and voices_path in config/system.yaml to the absolute paths there. Nothing was created."
+}
 $Pin = "kokoro-onnx==0.6.1"
 $Base = "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0"
 $Files = @(
@@ -84,22 +93,12 @@ $Voices = Join-Path $DestDir "voices-v1.0.bin"
 $Worker = Join-Path $Root "scripts\kokoro_worker.py"
 $Probe = Join-Path $DestDir "fetch-check.wav"
 if (Test-Path $Probe) { Remove-Item $Probe -Force }
-# Windows PowerShell 5.1 pipes text to a native program as ASCII ($OutputEncoding), so a
-# non-ASCII destination would reach the worker as '?': escape each non-ASCII UTF-16 unit as
-# \uXXXX, which the worker's json.loads decodes. The worker answers in UTF-8; the console
-# decodes it as UTF-8 for the comparison and gets its own encoding back afterwards.
-$ProbeJson = [regex]::Replace((ConvertTo-Json $Probe), '[^\x00-\x7F]', { param($m) '\u{0:x4}' -f [int][char]$m.Value })
-$Line = '{"text": "Kokoro is ready, Captain.", "output_file": ' + $ProbeJson + ', "voice": "af_heart", "speed": 1.0}'
-$ConsoleEncoding = [Console]::OutputEncoding
-try { [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false } catch { Write-Host "[warn] cannot set the console encoding; a non-ASCII path may fail the comparison" -ForegroundColor Yellow }
-try {
-    $Answer = $Line | & $Python -I $Worker --model $Model --voices $Voices --threads 4 --default-voice af_heart
-    $Exit = $LASTEXITCODE
-} finally {
-    try { [Console]::OutputEncoding = $ConsoleEncoding } catch { }
-}
-if ($Exit -ne 0 -or -not (Test-Path $Probe) -or "$Answer".Trim() -ne $Probe) {
-    throw "The Kokoro worker did not speak the test line (exit $Exit, answer '$Answer'); its messages are above."
+# $Probe lies under $DestDir, which the guard above keeps ASCII, so the piped line and the
+# worker's answer are ASCII under any console encoding (PowerShell 5.1 pipes ASCII).
+$Line = '{"text": "Kokoro is ready, Captain.", "output_file": ' + (ConvertTo-Json $Probe) + ', "voice": "af_heart", "speed": 1.0}'
+$Answer = $Line | & $Python -I $Worker --model $Model --voices $Voices --threads 4 --default-voice af_heart
+if ($LASTEXITCODE -ne 0 -or -not (Test-Path $Probe) -or "$Answer".Trim() -ne $Probe) {
+    throw "The Kokoro worker did not speak the test line (exit $LASTEXITCODE, answer '$Answer'); its messages are above."
 }
 $Bytes = (Get-Item $Probe).Length
 Remove-Item $Probe -Force
