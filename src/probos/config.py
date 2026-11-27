@@ -47,6 +47,7 @@ from probos.config_models.experience import (
     DiscordConfig,
     GroupChatConfig,
     KnowledgeBrowserConfig,
+    KokoroTTSConfig,
     LipSyncConfig,
     OnboardingConfig,
     ScreenStreamConfig,

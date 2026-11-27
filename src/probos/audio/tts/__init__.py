@@ -6,6 +6,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from probos.audio.tts.backends import TTSBackend, TTSResult
+from probos.audio.tts.kokoro_backend import KokoroBackend
 from probos.audio.tts.null_backend import NullBackend
 from probos.audio.tts.piper_backend import PiperBackend
 
@@ -40,6 +41,9 @@ def select_backend(
             sentence_silence=config.sentence_silence,
             service=service,
         )
+    if backend_name == "kokoro":
+        # AD-738g (#1662): a resident Kokoro worker on this machine's CPU.
+        return KokoroBackend(config.kokoro, service=service)
     if backend_name == "browser":
         return NullBackend()
     logger.warning(
@@ -49,4 +53,4 @@ def select_backend(
     return NullBackend()
 
 
-__all__ = ["TTSBackend", "TTSResult", "NullBackend", "PiperBackend", "select_backend"]
+__all__ = ["TTSBackend", "TTSResult", "NullBackend", "PiperBackend", "KokoroBackend", "select_backend"]

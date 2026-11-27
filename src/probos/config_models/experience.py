@@ -617,6 +617,55 @@ class KnowledgeBrowserConfig(BaseModel):
     index_refresh_seconds: int = Field(default=300, ge=10, le=3600)
 
 
+#: AD-738g (#1662): the English Kokoro-82M voices (hexgrad/Kokoro-82M VOICES.md, read 2026-11-27):
+#: 20 American English (``a?_``) and 8 British English (``b?_``). The worker derives the
+#: language from the prefix, so a non-English voice is not offered.
+KokoroVoiceId = Literal[
+    "af_heart", "af_alloy", "af_aoede", "af_bella", "af_jessica", "af_kore", "af_nicole",
+    "af_nova", "af_river", "af_sarah", "af_sky",
+    "am_adam", "am_echo", "am_eric", "am_fenrir", "am_liam", "am_michael", "am_onyx",
+    "am_puck", "am_santa",
+    "bf_alice", "bf_emma", "bf_isabella", "bf_lily",
+    "bm_daniel", "bm_fable", "bm_george", "bm_lewis",
+]
+
+
+class KokoroTTSConfig(BaseModel):
+    """AD-738g (#1662) S1 -- the local Kokoro backend, read when ``tts.backend`` is ``kokoro``.
+
+    The operator installs the runtime and the model with ``scripts/kokoro-fetch.ps1``
+    (``tools/kokoro/``, gitignored). Relative paths anchor to the ProbOS install root, never
+    the process CWD (AD-1025). Kokoro runs on the CPU in one resident worker process; any
+    failure degrades to the browser voice.
+    """
+
+    python_path: str = "tools/kokoro/venv/Scripts/python"
+    """The operator venv's interpreter (``.exe`` appended on Windows). On Linux or macOS set
+    ``tools/kokoro/venv/bin/python``."""
+
+    model_path: str = "tools/kokoro/kokoro-v1.0.onnx"
+    """The Kokoro-82M ONNX model (Apache-2.0 weights; release ``model-files-v1.0``)."""
+
+    voices_path: str = "tools/kokoro/voices-v1.0.bin"
+    """The voices file of the same release."""
+
+    voice: KokoroVoiceId = "af_heart"
+    """The ship's voice, and the worker's default when a request's voice is missing from the
+    voices file. A per-call ``voice_name`` that is one of these ids overrides it."""
+
+    speed: float = Field(default=1.0, ge=0.5, le=2.0)
+    """Speech rate (kokoro-onnx accepts 0.5 to 2.0). The AD-738e-1 per-emotion ``length_scale``
+    divides it, clamped to the same range."""
+
+    threads: int = Field(default=4, ge=1, le=16)
+    """ONNX Runtime intra-op threads. Measured on a Ryzen 9 7950X3D: real-time factor 0.314
+    at 4, 0.23 at 8, 0.181 at 16. 4 leaves the cores to the vessel."""
+
+    timeout_seconds: float = Field(default=30.0, gt=0.0)
+    """Per-sentence timeout, counted from when the worker takes the request. A timeout kills
+    the worker, and the next sentence reloads the model (about 3.2 s cold)."""
+
+
 class LipSyncConfig(BaseModel):
     """AD-721b-1 — Server-side lip-sync backend selection.
 
@@ -741,11 +790,12 @@ class TTSConfig(BaseModel):
     ``POST /api/avatars/tts`` return ``{"backend": "disabled"}``; the
     browser falls back to SpeechSynthesisUtterance."""
 
-    backend: Literal["browser", "piper"] = "browser"
+    backend: Literal["browser", "piper", "kokoro"] = "browser"
     """``browser``: server returns ``{"backend": "disabled"}``, browser
     uses SpeechSynthesisUtterance (default — zero behaviour change for
     operators who don't install Piper). ``piper``: subprocess wrapper
-    around the piper binary."""
+    around the piper binary. ``kokoro`` (AD-738g): a resident Kokoro
+    worker on this machine's CPU, configured under ``kokoro``."""
 
     binary_path: str = "tools/piper/piper"
     """Path (relative to repo root or absolute) to the piper binary.
@@ -810,7 +860,8 @@ class TTSConfig(BaseModel):
     sentence_pipelining_enabled: bool = False
     """AD-1071 — Sentence-chunked TTS pipelining (voice edge). Default-OFF.
 
-    When ``True`` AND the backend is ``piper`` AND a reply contains more
+    When ``True`` AND the backend is a server backend (``piper`` or
+    ``kokoro``; AD-738g recommends it with ``kokoro``) AND a reply contains more
     than one sentence, the browser splits the finished reply into
     sentences and synthesizes + plays them SEQUENTIALLY (an ordered
     queue). The first audio then starts after synthesizing only the
@@ -823,6 +874,10 @@ class TTSConfig(BaseModel):
     exactly as before (byte-identical). Surfaced by
     ``GET /api/avatars/tts/status`` so the browser can read it via its
     existing one-time status probe."""
+
+    kokoro: KokoroTTSConfig = Field(default_factory=KokoroTTSConfig)
+    """AD-738g (#1662): the local Kokoro backend's settings, read when
+    ``backend`` is ``kokoro``."""
 
 
 class WakeWordConfig(BaseModel):

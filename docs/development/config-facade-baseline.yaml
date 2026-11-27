@@ -47,13 +47,13 @@ handoff_to_e2:
 pydantic_version: 2.12.5
 surface_counts:
   aliased_fields: 1
-  canonical_dump_leaves: 1884
-  field_definitions: 1877
+  canonical_dump_leaves: 1891
+  field_definitions: 1885
   incidental: 13
-  own_models: 228
-  owned: 297
-  public_names: 310
-canonical_dump_sha256: 1daa02e0ff25d3dde7b9dd908a38468c533cd0f3b93d73d6b8bd18c3b35c15ea
+  own_models: 229
+  owned: 298
+  public_names: 311
+canonical_dump_sha256: 8cb35680164ba2d3d784356379df8e56f98909d871d4bf90b2c1c802f48cd655
 non_instantiable:
 - A2APeerConfig
 - BaseModel
@@ -280,6 +280,7 @@ names:
   KnowledgeEdgeClassificationConfig: {kind: model, tier: owned}
   KnowledgeEdgesConfig: {kind: model, tier: owned}
   KnowledgeLoadingConfig: {kind: model, tier: owned}
+  KokoroTTSConfig: {kind: model, tier: owned}
   LIFECYCLE_ARCHIVE_DAYS: {kind: constant, tier: owned}
   LIFECYCLE_DECAY_DAYS: {kind: constant, tier: owned}
   LIFECYCLE_DEDUP_MAX_CANDIDATES: {kind: constant, tier: owned}
@@ -2227,6 +2228,20 @@ models:
     - {default: '60.0', name: contextual_max_age_seconds}
     - {default: '0.0', name: on_demand_max_age_seconds}
     - {default: <required>, has_default_factory: true, name: intent_knowledge_map}
+  KokoroTTSConfig:
+    qualname: KokoroTTSConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 19039207af02a57f12a210999e77e1ff4773f56b5906939dd25eab085088fd1d
+    fields:
+    - {default: '''tools/kokoro/venv/Scripts/python''', name: python_path}
+    - {default: '''tools/kokoro/kokoro-v1.0.onnx''', name: model_path}
+    - {default: '''tools/kokoro/voices-v1.0.bin''', name: voices_path}
+    - {default: '''af_heart''', name: voice}
+    - {default: '1.0', name: speed}
+    - {default: '4', name: threads}
+    - {default: '30.0', name: timeout_seconds}
   LLMRateConfig:
     qualname: LLMRateConfig
     bases:
@@ -3412,7 +3427,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: 160d0b2067c95579890187149f1dc84f18e8578f52db4482ecfb6a29be988861
+    schema_sha256: 55643bd3d29ab310749a942d48861c6279b6cc3fddcdb3e923bd13c013ff2138
     fields:
     - {default: SystemInfo(...), name: system}
     - {default: PoolConfig(...), name: pools}
@@ -3623,7 +3638,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: ad694b104fd603a3f87564fbf42f62c3fb9f158ed1dc36a0d9996feb43b41728
+    schema_sha256: c864cf6a2742da87274c4d41e6de2bd4486940afb8cbe8625221a487f3ec936e
     fields:
     - {default: 'True', name: enabled}
     - {default: '''browser''', name: backend}
@@ -3636,6 +3651,7 @@ models:
     - {default: '1.0', name: noise_w}
     - {default: '0.35', name: sentence_silence}
     - {default: 'False', name: sentence_pipelining_enabled}
+    - {default: <required>, has_default_factory: true, name: kokoro}
   TaskContextConfig:
     qualname: TaskContextConfig
     bases:

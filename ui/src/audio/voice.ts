@@ -546,25 +546,27 @@ function _playNow(entry: SpeechQueueEntry, endWait: () => void): boolean {
   _sentenceEndedAt = null;
 
   // Fast synchronous path: if fetch is unavailable OR the cached probe
-  // already says "not piper", run the browser fallback synchronously.
+  // already says "browser" (AD-738g: any other backend is a server one), run
+  // the browser fallback synchronously.
   if (typeof (globalThis as any).fetch !== 'function') {
     _ttsStatus = { enabled: false, backend: 'browser', sentence_pipelining_enabled: false };
     _speakBrowserFallback(text, profile, agent_id, utterance_id);
     return true;
   }
-  if (_ttsStatus !== null && (!_ttsStatus.enabled || _ttsStatus.backend !== 'piper')) {
+  if (_ttsStatus !== null && (!_ttsStatus.enabled || _ttsStatus.backend === 'browser')) {
     _speakBrowserFallback(text, profile, agent_id, utterance_id);
     return true;
   }
 
   void (async () => {
     // ZERO-HTTP guarantee for default config (Captain decision #9):
-    // probe once, cache, and skip the POST entirely when backend != "piper".
+    // probe once, cache, and skip the POST entirely when backend == "browser"
+    // (AD-738g: piper and kokoro both take the server path, as the server's gate does).
     const status = await _fetchTtsStatus();
     // BF-918 (review round 1, D7a): each await between dispatch and audio re-checks
     // that this utterance still owns the device. Stopped during the probe: speak nothing.
     if (_activeUtteranceId !== utterance_id) { _fireDropped(entry, CANCELLED_BEFORE_AUDIO); return; }
-    if (status === null || !status.enabled || status.backend !== 'piper') {
+    if (status === null || !status.enabled || status.backend === 'browser') {
       _speakBrowserFallback(text, profile, agent_id, utterance_id);
       return;
     }

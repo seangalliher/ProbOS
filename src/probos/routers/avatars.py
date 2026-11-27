@@ -93,7 +93,8 @@ async def tts_status(
     """AD-738 — One-time feature probe for the browser.
 
     The browser caches this response in module-level state in ``voice.ts``
-    and skips ``POST /api/avatars/tts`` entirely when ``backend != "piper"``.
+    and skips ``POST /api/avatars/tts`` entirely when ``backend == "browser"``
+    (AD-738g: ``piper`` and ``kokoro`` both take the server path).
     This preserves the Wave 156 zero-HTTP-per-utterance behaviour for
     operators who haven't opted in to server-side TTS (the default).
     """

@@ -205,7 +205,16 @@ EXPECTED_DUMPS: dict[str, dict[str, object]] = {
                      'length_scale': 1.0,
                      'noise_w': 1.0,
                      'sentence_silence': 0.35,
-                     'sentence_pipelining_enabled': False},
+                     'sentence_pipelining_enabled': False,
+                     # AD-738g S1 (#1662) adds the nested Kokoro section after the
+                     # pre-move fields; these are KokoroTTSConfig's own defaults.
+                     'kokoro': {   'python_path': 'tools/kokoro/venv/Scripts/python',
+                                   'model_path': 'tools/kokoro/kokoro-v1.0.onnx',
+                                   'voices_path': 'tools/kokoro/voices-v1.0.bin',
+                                   'voice': 'af_heart',
+                                   'speed': 1.0,
+                                   'threads': 4,
+                                   'timeout_seconds': 30.0}},
     'WakeWordConfig': {   'wake_word_trainer_enabled': False,
                           'custom_model_filename': 'captain.onnx',
                           'retain_training_samples': False,
@@ -390,7 +399,8 @@ def test_approval_inbox_exclusive_lower_bound_survived_the_move() -> None:
 
 @pytest.mark.parametrize(
     ("model_name", "value"),
-    [("TTSConfig", "piper"), ("LipSyncConfig", "rhubarb")],
+    # AD-738g S1 (#1662): "kokoro" joins the TTS backend Literal; "espeak" stays rejected below.
+    [("TTSConfig", "piper"), ("TTSConfig", "kokoro"), ("LipSyncConfig", "rhubarb")],
 )
 def test_backend_literals_accept_their_declared_alternative(
     model_name: str, value: str
