@@ -214,7 +214,9 @@ EXPECTED_DUMPS: dict[str, dict[str, object]] = {
                                    'voice': 'af_heart',
                                    'speed': 1.0,
                                    'threads': 4,
-                                   'timeout_seconds': 30.0}},
+                                   'timeout_seconds': 30.0,
+                                   # AD-738f S1 (#1868): the Captain's per-role voices, empty by default.
+                                   'agent_voices': {}}},
     'WakeWordConfig': {   'wake_word_trainer_enabled': False,
                           'custom_model_filename': 'captain.onnx',
                           'retain_training_samples': False,

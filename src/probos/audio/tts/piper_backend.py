@@ -139,8 +139,12 @@ class PiperBackend:
         text: str,
         emotion: str | None = None,
         voice_override: str | None = None,
+        agent_type: str | None = None,
     ) -> TTSResult | None:
         """Run piper, return WAV bytes or ``None`` on any failure.
+
+        AD-738f (#1868): ``agent_type`` (the speaking crew role) is accepted for
+        the Protocol and ignored: Piper has no per-role default voice.
 
         AD-738e-1: ``emotion`` is an optional v1 ``EmotionalIntent`` name.
         When provided and known, applies per-emotion prosody overrides
@@ -157,6 +161,7 @@ class PiperBackend:
 
         NEVER raises. Empty / whitespace-only ``text`` short-circuits to
         ``None`` (no point invoking the subprocess for nothing)."""
+        del agent_type
         if not text or not text.strip():
             return None
         binary = _resolve_binary_path(self._binary_path)

@@ -7,9 +7,10 @@ it references no other config model and no module-level helper in
 
 from __future__ import annotations
 
+import re
 from typing import Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class ApprovalInboxConfig(BaseModel):  # AD-1154
@@ -629,6 +630,9 @@ KokoroVoiceId = Literal[
     "bm_daniel", "bm_fable", "bm_george", "bm_lewis",
 ]
 
+#: AD-738f (#1868): a key of ``tts.kokoro.agent_voices`` is a role name (an ``agent_type``).
+_ROLE_NAME = re.compile(r"[a-z][a-z0-9_]{0,63}")
+
 
 class KokoroTTSConfig(BaseModel):
     """AD-738g (#1662) S1 -- the local Kokoro backend, read when ``tts.backend`` is ``kokoro``.
@@ -664,6 +668,23 @@ class KokoroTTSConfig(BaseModel):
     timeout_seconds: float = Field(default=30.0, gt=0.0)
     """Per-sentence timeout, counted from when the worker takes the request. A timeout kills
     the worker, and the next sentence reloads the model (about 3.2 s cold)."""
+
+    agent_voices: dict[str, KokoroVoiceId] = Field(default_factory=dict)
+    """AD-738f (#1868) S1: the Captain's voice for a crew role (an ``agent_type``), for example
+    ``counselor: af_sky``. It replaces that role's built-in voice
+    (``probos.audio.tts.kokoro_backend.KOKORO_ROLE_VOICES``); a per-call ``voice_name`` that is
+    one of these ids replaces both. A role the built-in table lacks may be named. A misspelt
+    role matches no crew member and changes nothing; each sentence's log line shows its
+    ``voice=`` and ``role=``."""
+
+    @field_validator("agent_voices")
+    @classmethod
+    def _keys_are_role_names(cls, value: dict[str, str]) -> dict[str, str]:
+        """A key is an ``agent_type``: lowercase letters, digits and ``_``, at most 64 characters."""
+        for role in value:
+            if not _ROLE_NAME.fullmatch(role):
+                raise ValueError(f"tts.kokoro.agent_voices: {role!r} is not a role name (an agent_type)")
+        return value
 
 
 class LipSyncConfig(BaseModel):

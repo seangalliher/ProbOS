@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Mapping
+from types import MappingProxyType
 from typing import get_args
 
 from probos.audio.tts.backends import TTSResult
@@ -35,6 +37,28 @@ KOKORO_VOICES: frozenset[str] = frozenset(get_args(KokoroTTSConfig.model_fields[
 #: kokoro-onnx raises ``ValueError`` for a speed outside this range.
 SPEED_MIN = 0.5
 SPEED_MAX = 2.0
+#: AD-738f (#1868) S1: each crew role's own voice, keyed by ``agent_type`` so a roster change
+#: keeps it: one voice per role, none the ship's ``af_heart``, the gender following each role's
+#: archetype in ``voice_profile_defaults.py``. hexgrad/Kokoro-82M VOICES.md (read 2026-11-27)
+#: grades the male voices lowest (``am_liam`` D, ``bm_lewis`` D+); ``tts.kokoro.agent_voices``
+#: replaces any of them.
+KOKORO_ROLE_VOICES: Mapping[str, str] = MappingProxyType({
+    "counselor": "af_bella",
+    "security_officer": "am_fenrir",
+    "diagnostician": "am_michael",
+    "pathologist": "bf_emma",
+    "surgeon": "af_sarah",
+    "pharmacist": "af_kore",
+    "architect": "af_nicole",
+    "data_analyst": "af_nova",
+    "research_specialist": "af_aoede",
+    "systems_analyst": "bf_isabella",
+    "scout": "am_puck",
+    "builder": "bm_george",
+    "engineering_officer": "bm_lewis",
+    "operations_officer": "bm_fable",
+    "training_officer": "am_liam",
+})
 
 
 def kokoro_speed(base: float, emotion: str | None) -> float:
@@ -53,14 +77,22 @@ class KokoroBackend:
         # BF-918: the runtime's resident synthesis; without it Kokoro degrades to the browser.
         self._service = service
 
-    def resolve_voice(self, voice_override: str | None) -> str:
-        """The voice for one call: a catalogue override (the HXI picker, an AD-718a proposal), else ``tts.kokoro.voice``.
+    def resolve_voice(self, voice_override: str | None, agent_type: str | None = None) -> str:
+        """The voice for one call; the first match wins (AD-738f, #1868):
 
-        A name the catalogue lacks (a Piper or browser voice name) is ignored. AD-738f (#1868)
-        adds the per-role default between the two.
+        1. ``voice_override`` when it is a catalogue id (the HXI picker, an AD-718a proposal);
+           any other name (a Piper or browser voice name) is ignored;
+        2. the Captain's ``tts.kokoro.agent_voices[agent_type]``;
+        3. the built-in ``KOKORO_ROLE_VOICES[agent_type]``;
+        4. ``tts.kokoro.voice``, the ship's voice (no role, or a role in neither map).
         """
         if voice_override is not None and voice_override in KOKORO_VOICES:
             return voice_override
+        if agent_type is not None:
+            if agent_type in self._config.agent_voices:
+                return self._config.agent_voices[agent_type]
+            if agent_type in KOKORO_ROLE_VOICES:
+                return KOKORO_ROLE_VOICES[agent_type]
         return self._config.voice
 
     async def synthesize(
@@ -68,8 +100,13 @@ class KokoroBackend:
         text: str,
         emotion: str | None = None,
         voice_override: str | None = None,
+        agent_type: str | None = None,
     ) -> TTSResult | None:
-        """WAV bytes from the resident Kokoro worker, or ``None`` on any failure. NEVER raises."""
+        """WAV bytes from the resident Kokoro worker, or ``None`` on any failure. NEVER raises.
+
+        AD-738f (#1868): ``agent_type``, the speaking crew role, picks the role's voice
+        (``resolve_voice``). The one resident worker serves every voice.
+        """
         if not text or not text.strip():
             return None
         if self._service is None:
@@ -90,7 +127,7 @@ class KokoroBackend:
                 ", ".join(missing),
             )
             return None
-        voice = self.resolve_voice(voice_override)
+        voice = self.resolve_voice(voice_override, agent_type)
         speed = kokoro_speed(cfg.speed, emotion)
         key = KokoroWorkerKey(
             python=str(python),
@@ -102,10 +139,12 @@ class KokoroBackend:
         )
         started = time.perf_counter()
         wav = await self._service.synthesize(key, text, cfg.timeout_seconds, fields={"voice": voice, "speed": speed})
+        # AD-738f (#1868): the role goes last, so the Captain can read which role spoke in which
+        # voice; no agent id is logged.
         logger.info(
-            "AD-738g: kokoro voice=%s speed=%.2f chars=%d synth_ms=%.0f result=%s",
+            "AD-738g: kokoro voice=%s speed=%.2f chars=%d synth_ms=%.0f result=%s role=%s",
             voice, speed, len(text), (time.perf_counter() - started) * 1000,
-            "ok" if wav is not None else "degraded",
+            "ok" if wav is not None else "degraded", agent_type or "-",
         )
         if wav is None:
             return None

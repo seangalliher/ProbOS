@@ -48,7 +48,7 @@ pydantic_version: 2.12.5
 surface_counts:
   aliased_fields: 1
   canonical_dump_leaves: 1891
-  field_definitions: 1885
+  field_definitions: 1886
   incidental: 13
   own_models: 229
   owned: 298
@@ -2233,7 +2233,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: 19039207af02a57f12a210999e77e1ff4773f56b5906939dd25eab085088fd1d
+    schema_sha256: cee53d86dd41801d6f5fa4cc0ff0d0f7ce6580adeab8dba1dae2180d452fac28
     fields:
     - {default: '''tools/kokoro/venv/Scripts/python''', name: python_path}
     - {default: '''tools/kokoro/kokoro-v1.0.onnx''', name: model_path}
@@ -2242,6 +2242,7 @@ models:
     - {default: '1.0', name: speed}
     - {default: '4', name: threads}
     - {default: '30.0', name: timeout_seconds}
+    - {default: <required>, has_default_factory: true, name: agent_voices}
   LLMRateConfig:
     qualname: LLMRateConfig
     bases:
@@ -3427,7 +3428,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: 55643bd3d29ab310749a942d48861c6279b6cc3fddcdb3e923bd13c013ff2138
+    schema_sha256: 6e700948b84d06f03a016f2eef359468159c391460a7cf3cac12216cfbb696ae
     fields:
     - {default: SystemInfo(...), name: system}
     - {default: PoolConfig(...), name: pools}
@@ -3638,7 +3639,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: c864cf6a2742da87274c4d41e6de2bd4486940afb8cbe8625221a487f3ec936e
+    schema_sha256: bdc9a3d29c9a16a1af1e523f4107f3f2125ac176c38f602829a5c967f10cd4e5
     fields:
     - {default: 'True', name: enabled}
     - {default: '''browser''', name: backend}
