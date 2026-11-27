@@ -15,7 +15,10 @@ builds, and real ToolResult values:
   first load in another thread cannot undo a rotation; the walk's node budget; a shared form's label; a label
   that holds a value; a store file that is not an object of strings loads as AD-456 loaded it;
 - N44 (review round 2): while the fallback placeholder would hold a known value, every pass is withheld.
-Does not prove: any seam (AD-1337 S2, S3), the masking event (S2), or the cost of a pass (the orchestrator's probe).
+- N45-N50 (#1820 R1): a tier's API key from the running config, read on each pass and last; N45 and N46 run the
+  runtime's wiring (``startup/finalize.py``) over an empty environment.
+Does not prove: the executor and render seams (AD-1337 S2, S3), the masking event (S2), or the cost of a pass (the
+orchestrator's probe).
 No test reads the process environment's values: every environment is a dict the test builds.
 """
 
@@ -30,15 +33,18 @@ import subprocess
 import threading
 from collections import OrderedDict
 from pathlib import Path
-from types import SimpleNamespace
+from types import MethodType, SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
 from urllib.parse import quote, quote_plus
 
 import pytest
 
+from probos.cognitive.llm_client import _LLM_TIERS, TEXT_TIERS, VERIFIER_TIER
+from probos.config import CognitiveConfig, SystemConfig
 from probos.credential_store import CredentialSpec, CredentialStore, masked_credential_values
 from probos.execution.command_env import env_name_refusal
+from probos.runtime import ProbOSRuntime
 from probos.security import secret_masking
 from probos.security.secret_masking import (
     DEFAULT_FLOOR,
@@ -51,7 +57,9 @@ from probos.security.secret_masking import (
     SecretRegistry,
     env_name_is_mask_shaped,
     secret_forms,
+    secret_label,
 )
+from probos.startup import finalize
 from probos.tools.protocol import ToolResult
 
 TOKEN = "tok-Q7f2Lx9Pz4Wm8Rk3"
@@ -793,3 +801,89 @@ def test_a_fallback_placeholder_that_holds_a_value_withholds_every_pass_until_th
     logged = len(caplog.records)
     assert masker.mask_text(f"x {first} y") == MaskOutcome("x <secret:unnamed> y", frozenset({"unnamed"}), False)
     assert all(record.levelno < logging.ERROR for record in caplog.records[logged:])
+
+
+# -- N45 to N50 (#1820 R1): the config source ---------------------------------------------------------------------
+
+
+async def _wired(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, config: SystemConfig,
+) -> tuple[SimpleNamespace, SecretMasker]:
+    """The runtime's wiring over a real store that holds ``config`` and an empty environment, its priming awaited."""
+    monkeypatch.setattr(secret_masking, "os", SimpleNamespace(environ={}))
+    runtime = SimpleNamespace(
+        config=config, credential_store=_store(tmp_path, config=config), _background_tasks=set(), _drain_tasks=set(),
+    )
+    runtime._spawn_background = MethodType(ProbOSRuntime._spawn_background, runtime)
+    masker = finalize._wire_secret_masker(runtime=runtime)
+    assert isinstance(masker, SecretMasker), "premise: a real store gets a masker"
+    await runtime.secret_masking_prime_task
+    return runtime, masker
+
+
+async def test_a_key_set_only_on_an_optional_tier_in_config_is_masked(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tier = VERIFIER_TIER
+    label = f"llm_api_key_{tier}"
+    key = "tier-only-key-Zq8Wd3Lp4Nc7"
+    config = SystemConfig(cognitive={label: key})
+    assert tier in _LLM_TIERS and tier not in TEXT_TIERS  # premise: an optional tier
+    assert label in CognitiveConfig.model_fields and config.cognitive.tier_config(tier)["api_key"] == key  # premise
+    assert all(config.cognitive.tier_config(t)["api_key"] == "" for t in TEXT_TIERS)  # premise: no text tier sends it
+    unwired = _masker(_store(tmp_path / "control", config=config))
+    assert unwired.mask_text(f"k={key}").text == f"k={key}"  # premise: no other source names it
+    _runtime, masker = await _wired(tmp_path / "wired", monkeypatch, config)
+    assert masker.mask_text(f"k={key}") == MaskOutcome(f"k=<secret:{label}>", frozenset({label}), False)
+
+
+async def test_a_tier_key_changed_after_wiring_is_masked(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    first, second = "fast-key-set-after-wiring-1", "verifier-key-in-a-new-config-2"
+    runtime, masker = await _wired(tmp_path, monkeypatch, SystemConfig())
+    assert masker.mask_text(f"k={first}").text == f"k={first}"  # premise: the table is built without it
+    runtime.config.cognitive.llm_api_key_fast = first
+    assert masker.mask_text(f"k={first}").text == "k=<secret:llm_api_key_fast>"
+    runtime.config = SystemConfig(cognitive={"llm_api_key_verifier": second})
+    assert masker.mask_text(f"k={first} {second}").text == f"k={first} <secret:llm_api_key_verifier>"
+
+
+def test_the_shared_key_keeps_its_store_label(tmp_path: Path) -> None:
+    shared = "shared-llm-key-Rt5Yh8Kw2"
+    config = SystemConfig(cognitive={"llm_api_key": shared})
+    pairs_of = finalize._configured_api_key_pairs
+    pairs = pairs_of(config.cognitive)
+    assert len(pairs) == len(_LLM_TIERS) and {key for _, key in pairs} == {shared}  # premise
+    masker = _masker(_store(tmp_path, config=config), config_values=lambda: pairs_of(config.cognitive))
+    assert masker.mask_text(f"k={shared}") == MaskOutcome("k=<secret:llm_api>", frozenset({"llm_api"}), False)
+    bare = _masker(_store(tmp_path / "bare"), config_values=lambda: pairs_of(config.cognitive))
+    assert bare.mask_text(f"k={shared}").text == "k=<secret:llm_api_key_compute_use>"  # no store config: first by name
+
+
+def test_a_failing_config_source_withholds_output(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    def _raise() -> tuple[tuple[str, str], ...]:
+        raise RuntimeError(f"boom {TOKEN}")
+
+    masker = _masker(_store(tmp_path, {"github": TOKEN}), config_values=_raise)
+    caplog.set_level(logging.DEBUG)
+    assert masker.mask_text(f"t {TOKEN}") == MaskOutcome(MASKING_FAILED_TEXT, frozenset(), True)
+    masked = masker.mask_result(ToolResult(output=TOKEN, duration_ms=2.0))
+    assert masked.failed is True and masked.result.output is None and masked.result.error == MASKING_FAILED_TEXT
+    assert "RuntimeError" in caplog.text and TOKEN not in caplog.text and "boom" not in caplog.text
+
+
+def test_config_values_must_be_callable(tmp_path: Path) -> None:
+    store = _store(tmp_path, {"github": TOKEN})
+    for bad in ("llm_api_key_fast", (("llm_api_key_fast", "not-callable-key-1"),)):
+        with pytest.raises(TypeError):
+            _masker(store, config_values=bad)
+    for empty in (None, tuple):
+        assert _masker(store, config_values=empty).mask_text(TOKEN).text == "<secret:github>"
+
+
+def test_pairs_cover_every_tier_label() -> None:
+    own = {f"llm_api_key_{tier}": f"own-key-{tier}-1234" for tier in _LLM_TIERS}
+    fields = {name for name in CognitiveConfig.model_fields if name.startswith("llm_api_key_")}
+    assert set(own) == fields, "each per-tier key field of the config is a label, and each label a field"
+    assert finalize._configured_api_key_pairs(SystemConfig(cognitive=own).cognitive) == tuple(own.items())
+    assert all(secret_label(label) == label for label in own)
+    assert finalize._configured_api_key_pairs(SystemConfig().cognitive) == ()
