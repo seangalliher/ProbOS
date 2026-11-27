@@ -73,7 +73,7 @@ function _installGlobals(): void {
 
 async function _flush(): Promise<void> {
   // BF-918: prefetching the next sentence adds microtask hops (harness only).
-  for (let i = 0; i < 30; i++) await Promise.resolve();
+  for (let i = 0; i < 90; i++) await Promise.resolve(); // BF-930: three sentences prepared in a row
 }
 
 /** Build a fetch mock that records the POSTed text and returns a valid piper
@@ -140,12 +140,12 @@ describe('AD-1071 speakResponse — flag ON pipelines sentences', () => {
     voiceMod.speakResponse('One. Two. Three.');
     await _flush();
 
-    // BF-918: first audio still needs only the FIRST sentence; the second is
-    // synthesized while the first plays (it used to wait for the first to end).
-    expect(posted).toEqual(['One.', 'Two.']);
-    expect(createdAudios.map((a) => a.played)).toEqual([true, false]);
+    // BF-918: first audio still needs only the FIRST sentence. BF-930 (#1668):
+    // lookahead 3 (was 1), so both later sentences are synthesized while the first plays.
+    expect(posted).toEqual(['One.', 'Two.', 'Three.']);
+    expect(createdAudios.map((a) => a.played)).toEqual([true, false, false]);
 
-    // Finishing sentence[0] plays sentence[1] and prefetches sentence[2].
+    // Finishing sentence[0] plays sentence[1]; nothing more is synthesized.
     createdAudios[0].end();
     await _flush();
     expect(posted).toEqual(['One.', 'Two.', 'Three.']);
@@ -205,8 +205,9 @@ describe('AD-1071 speakResponse — flag ON pipelines sentences', () => {
     voiceMod.speakResponse('Alpha. Bravo. Charlie.');
     await _flush();
     // BF-918: sentence[1] is prefetched (and fails) while sentence[0] plays;
-    // its browser fallback waits for its turn.
-    expect(posted).toEqual(['Alpha.', 'Bravo.']);
+    // its browser fallback waits for its turn. BF-930 (#1668): lookahead 3 (was 1),
+    // so sentence[2] is synthesized then too.
+    expect(posted).toEqual(['Alpha.', 'Bravo.', 'Charlie.']);
     expect(speakCalls.length).toBe(0);
     // Advance past sentence[0].
     createdAudios[0].end();

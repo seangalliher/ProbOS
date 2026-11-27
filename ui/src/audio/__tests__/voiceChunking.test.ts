@@ -201,4 +201,43 @@ describe('BF-918 runPrefetchQueue', () => {
     expect(prepare).not.toHaveBeenCalled();
     expect(play).not.toHaveBeenCalled();
   });
+
+  it('Q7 BF-930: startWhen holds the first item, and the queue still starts after at most lookahead more items', async () => {
+    const h = harness();
+    let go = true;
+    const done = runPrefetchQueue(['a', 'b', 'c', 'd'], h.prepare, h.play, () => go, 2, () => {}, () => false);
+    await flush();
+    h.preps[0]();
+    await flush();
+    expect(h.events).toEqual(['prep:a', 'prep:b']); // a is ready and waits
+    h.preps[1]();
+    await flush();
+    expect(h.events).toContain('prep:c');
+    expect(h.events).not.toContain('play:a');
+    h.preps[2]();
+    await flush();
+    expect(h.events).toContain('play:a'); // lookahead 2 reached: it starts anyway
+    expect(h.events).not.toContain('prep:d');
+    go = false;
+    h.ends[0]();
+    expect(await done).toBe(1);
+  });
+
+  it('Q8 BF-930: a stop during the start wait plays nothing and discards every prepared item', async () => {
+    const h = harness();
+    let go = true;
+    const discarded: Array<string | null> = [];
+    const done = runPrefetchQueue(['a', 'b', 'c'], h.prepare, h.play, () => go, 2, (p) => { discarded.push(p); }, () => false);
+    await flush();
+    h.preps[0]();
+    await flush();
+    h.preps[1]();
+    await flush(); // a and b are ready; c is being prepared
+    go = false;
+    h.preps[2]();
+    expect(await done).toBe(0);
+    await flush();
+    expect(discarded).toEqual(['a', 'b', 'c']);
+    expect(h.events).not.toContain('play:a');
+  });
 });

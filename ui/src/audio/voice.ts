@@ -256,9 +256,36 @@ let _speakGeneration = 0;
 let _activeUtteranceId: number | null = null;
 
 /** BF-918 (#1626): sentences synthesized ahead of the one playing under AD-1071
- *  pipelining. One hides a sentence's synthesis behind the previous one's
- *  playback, and caps what a stopped reply can have spent at one sentence. */
-const TTS_PREFETCH_LOOKAHEAD = 1;
+ *  pipelining. BF-930 (#1668): three (was one), so a stall of one sentence's synthesis
+ *  or storage no longer than the audio already held (up to three sentences, about
+ *  10-14 s) is not heard; a longer stall still pauses. A stop discards what was
+ *  prepared and not played: up to four sentences while the first waits for the start
+ *  buffer (that sentence and three ahead), and up to three ahead while a sentence
+ *  plays, each with its stored WAV and any viseme request it started. */
+const TTS_PREFETCH_LOOKAHEAD = 3;
+
+/** BF-930 (#1668): audio the queue holds before the first sentence plays. A first
+ *  sentence at least this long plays at once, as before; a shorter one waits for the
+ *  next (at most TTS_PREFETCH_LOOKAHEAD more syntheses). */
+const TTS_START_BUFFER_MS = 3000;
+
+/** BF-930: `startWhen` of the AD-1071 queue. It counts how long each ready sentence
+ *  plays (`playMs`, at the profile's rate). A sentence of unknown duration (0 or
+ *  missing) or one whose preparation failed (`null`) counts as a full buffer, so it
+ *  starts exactly as before. */
+function _startBufferFilled(ready: Array<PreparedSpeech | null>): boolean {
+  let held = 0;
+  for (const prepared of ready) {
+    held += prepared !== null && prepared.playMs > 0 ? prepared.playMs : TTS_START_BUFFER_MS;
+  }
+  return held >= TTS_START_BUFFER_MS;
+}
+
+/** BF-930 A1: the <audio> playbackRate for a profile rate: 0.95 when unset, clamped to
+ *  [0.25, 4.0]. The play half sets it; the start buffer divides durations by it. */
+function _playbackRate(rate: number | undefined): number {
+  return Math.max(0.25, Math.min(4.0, rate ?? 0.95));
+}
 
 /** BF-918 (review round 1, D7a): the `dropped` reason of a dispatched utterance that
  *  lost the device (a stop, or a newer dispatch) before any of its audio started.
@@ -594,6 +621,7 @@ function _playNow(entry: SpeechQueueEntry, endWait: () => void): boolean {
             () => _activeUtteranceId === utterance_id,
             TTS_PREFETCH_LOOKAHEAD,
             _discardPreparedSpeech,
+            _startBufferFilled,
           );
         } finally {
           if (_endSentenceQueueWait === endWait) _endSentenceQueueWait = null;
@@ -621,6 +649,10 @@ interface PreparedSpeech {
   audio: HTMLAudioElement;
   visemes: LipSyncFrame[] | null;
   deferredVisemes: Promise<LipSyncFrame[]> | null;
+  /** BF-930 A1: how long it plays: the server's `duration_ms` divided by the profile's
+   *  playback rate (`_playbackRate`); 0 when the duration is absent or not a positive
+   *  number. Emotional modulation at play time can change the rate (a stated limit). */
+  playMs: number;
 }
 
 /** AD-738 / AD-1071: synthesize ONE utterance via the server Piper backend, play
@@ -701,6 +733,9 @@ async function _prepareServerSpeech(
       audio: new Audio(`/api/chat/attachments/${data.audio_attachment_id}`),
       visemes: deferred ? null : (Array.isArray(data.visemes) ? data.visemes : []),
       deferredVisemes: deferred ? _fetchDeferredVisemes(data.audio_attachment_id) : null,
+      playMs: typeof data.duration_ms === 'number' && Number.isFinite(data.duration_ms) && data.duration_ms > 0
+        ? data.duration_ms / _playbackRate(profile?.rate)
+        : 0,
     };
   } catch {
     _invalidateTtsStatus();
@@ -751,7 +786,7 @@ async function _playPreparedSpeech(
     _activeAudio = audio;
     const effective = _resolveEffectiveProfile(profile, agent_id);
     audio.volume = Math.max(0, Math.min(1, effective.volume ?? 0.8));
-    audio.playbackRate = Math.max(0.25, Math.min(4.0, effective.rate ?? 0.95));
+    audio.playbackRate = _playbackRate(effective.rate);
     try { (audio as any).preservesPitch = false; } catch { /* not supported */ }
     await new Promise<void>((resolve) => {
       let _settled = false;

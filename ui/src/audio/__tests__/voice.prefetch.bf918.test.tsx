@@ -89,7 +89,8 @@ function _installGlobals(): void {
 }
 
 async function _flush(): Promise<void> {
-  for (let i = 0; i < 40; i++) await Promise.resolve();
+  // BF-930: three sentences prepared in a row take more microtask hops (harness only).
+  for (let i = 0; i < 120; i++) await Promise.resolve();
 }
 
 interface Plan {
@@ -102,6 +103,8 @@ interface Plan {
   holdTts?: number[];
   holdLipsync?: boolean;
   framesFor?: (attachmentId: string) => unknown[];
+  /** BF-930: `duration_ms` of the nth TTS answer (1-based nth at index nth-1); 0 when absent. */
+  durations?: number[];
 }
 
 function _makeFetch(plan: Plan) {
@@ -122,6 +125,7 @@ function _makeFetch(plan: Plan) {
       posted.push(body.text);
       nth += 1;
       const sha = String.fromCharCode(97 + nth).repeat(64);
+      const durationMs = plan.durations?.[nth - 1] ?? 0;
       const response = {
         ok: true,
         json: async () => ({
@@ -130,7 +134,7 @@ function _makeFetch(plan: Plan) {
           mime: 'audio/wav',
           visemes: plan.inlineVisemes ?? [],
           visemes_deferred: plan.deferVisemes === true,
-          duration_ms: 0,
+          duration_ms: durationMs,
         }),
       };
       const answer = plan.failTts?.includes(nth) ? { ok: false, json: async () => ({}) } : response;
@@ -171,8 +175,9 @@ describe('BF-918 prefetch (AD-1071 pipelining on)', () => {
 
     voiceMod.speakResponse('One. Two. Three.');
     await _flush();
-    expect(f.posted).toEqual(['One.', 'Two.']);
-    expect(createdAudios.map((a) => a.played)).toEqual([true, false]);
+    // BF-930 (#1668): lookahead 3 (was 1): both later sentences are synthesized while One plays.
+    expect(f.posted).toEqual(['One.', 'Two.', 'Three.']);
+    expect(createdAudios.map((a) => a.played)).toEqual([true, false, false]);
     expect(f.bodies.every((b) => b.defer_visemes === true)).toBe(true);
 
     createdAudios[0].end();
@@ -208,11 +213,14 @@ describe('BF-918 prefetch (AD-1071 pipelining on)', () => {
       expect(events.filter((e) => e.startsWith('start'))).toEqual(['start:One.']);
       expect(events.filter((e) => e.startsWith('end'))).toEqual(['end:One.']);
       expect(events.filter((e) => e.startsWith('dropped'))).toEqual([]); // its audio started: it ends, it is not dropped
-      // The prefetch premise: sentence two had been prepared while one played.
-      expect(audiosWhileOnePlayed).toBe(2);
-      expect(f.posted).toEqual(['One.', 'Two.']);
+      // The prefetch premise: sentences two and three had been prepared while one played
+      // (BF-930 #1668: lookahead 3, was 1), and the stop discards both.
+      expect(audiosWhileOnePlayed).toBe(3);
+      expect(f.posted).toEqual(['One.', 'Two.', 'Three.']);
       expect(createdAudios[1].played).toBe(false);
       expect(createdAudios[1].discarded).toBe(true);
+      expect(createdAudios[2].played).toBe(false);
+      expect(createdAudios[2].discarded).toBe(true);
     } finally {
       off();
     }
@@ -553,7 +561,7 @@ describe('BF-918 M5: the arbiter waits for a pipelined reply\'s last sentence (R
       voiceMod.speakResponse('One. Two. Three.');
       voiceMod.speakResponse('Next.');
       await _flush();
-      expect(f.posted).toEqual(['One.', 'Two.']);
+      expect(f.posted).toEqual(['One.', 'Two.', 'Three.']); // BF-930 (#1668): lookahead 3 (was 1)
 
       createdAudios[0].end();
       await _flush();
@@ -726,5 +734,153 @@ describe('BF-918 M5: the arbiter waits for a pipelined reply\'s last sentence (R
     } finally {
       r.off();
     }
+  });
+});
+
+describe('BF-930 (#1668): a buffer of sentences, and a short first sentence waits for the next', () => {
+  const spoken = (): string[] => speakCalls.map((u) => (u as FakeUtterance).text);
+
+  async function _recordAll() {
+    const voiceMod = await import('../voice');
+    const events: string[] = [];
+    const off = voiceMod.onSpeechEvent((e) => { events.push(`${e.type}:${e.utterance?.text ?? ''}`); });
+    return { events, off };
+  }
+
+  it('V1 a first sentence shorter than the start buffer waits until the next is ready', async () => {
+    const f = _makeFetch({ pipelining: true, durations: [1500, 4000, 4000], holdTts: [2] });
+    (globalThis as any).fetch = f.fetchMock;
+    const voiceMod = await _voice();
+    voiceMod.speakResponse('One. Two. Three.');
+    await _flush();
+    expect(f.posted).toEqual(['One.', 'Two.']);
+    expect(createdAudios.length).toBe(1);
+    expect(createdAudios[0].played).toBe(false); // 1.5 s held, under the 3 s start buffer
+    f.release();
+    await _flush();
+    expect(createdAudios[0].played).toBe(true);
+    expect(f.posted).toEqual(['One.', 'Two.', 'Three.']);
+  });
+
+  it('V2 a first sentence as long as the start buffer plays at once (unchanged)', async () => {
+    const f = _makeFetch({ pipelining: true, durations: [4000, 4000, 4000], holdTts: [2] });
+    (globalThis as any).fetch = f.fetchMock;
+    const voiceMod = await _voice();
+    voiceMod.speakResponse('One. Two. Three.');
+    await _flush();
+    expect(createdAudios[0].played).toBe(true);
+    expect(f.posted).toEqual(['One.', 'Two.']);
+  });
+
+  it('V3 a first sentence of unknown duration plays at once (unchanged)', async () => {
+    const f = _makeFetch({ pipelining: true, durations: [0, 0, 0], holdTts: [2] });
+    (globalThis as any).fetch = f.fetchMock;
+    const voiceMod = await _voice();
+    voiceMod.speakResponse('One. Two. Three.');
+    await _flush();
+    expect(createdAudios[0].played).toBe(true);
+  });
+
+  it('V4 the queue synthesizes three sentences ahead; a stall longer than the buffer pauses, then resumes in order', async () => {
+    const f = _makeFetch({ pipelining: true, durations: [4000, 4000, 4000, 4000], holdTts: [3] });
+    (globalThis as any).fetch = f.fetchMock;
+    const voiceMod = await _voice();
+    const r = await _recordAll();
+    try {
+      voiceMod.speakResponse('One. Two. Three. Four.');
+      await _flush();
+      expect(createdAudios[0].played).toBe(true);
+      expect(f.posted).toEqual(['One.', 'Two.', 'Three.']); // Three requested while One plays; Four waits behind it
+      createdAudios[0].end();
+      await _flush();
+      expect(createdAudios[1].played).toBe(true);
+      createdAudios[1].end();
+      await _flush();
+      // Three is still synthesizing when Two ends: silence, with no browser voice and no final end.
+      expect(createdAudios.length).toBe(2);
+      expect(speakCalls.length).toBe(0);
+      expect(r.events.filter((e) => e.startsWith('start'))).toEqual(['start:One.', 'start:Two.']);
+      f.release();
+      await _flush();
+      expect(createdAudios[2].played).toBe(true);
+      expect(f.posted).toEqual(['One.', 'Two.', 'Three.', 'Four.']);
+    } finally {
+      r.off();
+    }
+  });
+
+  it('V5 a stop during the start wait plays nothing, discards what was prepared, and drops the reply', async () => {
+    const f = _makeFetch({ pipelining: true, durations: [1500, 1500, 1500], holdTts: [2] });
+    (globalThis as any).fetch = f.fetchMock;
+    const voiceMod = await _voice();
+    const r = await _recordAll();
+    try {
+      voiceMod.speakResponse('One. Two. Three.');
+      await _flush();
+      expect(createdAudios.length).toBe(1); // One is ready and waits for Two
+      voiceMod.stopSpeaking();
+      await _flush();
+      f.release(); // Two answers after the stop
+      await _flush();
+      voiceMod.speakResponse('Next.');
+      await _flush();
+      expect(f.posted).toEqual(['One.', 'Two.', 'Next.']);
+      expect(createdAudios.map((a) => a.played)).toEqual([false, false, true]);
+      expect(createdAudios[0].discarded).toBe(true);
+      expect(createdAudios[1].discarded).toBe(true);
+      expect(r.events).toEqual(['dropped:One. Two. Three.', 'start:Next.']);
+    } finally {
+      r.off();
+    }
+  });
+
+  it('V6 a first sentence whose synthesis failed is spoken by the browser without waiting (unchanged)', async () => {
+    const f = _makeFetch({ pipelining: true, failTts: [1], durations: [1500, 1500], holdTts: [2] });
+    (globalThis as any).fetch = f.fetchMock;
+    const voiceMod = await _voice();
+    voiceMod.speakResponse('One. Two.');
+    await _flush();
+    expect(spoken()).toEqual(['One.']);
+  });
+
+  it('V7 A1: the start buffer counts playing time; at rate 2 a 4 s sentence holds 2 s and waits', async () => {
+    const f = _makeFetch({ pipelining: true, durations: [4000, 4000, 4000], holdTts: [2] });
+    (globalThis as any).fetch = f.fetchMock;
+    const voiceMod = await _voice();
+    voiceMod.speakResponse('One. Two. Three.', { rate: 2 });
+    await _flush();
+    expect(createdAudios.length).toBe(1);
+    expect(createdAudios[0].played).toBe(false); // 4000 ms / 2 = 2000 ms, under the 3 s start buffer
+    f.release();
+    await _flush();
+    expect(createdAudios[0].played).toBe(true);
+    expect(createdAudios[0].playbackRate).toBe(2);
+  });
+
+  it('V8 A1: at rate 0.5 a 2 s sentence plays for 4 s and starts at once', async () => {
+    const f = _makeFetch({ pipelining: true, durations: [2000, 2000], holdTts: [2] });
+    (globalThis as any).fetch = f.fetchMock;
+    const voiceMod = await _voice();
+    voiceMod.speakResponse('One. Two.', { rate: 0.5 });
+    await _flush();
+    expect(createdAudios[0].played).toBe(true);
+    expect(createdAudios[0].playbackRate).toBe(0.5);
+  });
+
+  it('V9 A1: the rate is clamped to 4 as at play time, so at rate 10 a 6.4 s sentence holds 1.6 s, and two hold 3.2 s', async () => {
+    // BF-930 A2 (review round 2): the old body (13 s at rate 10) also started at once with
+    // no division at all, so it could not tell the repair from the base. Here raw 6400 ms
+    // would start at once; unclamped (/10) 640 ms a sentence would still wait after Two;
+    // clamped (/4) 1600 ms waits for Two and then starts. Both old assertions are kept.
+    const f = _makeFetch({ pipelining: true, durations: [6400, 6400, 6400, 6400], holdTts: [2, 3] });
+    (globalThis as any).fetch = f.fetchMock;
+    const voiceMod = await _voice();
+    voiceMod.speakResponse('One. Two. Three. Four.', { rate: 10 });
+    await _flush();
+    expect(createdAudios[0].played).toBe(false);
+    f.release(); // Two answers: 3200 ms held
+    await _flush();
+    expect(createdAudios[0].played).toBe(true);
+    expect(createdAudios[0].playbackRate).toBe(4);
   });
 });
