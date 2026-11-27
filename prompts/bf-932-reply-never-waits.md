@@ -81,7 +81,7 @@ Apply in this order; one commit per slice, then the trackers. Stage explicit pat
 
 | Commit | Sections | Subject |
 |---|---|---|
-| 1 (D1) | 6.1-6.5 | `The dream cycle's notebook and decay passes give the event loop a turn every fixed count of units` |
+| 1 (D1) | 6.1-6.5 | `The dream cycle's notebook and decay passes give the event loop a turn after every stated number of units` |
 | 2 (D2) | 6.6-6.13, then the generators of 4a | `A loop-stall sampler logs the stack of whatever holds the event loop past a configured threshold` |
 | 3 (S1) | 6.14-6.20 | `The DM route and group rounds start the camera describe in the background; the reply no longer waits for it` |
 | 4 (trackers) | 6.21-6.22, then `d:/ProbOS/.venv/Scripts/python.exe -P scripts/gen_ad_ledger.py` (no `--online`); stage `docs/development/ad-ledger-snapshot.json` and `docs/development/open-ads-report.md` when they change | `Reply-path trackers: PROGRESS and DECISIONS entries for the dream yields, the loop-stall sampler and the background scene refresh` |
@@ -110,7 +110,7 @@ Expected diff (the orchestrator measures it; any other file, model or row is a h
 
 ## 6. The pairs
 
-### 6.1 `src/probos/utils/loop_yield.py`
+### 6.1 New file `src/probos/utils/loop_yield.py`
 
 New file:
 
@@ -407,7 +407,7 @@ REPLACE:
 
 `asyncio` is imported at `episodic.py`:10. `for i, ep_id in enumerate(ids):` also occurs at :929; the SEARCH starts at `now = time.time()`, which makes it unique.
 
-### 6.5 `tests/test_bf932_d1_dream_yields.py`
+### 6.5 New file `tests/test_bf932_d1_dream_yields.py`
 
 New file:
 
@@ -650,7 +650,7 @@ def test_d1_loop_yield_is_due_on_every_nth_unit_only() -> None:
         LoopYield(0)
 ```
 
-### 6.6 `src/probos/utils/loop_stall.py`
+### 6.6 New file `src/probos/utils/loop_stall.py`
 
 New file:
 
@@ -977,7 +977,7 @@ REPLACE:
     assert counts["field_definitions"] == 1878  # AD-1206 intentionally adds github_repository.
 ```
 
-### 6.13 `tests/test_bf932_d2_loop_stall_sampler.py`
+### 6.13 New file `tests/test_bf932_d2_loop_stall_sampler.py`
 
 New file:
 
@@ -1451,7 +1451,7 @@ REPLACE:
     # Two agents dispatched, but the shared frame is described exactly once.
 ```
 
-### 6.20 `tests/test_bf932_s1_scene_refresh_background.py`
+### 6.20 New file `tests/test_bf932_s1_scene_refresh_background.py`
 
 New file:
 
