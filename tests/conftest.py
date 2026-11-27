@@ -206,6 +206,30 @@ def _ad1337_r23_credential_cli(monkeypatch):
     yield calls
 
 
+@pytest.fixture(autouse=True)
+def _bf932_quiet_loop_stall_sampler(request, monkeypatch):
+    """BF-932 (#1670): a booted runtime starts no loop-stall sampler in a test unless the test asks for it.
+
+    The sampler is on by default (system.loop_stall_warn_seconds 1.0) and writes a WARNING when the event loop is held
+    that long. A loaded test host pauses a process that long now and then, and many booted tests assert that no
+    WARNING was written. So ``LoopStallSampler.run`` returns at once here; a test that requests the
+    ``bf932_live_loop_stall_sampler`` fixture (tests/test_bf932_d2_loop_stall_sampler.py) gets the real one. This
+    patches the pytest process only: a runtime a test boots in a child process
+    (tests/fixtures/federation_cluster_node.py, ``python -m probos``) runs the real sampler, and its parent reads
+    that child's output only for named markers.
+    """
+    if "bf932_live_loop_stall_sampler" in request.fixturenames:
+        yield
+        return
+    from probos.utils import loop_stall
+
+    async def _quiet(self) -> None:
+        return None
+
+    monkeypatch.setattr(loop_stall.LoopStallSampler, "run", _quiet)
+    yield
+
+
 @pytest.fixture(scope="session", autouse=True)
 def _bf919_no_model_download(tmp_path_factory, worker_id):
     """BF-919 (#1632) M2: no test downloads Chroma's embedding model into the home directory.

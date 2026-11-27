@@ -3830,6 +3830,21 @@ class ProbOSRuntime:
             drain_on_shutdown=True,
         )
 
+        # BF-932 (#1670): the loop-stall sampler. One WARNING names the code that holds the event loop longer than
+        # system.loop_stall_warn_seconds (0 starts nothing). It stops watching once shutdown() begins, and the
+        # AD-824 sweep cancels its heartbeat, which stops its thread (probos.utils.loop_stall says how, at shutdown).
+        _loop_stall_s = self.config.system.loop_stall_warn_seconds
+        if _loop_stall_s > 0:
+            from probos.utils.loop_stall import LoopStallSampler
+
+            self._spawn_background(
+                LoopStallSampler(
+                    threshold_s=_loop_stall_s,
+                    active=lambda: not self._shutdown_started,
+                ).run(),
+                name="bf932-loop-stall-sampler",
+            )
+
         # AD-828b: startup fully complete — the cognitive layer (dream_scheduler,
         # episodic_memory) is wired. A shutdown after this point that still skips
         # consolidation is a real failure, not a killed-mid-boot event.

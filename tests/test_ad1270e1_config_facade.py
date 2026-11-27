@@ -1575,7 +1575,8 @@ def test_committed_baseline_records_the_measured_surface(
     # BF-962 (#1792) removes orientation.populate_ward_room_department, which nothing read (1886 -> 1885).
     # AD-1360 (#1828) adds security.memory.correlation_cutoff (1885 -> 1886).
     # AD-1355 S1 (#1700) removes HolodeckBirthChamberConfig's eight fields and SystemConfig.holodeck_birth_chamber (1886 -> 1877).
-    assert counts["field_definitions"] == 1877  # AD-1206 intentionally adds github_repository.
+    # BF-932 (#1670) adds system.loop_stall_warn_seconds (1877 -> 1878).
+    assert counts["field_definitions"] == 1878  # AD-1206 intentionally adds github_repository.
     assert counts["aliased_fields"] == 1
     # AD-1270 (#1324) slice 4c removes the BootCampPhaseConfig model (names 310 -> 309, models 230 -> 229).
     # AD-1346 M3c (#1604) adds AdmissionConfig (309 -> 310, 229 -> 230).

@@ -151,8 +151,24 @@ class EventLogConfig(BaseModel):
 
 
 class SystemInfo(BaseModel):
-    """Top-level system identity."""
+    """Top-level system identity and process-wide diagnostics."""
 
     name: str = "ProbOS"
     version: str = "0.1.0"
     log_level: str = "INFO"
+    # BF-932 (#1670): the loop-stall sampler (probos.utils.loop_stall), started by ProbOSRuntime.start.
+    loop_stall_warn_seconds: float = Field(
+        default=1.0, ge=0.0, le=60.0, allow_inf_nan=False,
+        description=(
+            "BF-932: seconds the event loop may go without a heartbeat before one WARNING names the code "
+            "holding it (file:line function of the loop thread's innermost frames). 0 starts no sampler; "
+            "otherwise at least 0.1."
+        ),
+    )
+
+    @field_validator("loop_stall_warn_seconds")
+    @classmethod
+    def _loop_stall_is_off_or_at_least_a_tenth(cls, value: float) -> float:
+        if 0.0 < value < 0.1:
+            raise ValueError("loop_stall_warn_seconds is 0 (off) or at least 0.1")
+        return value
