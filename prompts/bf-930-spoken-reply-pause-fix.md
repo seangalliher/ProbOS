@@ -1,11 +1,12 @@
-# BF-930 (#1668): a spoken reply no longer pauses mid-way when one sentence's synthesis or storage stalls
+# BF-930 (#1668): a spoken reply rides out a stall of one sentence's synthesis or storage, up to the audio already held
 
 **Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-27
-**Status:** ready to build. **Owning issue:** #1668 (stays open: the live re-measurement is the Captain's). Commits and the PR say `Refs #1668.`, never a closing keyword.
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-27, after review round 1 and the BF-932 overlap decision (A1, section 16)
+**Status:** M1, M2, M4 built (`fcba563e`, `a44dd0ff`, `08a88fd0`); S3/M3 dropped; A1 (section 16) ready to build. **Owning issue:** #1668 (stays open: the live re-measurement is the Captain's). Commits and the PR say `Refs #1668.`, never a closing keyword.
 **Base:** main `32997b18f3b12da4a58566b82b4a106193df56d5`; branch `fix/bf930-spoken-reply-stall-20261127` (worktree `D:\ProbOS-worktrees\speech-bf930`). **Number:** BF-930 is already allocated to #1668; this contract allocates no new AD or BF number.
 **Line endings:** working copies may be CRLF and the blocks below are LF; match after normalising. Every SEARCH starts at the beginning of a line and occurs once in its file at its turn. All new text is ASCII.
-**Estimated tests:** Python 18 new in 2 new files; UI 8 new (6 in `voice.prefetch.bf918.test.tsx`, 2 in `voiceChunking.test.ts`), 5 changed in place (P1, P2, P14, and two in `voice.pipelining.test.tsx`), 0 removed.
-**Scope (files):** `ui/src/audio/voiceChunking.ts`, `ui/src/audio/voice.ts`, three UI test files; `src/probos/cognitive/dreaming.py`, `src/probos/routers/avatars.py`, `src/probos/utils/loop_lag.py` (new), `src/probos/__main__.py`; two new Python test files; `PROGRESS.md`, `DECISIONS.md`, the regenerated ledger files. Nothing of BF-932 (#1670): `cognitive_agent.py`, `concurrency_manager.py`, `routers/agents.py`, `utils/step_timing.py`, `tests/test_bf932_reply_path_timing.py` are not touched. Nothing AD-738g owns: the backend gate (`voice.ts`:555, :567) and the `voice_name` resolution (`avatars.py`:250-262) are not touched.
+**Estimated tests:** Python 8 new in 1 new file; UI 14 new (12 in `voice.prefetch.bf918.test.tsx`: V1-V12, 2 in `voiceChunking.test.ts`: Q7-Q8), 6 changed in place (P1, P2, P14, P19, and two in `voice.pipelining.test.tsx`), 0 removed.
+**Scope (files):** `ui/src/audio/voiceChunking.ts`, `ui/src/audio/voice.ts`, three UI test files; `src/probos/cognitive/dreaming.py`, `src/probos/routers/avatars.py`; one new Python test file; `PROGRESS.md`, `DECISIONS.md`, the regenerated ledger files. Nothing of BF-932 (#1670): `cognitive_agent.py`, `concurrency_manager.py`, `routers/agents.py`, `utils/step_timing.py`, `tests/test_bf932_reply_path_timing.py` are not touched. Nothing AD-738g owns: the backend gate (`voice.ts`:555, :567) and the `voice_name` resolution (`avatars.py`:250-262) are not touched.
 
 ## 1. Problem (premise table)
 
@@ -16,37 +17,38 @@
 | the same window, `probos.log.1`:64421-64422 | 23:40:49 then 23:41:07 from `probos.perception.consumer` (about 1 line/s normally), no line from any logger between them | the event loop itself was blocked; a store-lock convoy alone would not silence every logger |
 | orchestrator's probes over `probos.log.1` (411 route lines) | `total_ms` 3-6 s: 22 of 23 windows at least 70% log-silent vs 16.4% of 4,000 matched random windows; 1.5-3 s: 7 of 11 vs 21.9%; dream lines within 20 s of 9 of 26 lines with `total_ms` >= 3 s vs 17.9% of matched windows | the large stalls are vessel-wide loop blocks; dreaming is a real contributor and a minority of the cause |
 | `dreaming.py`:3184-3186 `record_activity`; callers `runtime.py`:5837, :6230 only (Absence Verified) | a spoken conversation (DM, meeting, TTS) calls neither | the idle clock runs during an interview: with the Captain's `config/system.yaml`:221-222 (`idle_threshold_seconds: 300.0`, `dream_interval_seconds: 600.0`) the monitor (`dreaming.py`:3333-3349) starts a full dream 5 minutes into a spoken conversation |
-| `rg -i "loop_lag|loop lag|event.loop.(lag|block|stall)|slow_callback_duration|set_debug\(|_current_frames" src` (Absence Verified) | one docstring, `novelty_gate.py`:65 | no probe names the code that blocks the loop; the numbers that would choose a store fix do not exist |
+| `rg -i "loop_lag|loop lag|event.loop.(lag|block|stall)|slow_callback_duration|set_debug\(|_current_frames" src` (Absence Verified) | one docstring, `novelty_gate.py`:65 | no probe names the code that blocks the loop; the numbers that would choose a store fix do not exist (A1: BF-932's D2 sampler, #1670, supplies them; this contract no longer adds one) |
 | attachments index (orchestrator, metadata only) | `.index.json` 217.4 KB, last write 2026-11-24; about 165-180 bytes per entry (`filesystem_store.py`:243-257, :361-369), so about 1.2-1.4 K entries against 11,952 files | the consult's "12 K stale entries, O(n^2) at boot" hazard is withdrawn; the live `index_entries=` field of `BF-930: attachment write slow` (`filesystem_store.py`:384-385) gives the exact count |
 | live log since 2026-10-31 | no `BF-930:` line and no route line (the vessel last ran old code on 2026-11-24) | the slice-1 timing lines (`resident.py`:450, `filesystem_store.py`:384, :406) have never run live |
 
 ## 2. Overview
 
-Three slices, all on by default, none needing a Captain decision:
+Two slices, both on by default, neither needing a Captain decision:
 
-- **S1, client buffer (M1).** The pipelined queue prepares up to three sentences ahead, and holds the first sentence until at least 3 s of audio is ready (or all lookahead items are ready). A stall of one sentence is hidden behind the audio already held. Backend-independent (Piper today, Kokoro in AD-738g).
-- **S2, speech holds off the idle full dream (M2).** The TTS route records each accepted request on the dream scheduler through a new bounded method, so an idle full dream does not start during a spoken conversation; one stretch of speech can hold it off for at most `SPEECH_DREAM_DEFER_CAP_SECONDS` (2 h). The idle full dream logs its start and finish, so the Captain can see the dream state before recording.
-- **S3, loop-lag probe (M3).** A daemon watchdog thread, started by the vessel's `_serve` beside its heartbeat, sends the loop a heartbeat each second; if the loop has not answered within 1 s it logs one rate-limited `BF-930: event loop blocked ...` WARNING with the lag and the loop thread's stack as `dir/file.py:function:line` frames (no locals). Log-only. Generic, so BF-932 can reuse `probos.utils.loop_lag`.
+- **S1, client buffer (M1, repaired by A1).** The pipelined queue prepares up to three sentences ahead, and holds the first sentence until at least 3 s of audio, counted at the profile's playback rate, is ready (or all lookahead items are ready). A stall of one sentence no longer than the audio already held (about 10-14 s) is not heard; a longer one still pauses, for less time. A sentence the browser speaks in place of a failed one ends before the next sentence starts (bounded wait, D8). Backend-independent (Piper today, Kokoro in AD-738g).
+- **S2, speech holds off the idle full dream (M2).** The TTS route records each accepted request on the dream scheduler through a new bounded method, so while spoken replies come less than `idle_threshold_seconds` apart an idle full dream does not start; one stretch of speech can hold it off for at most `SPEECH_DREAM_DEFER_CAP_SECONDS` (2 h). Past the cap speech stops resetting the idle clock, and the dream starts when the monitor's conditions hold (`idle_threshold_seconds` since the last activity, `dream_interval_seconds` since the last dream). The idle full dream logs its start and finish, so the Captain can see the dream state before recording.
 
 Rejected, one line each:
+- **S3, a loop-lag probe (was M3; dropped by A1):** BF-932's D2 loop-stall sampler (#1670, `utils/loop_stall.py`, `system.loop_stall_warn_seconds`) logs the same evidence; one sampler, not two.
 - **S4, write-behind of spoken audio (the consult's slice 2):** left out of this contract (D1). The log-silent windows show the loop blocked, which moving the store write does not fix; there is no `behind=` evidence of a lock convoy yet; it is the riskiest change (new module, three routes, task lifecycle).
 - A separate store or lock domain for `tts_audio`; audio inline in the response: rejected in the consult (they break `filesystem_store.py`:473-475's one-instance rule or AD-731, `avatars.py`:289-290).
 - Making lookahead or the start buffer config fields: D2.
 - `record_activity()` unbounded from the route: continuous machine-driven speech (crew meetings through `useMeetingVoice.ts`:158) could starve the full dream for ever.
-- asyncio debug mode (`slow_callback_duration`): global slowdown of the whole loop, and it names the callback, not the line it is stuck in.
-- A dependency (pyleak, aiodebug, LoopSentry): about 100 lines of stdlib code do the job.
+- (A1) A rate- or length-scaled browser wait: a fixed 20 s bound covers the measured failure (an end event that never comes) with one constant; a sentence longer than the bound degrades to the old overlap, logged.
 
 ## 3. Decisions
 
 | # | Decision | Reason |
 |---|---|---|
-| D1 | Slices S1, S2, S3 in this order, one PR; trackers last. The weekend floor is S1 + S2 (+ trackers). S3 rides in the same batch; if review finds a Critical or High defect in S3 that rounds 1-2 do not settle, S3 moves to a follow-up PR and S1 + S2 ship. S4 is not in this contract | S1 hides stalls up to the buffered audio (about 3 sentences, 10-14 s); S2 removes the one contributor we can name (dreams mid-conversation; a dream was running in the 17.8 s window, `probos.log.1`:64413 per the consult); S3 is log-only and produces the numbers that decide any store work. **S4 trigger:** after this ships, a live window where a route line has `store_ms` >= 1000, its `BF-930: attachment write slow` line shows `behind=` > 0 or `lock_wait_ms` >= 500, and no `BF-930: event loop blocked` line falls within 5 s of it. Then the consult's write-behind design (its section 2, slice 2) is drafted as its own slice |
+| D1 | Slices S1 and S2 in this order, one PR; trackers last (A1: S3 dropped, BF-932's D2 covers it). S4 is not in this contract | S1 hides stalls up to the buffered audio (about 3 sentences, 10-14 s); S2 removes the one contributor we can name (dreams mid-conversation; a dream was running in the 17.8 s window, `probos.log.1`:64413 per the consult). **S4 trigger:** after this ships, on a vessel running BF-932's sampler (BF-932 merged and `system.loop_stall_warn_seconds` > 0), a live window where a route line has `store_ms` >= 1000, its `BF-930: attachment write slow` line shows `behind=` > 0 or `lock_wait_ms` >= 500, and no `BF-932: event loop blocked` line falls within 5 s of it. Without the sampler "no loop-block line" is true for free and the trigger does not count. Then the consult's write-behind design (its section 2, slice 2) is drafted as its own slice |
 | D2 | `TTS_PREFETCH_LOOKAHEAD = 3` and `TTS_START_BUFFER_MS = 3000` hold for Kokoro on CPU (0.5-1.5 s per sentence) and stay module constants in `voice.ts` | a sentence of 2-5 s audio synthesized in at most 1.5 s keeps the queue ahead (real-time factor <= 0.75), and three ahead accumulates 6-15 s of cushion; a short first sentence waits at most one more synthesis (<= 1.5 s). A config field would have to cross the wire (`/api/avatars/tts/status`) into the browser, widening a contract with no measured need; the live check's `bf918:sentence-gap` measure is the evidence that would reopen it |
-| D3 | S2's bound: a "stretch" begins at the first spoken reply after the last full dream; while the stretch is younger than `SPEECH_DREAM_DEFER_CAP_SECONDS = 7200.0`, each reply resets the idle clock; once older, speech no longer writes the clock, so the full dream starts at most `idle_threshold_seconds` later; the reply after that dream begins a new stretch | by construction: past the cap, `record_speech_activity` never writes `_last_activity_time`, so nothing speech does can stop the monitor's predicate (`dreaming.py`:3336-3339) from becoming true. Two hours covers a recording session; micro dreams (every 10 s, unconditional, :3292) are unaffected. A module constant, not config: it is a safety bound, and the operator's lever stays `idle_threshold_seconds` |
+| D3 | S2's bound: a "stretch" begins at the first spoken reply after the last full dream; while the stretch is younger than `SPEECH_DREAM_DEFER_CAP_SECONDS = 7200.0`, each reply resets the idle clock; once older, speech no longer writes the clock (A1: the dream then starts when all of the monitor's conditions hold, `idle_threshold_seconds` since the last activity of any source and `dream_interval_seconds` since the last dream; not necessarily one idle threshold after the cap); the reply after that dream begins a new stretch | by construction: past the cap, `record_speech_activity` never writes `_last_activity_time`, so nothing speech does can keep the monitor's idle condition (`dreaming.py`:3361-3364 at `08a88fd0`) false. Two hours covers a recording session; micro dreams (every 10 s, unconditional, :3292) are unaffected. A module constant, not config: it is a safety bound, and the operator's lever stays `idle_threshold_seconds` |
 | D4 | S2's call sits in the route after validation and before synthesis; a runtime without a scheduler (`getattr(runtime, "dream_scheduler", None)`, the same style as `voice_synthesis` at :271) skips it | every accepted request is activity, including one whose synthesis stalls or degrades; the stand-in runtimes of the existing route tests have no scheduler |
-| D5 | S3 lives in `src/probos/utils/loop_lag.py`, started in `__main__._serve` after the heartbeat task and stopped first in its `finally`; `stop()` never joins (it is called on the loop thread, and a join could wait on a check that waits on the loop) | `_serve` is the live vessel's only path; booted tests never run it, so no booted test gains a thread or a WARNING. The thread is a daemon; a stopped probe never logs |
-| D6 | S3 thresholds: heartbeat every 1.0 s, blocked at 1.0 s, report wait 30 s, at most one report per 30 s with a `suppressed=` count, the 25 innermost frames | a 1 s block is audible; a report per 30 s caps the log at 120 lines/h (about 2 KB each) under a pathological loop while `suppressed=` keeps the frequency; 25 frames reach from the blocking line out through the dream step that called it |
+| D5 | Superseded by A1 (S3 dropped) | - |
+| D6 | Superseded by A1 (S3 dropped) | - |
 | D7 | The S1 buffer counts a sentence of unknown duration (0 or missing) or a failed prepare (`null`) as a full 3000 ms | both then start exactly as today; only a known-short first sentence waits |
+| D8 | (A1) In `_playPreparedSpeech`, each browser fallback (failed prepare, refused `play()`, a throw in the play half) is awaited until that utterance's `onend`/`onerror` or `BROWSER_SENTENCE_MAX_WAIT_MS` = 20000, whichever is first; at the bound the play half resolves and logs one `console.warn`; a stop (`speechSynthesis.cancel()` fires `onerror`) ends the wait. `_speakBrowserFallback` returns a `Promise<void>`; its other callers ignore it | the queue starts sentence N+1 only after `play` resolves (`voiceChunking.ts`:134-139), so this restores the order the base kept by luck. 20 s: past Chromium's ~15 s cut-off of an utterance (no end or error event), past about 45 words at the default rate, inside `SPEECH_JOIN_TIMEOUT_MS` (45 s) |
+| D9 | (A1) `PreparedSpeech.playMs` = server `duration_ms` / `_playbackRate(profile?.rate)` (0.95 when unset, clamped to [0.25, 4.0]); the play half uses the same helper for `audio.playbackRate` | the buffer must count the time the sentence plays. Limit: with an `agent_id` the play half applies emotional modulation (`_resolveEffectiveProfile`), whose rate can differ from the profile's; the buffer uses the unmodulated rate |
 
 ## 4. Milestones and commits
 
@@ -56,17 +58,20 @@ Commit each milestone separately, explicit paths only. No subject carries an `AD
 |---|---|---|
 | M1 | 6.1-6.5 | `Spoken replies buffer three sentences ahead and hold a short first sentence until the next is ready` |
 | M2 | 6.6-6.8 | `A spoken reply holds off the idle full dream for up to two hours, and the idle dream logs its start and finish` |
-| M3 | 6.9-6.11 | `The vessel logs a blocked event loop with the loop thread's stack` |
-| M4 | 6.12-6.13, then `d:/ProbOS/.venv/Scripts/python.exe -P scripts/gen_ad_ledger.py` (no `--online`); stage `docs/development/ad-ledger-snapshot.json` and `docs/development/open-ads-report.md` when they change | `Trackers record the spoken-reply buffer, the speech dream guard and the loop-lag probe` |
+| M3 | removed by A1 (S3 dropped; its pairs 6.9-6.11 are gone) | - |
+| M4 | 6.12-6.13, then `d:/ProbOS/.venv/Scripts/python.exe -P scripts/gen_ad_ledger.py` (no `--online`); stage `docs/development/ad-ledger-snapshot.json` and `docs/development/open-ads-report.md` when they change | `Trackers record the spoken-reply buffer, the speech dream guard and the loop-lag probe` (committed as `08a88fd0`; stands) |
+| A1 | A1.1-A1.18 (section 16), then `gen_ad_ledger.py` as in M4 | `Spoken replies wait for a sentence the browser speaks, count the start buffer at playback speed, and state their limits` |
 
 Each body ends `Refs #1668.` and the attribution lines of the session.
 
 ## 5. Builder: may and may not
 
-- **May:** apply the pairs in order, create the three new files, run `gen_ad_ledger.py`, `git diff --check`, `git diff --stat`.
+- **May:** apply the pairs in order (for A1: the A1 pairs against the tree at `08a88fd0`), create the new files the pairs name (A1 creates none), run `gen_ad_ledger.py`, `git diff --check`, `git diff --stat`.
 - **May not:** run tests, commit, edit an unnamed file (never `config/system.yaml`), add `skip` or a retry, reword an anchor, or touch `voice.ts`:548-570 or `avatars.py`:250-262. If a SEARCH does not match exactly once, stop and report.
 
 ## 6. The pairs
+
+6.1-6.8 and 6.12-6.13 were applied by M1, M2 and M4 and are kept as the record of what those commits did. Where A1 (section 16) changes their text (P3, P5, P6, P19's comment, the `record_speech_activity` docstring, the trackers), A1 governs. 6.9-6.11 (S3) are removed.
 
 ### 6.1 `ui/src/audio/voiceChunking.ts`
 
@@ -863,473 +868,9 @@ def test_typed_activity_is_not_bounded_by_the_speech_cap() -> None:
     assert scheduler._last_activity_time > before
 ```
 
-### 6.9 `src/probos/utils/loop_lag.py` (new file)
+### 6.9-6.11 (removed by A1)
 
-```python
-"""BF-930 (#1668): a log-only watchdog for a blocked asyncio event loop.
-
-A daemon thread sends the loop a heartbeat (``call_soon_threadsafe``) every
-``interval_s``. When the loop has not run it within ``threshold_s`` the loop is
-blocked: the probe takes the loop thread's stack at that moment, waits up to
-``report_wait_s`` for the heartbeat, and logs one WARNING::
-
-    BF-930: event loop blocked lag_ms=<n> still_blocked=<0|1> suppressed=<n> stack=<frames>
-
-``stack`` is the loop thread's innermost frames, outermost first, each
-``dir/file.py:function:line``: code locations only, never locals, arguments or
-values. At most one report per ``report_every_s``; ``suppressed`` counts the
-reports held back since the last one. The probe changes nothing it observes.
-Generic: any owner of a running loop may start one (BF-932 may reuse it).
-"""
-
-from __future__ import annotations
-
-import asyncio
-import logging
-import os
-import sys
-import threading
-import time
-from collections.abc import Callable
-
-logger = logging.getLogger(__name__)
-
-#: How often the watchdog thread sends the loop a heartbeat.
-LOOP_LAG_INTERVAL_S = 1.0
-#: A loop that has not run the heartbeat after this long is blocked.
-LOOP_LAG_THRESHOLD_S = 1.0
-#: How long one report waits for a blocked loop to answer before it logs it as still blocked.
-LOOP_LAG_REPORT_WAIT_S = 30.0
-#: At most one report per this many seconds; the ones in between are counted.
-LOOP_LAG_REPORT_EVERY_S = 30.0
-#: The innermost frames a report carries.
-LOOP_LAG_MAX_FRAMES = 25
-
-
-def thread_stack(thread_id: int, max_frames: int = LOOP_LAG_MAX_FRAMES) -> list[str]:
-    """The ``max_frames`` innermost frames of one thread, outermost first, as ``dir/file.py:function:line``.
-
-    Only code locations: no locals, arguments or values. Empty when the thread is gone.
-    """
-    frame = sys._current_frames().get(thread_id)
-    frames: list[str] = []
-    while frame is not None:
-        code = frame.f_code
-        directory, name = os.path.split(code.co_filename)
-        frames.append(f"{os.path.basename(directory)}/{name}:{code.co_name}:{frame.f_lineno}")
-        frame = frame.f_back
-    frames.reverse()
-    return frames[-max_frames:]
-
-
-class LoopLagProbe:
-    """Watches one event loop from a daemon thread and logs when it is blocked (log only)."""
-
-    def __init__(
-        self,
-        loop: asyncio.AbstractEventLoop,
-        *,
-        loop_thread_id: int,
-        interval_s: float = LOOP_LAG_INTERVAL_S,
-        threshold_s: float = LOOP_LAG_THRESHOLD_S,
-        report_wait_s: float = LOOP_LAG_REPORT_WAIT_S,
-        report_every_s: float = LOOP_LAG_REPORT_EVERY_S,
-        clock: Callable[[], float] = time.monotonic,
-        stack: Callable[[int], list[str]] = thread_stack,
-    ) -> None:
-        self._loop = loop
-        self._loop_thread_id = loop_thread_id
-        self._interval_s = interval_s
-        self._threshold_s = threshold_s
-        self._report_wait_s = report_wait_s
-        self._report_every_s = report_every_s
-        self._clock = clock
-        self._stack = stack
-        self._last_report: float | None = None
-        self._suppressed = 0
-        self._stop = threading.Event()
-        self._thread: threading.Thread | None = None
-
-    @classmethod
-    def for_running_loop(cls, **kwargs: object) -> LoopLagProbe:
-        """A probe for the loop running in the calling thread. Call it from a coroutine."""
-        return cls(asyncio.get_running_loop(), loop_thread_id=threading.get_ident(), **kwargs)  # type: ignore[arg-type]
-
-    def start(self) -> None:
-        """Start the watchdog thread (a daemon). A second call does nothing."""
-        if self._thread is not None:
-            return
-        self._stop.clear()
-        self._thread = threading.Thread(target=self._run, name="probos-loop-lag", daemon=True)
-        self._thread.start()
-
-    def stop(self) -> None:
-        """Signal the thread to end. Never blocks: it may be called on the loop thread, whose
-        block a join could wait on. The thread ends at its next wait and logs nothing more."""
-        self._stop.set()
-        self._thread = None
-
-    def check_once(self) -> float | None:
-        """One heartbeat. Returns the lag in ms when the loop was blocked past the threshold,
-        else None. Must not run on the loop's own thread (it would wait on itself)."""
-        if threading.get_ident() == self._loop_thread_id:
-            raise RuntimeError("LoopLagProbe.check_once must not run on the loop thread")
-        answered = threading.Event()
-        sent = self._clock()
-        try:
-            self._loop.call_soon_threadsafe(answered.set)
-        except RuntimeError:  # the loop is closed: nothing left to watch
-            self._stop.set()
-            return None
-        if answered.wait(self._threshold_s):
-            return None
-        frames = self._stack(self._loop_thread_id)
-        still_blocked = not answered.wait(self._report_wait_s)
-        ended = self._clock()
-        if self._stop.is_set():
-            return None
-        lag_ms = (ended - sent) * 1000.0
-        self._report(lag_ms, still_blocked, frames, ended)
-        return lag_ms
-
-    def _report(self, lag_ms: float, still_blocked: bool, frames: list[str], at: float) -> None:
-        if self._last_report is not None and at - self._last_report < self._report_every_s:
-            self._suppressed += 1
-            return
-        logger.warning(
-            "BF-930: event loop blocked lag_ms=%.0f still_blocked=%d suppressed=%d stack=%s",
-            lag_ms, int(still_blocked), self._suppressed, " > ".join(frames) or "-",
-        )
-        self._last_report = at
-        self._suppressed = 0
-
-    def _run(self) -> None:
-        while not self._stop.wait(self._interval_s):
-            try:
-                self.check_once()
-            except Exception:  # log-and-degrade: the probe must never take the vessel down
-                logger.warning("BF-930: loop lag probe check failed", exc_info=True)
-```
-
-### 6.10 `src/probos/__main__.py`
-
-**P24.** SEARCH:
-```python
-    heartbeat_task = asyncio.create_task(_heartbeat_loop(), name="serve-heartbeat")
-
-    try:
-        if interactive:
-```
-REPLACE:
-```python
-    heartbeat_task = asyncio.create_task(_heartbeat_loop(), name="serve-heartbeat")
-    # BF-930 (#1668): a log-only watchdog for a blocked event loop; each report carries the
-    # loop thread's stack as file:function:line frames. Stopped first in the finally below.
-    from probos.utils.loop_lag import LoopLagProbe
-    loop_lag_probe = LoopLagProbe.for_running_loop()
-    loop_lag_probe.start()
-
-    try:
-        if interactive:
-```
-
-**P25.** SEARCH:
-```python
-        # Cancel heartbeat first so we stop emitting "alive" once shutdown begins.
-        heartbeat_task.cancel()
-```
-REPLACE:
-```python
-        # BF-930: shutdown work may block the loop by design; stop the watchdog before it.
-        loop_lag_probe.stop()
-        # Cancel heartbeat first so we stop emitting "alive" once shutdown begins.
-        heartbeat_task.cancel()
-```
-
-### 6.11 `tests/test_bf930_loop_lag_probe.py` (new file)
-
-```python
-"""BF-930 (#1668) M3: the loop-lag probe logs a blocked event loop with the loop thread's stack.
-
-A real event loop runs in its own thread and is held by a callback that waits on a
-``threading.Event``; only the probe's clock is injected. No assertion is on a duration
-of wall time: each timeout is a liveness bound, or a wait that cannot end early because
-the test holds the loop.
-"""
-
-from __future__ import annotations
-
-import asyncio
-import logging
-import os
-import subprocess
-import sys
-import threading
-from collections.abc import Iterator
-from pathlib import Path
-
-import pytest
-
-from probos.utils.loop_lag import LoopLagProbe, thread_stack
-
-_LOGGER = "probos.utils.loop_lag"
-_SENTINEL = "bf930-local-value-never-logged"
-_SRC_DIR = Path(__file__).resolve().parents[1] / "src"
-
-
-class _Clock:
-    def __init__(self, *values: float) -> None:
-        self._values = list(values)
-
-    def __call__(self) -> float:
-        return self._values.pop(0)
-
-    @property
-    def unused(self) -> list[float]:
-        return list(self._values)
-
-
-def _blocking_callback(entered: threading.Event, release: threading.Event) -> None:
-    secret = _SENTINEL  # a local the report must not carry
-    entered.set()
-    release.wait()
-    del secret
-
-
-@pytest.fixture
-def held_loop() -> Iterator[tuple[asyncio.AbstractEventLoop, int, threading.Event]]:
-    loop = asyncio.new_event_loop()
-    started = threading.Event()
-    idents: list[int] = []
-
-    def _run() -> None:
-        asyncio.set_event_loop(loop)
-        idents.append(threading.get_ident())
-        started.set()
-        loop.run_forever()
-
-    thread = threading.Thread(target=_run, name="bf930-test-loop", daemon=True)
-    thread.start()
-    assert started.wait(30)  # liveness only
-    release = threading.Event()
-    try:
-        yield loop, idents[0], release
-    finally:
-        release.set()
-        loop.call_soon_threadsafe(loop.stop)
-        thread.join(30)
-        loop.close()
-
-
-def _hold(loop: asyncio.AbstractEventLoop, release: threading.Event) -> None:
-    entered = threading.Event()
-    loop.call_soon_threadsafe(_blocking_callback, entered, release)
-    assert entered.wait(30)  # liveness only
-
-
-def _reports(caplog: pytest.LogCaptureFixture) -> list[str]:
-    return [r.getMessage() for r in caplog.records if r.name == _LOGGER and r.levelno == logging.WARNING]
-
-
-def test_a_blocked_loop_is_reported_with_the_loop_threads_stack_and_no_values(held_loop, caplog) -> None:
-    loop, loop_thread, release = held_loop
-    caplog.set_level(logging.WARNING, logger=_LOGGER)
-    clock = _Clock(100.0, 103.5)
-    probe = LoopLagProbe(loop, loop_thread_id=loop_thread, threshold_s=0.01, report_wait_s=0.01, clock=clock)
-    _hold(loop, release)
-
-    assert probe.check_once() == pytest.approx(3500.0)
-
-    (line,) = _reports(caplog)
-    assert line.startswith("BF-930: event loop blocked lag_ms=3500 still_blocked=1 suppressed=0 stack=")
-    frames = line.split("stack=", 1)[1].split(" > ")
-    names = [frame.rsplit(":", 2)[1] for frame in frames]
-    assert any(f.startswith("tests/test_bf930_loop_lag_probe.py:_blocking_callback:") for f in frames)
-    assert names.index("_blocking_callback") < names.index("wait")  # outermost first: the wait it is stuck in is inner
-    assert _SENTINEL not in line
-    assert clock.unused == []
-
-
-def test_a_loop_that_answers_during_the_report_is_logged_with_its_whole_lag(held_loop, caplog) -> None:
-    loop, loop_thread, release = held_loop
-    caplog.set_level(logging.WARNING, logger=_LOGGER)
-
-    def _stack_then_release(thread_id: int) -> list[str]:
-        frames = thread_stack(thread_id)
-        release.set()
-        return frames
-
-    probe = LoopLagProbe(
-        loop, loop_thread_id=loop_thread, threshold_s=0.01, report_wait_s=30.0,  # 30 s: liveness only
-        clock=_Clock(10.0, 12.25), stack=_stack_then_release,
-    )
-    _hold(loop, release)
-
-    assert probe.check_once() == pytest.approx(2250.0)
-
-    (line,) = _reports(caplog)
-    assert "lag_ms=2250 still_blocked=0 suppressed=0 " in line
-    assert ":_blocking_callback:" in line
-
-
-def test_a_loop_that_answers_in_time_logs_nothing(held_loop, caplog) -> None:
-    loop, loop_thread, _release = held_loop
-    caplog.set_level(logging.WARNING, logger=_LOGGER)
-    clock = _Clock(5.0)
-    probe = LoopLagProbe(loop, loop_thread_id=loop_thread, threshold_s=30.0, clock=clock)  # 30 s: liveness only
-
-    assert probe.check_once() is None
-    assert _reports(caplog) == []
-    assert clock.unused == []
-
-
-def test_reports_are_rate_limited_and_count_what_they_held_back(held_loop, caplog) -> None:
-    loop, loop_thread, release = held_loop
-    caplog.set_level(logging.WARNING, logger=_LOGGER)
-    probe = LoopLagProbe(
-        loop, loop_thread_id=loop_thread, threshold_s=0.01, report_wait_s=0.01, report_every_s=30.0,
-        clock=_Clock(0.0, 2.0, 5.0, 7.0, 40.0, 42.0),
-    )
-    _hold(loop, release)
-
-    for _ in range(3):
-        assert probe.check_once() == pytest.approx(2000.0)
-
-    lines = _reports(caplog)
-    assert len(lines) == 2
-    assert "suppressed=0" in lines[0]
-    assert "suppressed=1" in lines[1]
-
-
-def test_thread_stack_keeps_the_innermost_frames(held_loop) -> None:
-    loop, loop_thread, release = held_loop
-    _hold(loop, release)
-    whole = thread_stack(loop_thread, max_frames=1000)
-    assert len(whole) > 2
-    assert thread_stack(loop_thread, max_frames=2) == whole[-2:]
-
-
-def test_a_stopped_probe_does_not_report(held_loop, caplog) -> None:
-    loop, loop_thread, release = held_loop
-    caplog.set_level(logging.WARNING, logger=_LOGGER)
-    probe = LoopLagProbe(loop, loop_thread_id=loop_thread, threshold_s=0.01, report_wait_s=0.01, clock=_Clock(0.0, 9.0))
-    _hold(loop, release)
-    probe.stop()
-
-    assert probe.check_once() is None
-    assert _reports(caplog) == []
-
-
-def test_a_closed_loop_ends_the_check_without_a_report(caplog) -> None:
-    caplog.set_level(logging.WARNING, logger=_LOGGER)
-    loop = asyncio.new_event_loop()
-    loop.close()
-    probe = LoopLagProbe(loop, loop_thread_id=-1, threshold_s=0.01)
-    assert probe.check_once() is None
-    assert _reports(caplog) == []
-
-
-def test_start_runs_one_daemon_thread_and_stop_ends_it(held_loop) -> None:
-    loop, loop_thread, _release = held_loop
-    before = {t for t in threading.enumerate() if t.name == "probos-loop-lag"}
-    probe = LoopLagProbe(loop, loop_thread_id=loop_thread, interval_s=0.01, threshold_s=30.0)
-    probe.start()
-    probe.start()
-    mine = [t for t in threading.enumerate() if t.name == "probos-loop-lag" and t not in before]
-    assert len(mine) == 1
-    assert mine[0].daemon
-    probe.stop()
-    mine[0].join(30)  # liveness only
-    assert not mine[0].is_alive()
-
-
-@pytest.mark.asyncio
-async def test_for_running_loop_binds_the_running_loop_and_refuses_a_check_on_it() -> None:
-    probe = LoopLagProbe.for_running_loop(threshold_s=30.0)  # 30 s: liveness only
-    with pytest.raises(RuntimeError):
-        probe.check_once()  # on the loop thread it would wait on itself
-    assert await asyncio.to_thread(probe.check_once) is None  # from a worker thread, the running loop answers
-
-
-# The real ``_serve`` in a separate process (it ends in ``os._exit``), with its runtime, web server
-# and browser replaced, as ``tests/test_ad1341_s1_reset_and_erase.py``'s vessel does.
-_VESSEL = '''
-import asyncio
-import sys
-import webbrowser
-from pathlib import Path
-
-import uvicorn
-
-import probos.api
-from probos import __main__ as cli
-from probos.config import SystemConfig
-from probos.utils import loop_lag
-
-data_dir, signals = Path(sys.argv[1]), Path(sys.argv[2])
-_start, _stop = loop_lag.LoopLagProbe.start, loop_lag.LoopLagProbe.stop
-
-
-def _recorded_start(self):
-    (signals / "started").write_text("1", encoding="utf-8")
-    _start(self)
-
-
-def _recorded_stop(self):
-    (signals / "stopped").write_text("1", encoding="utf-8")
-    _stop(self)
-
-
-loop_lag.LoopLagProbe.start = _recorded_start
-loop_lag.LoopLagProbe.stop = _recorded_stop
-
-
-class _Runtime:
-    async def stop(self):
-        return None
-
-
-class _Server:
-    def __init__(self, config):
-        self.should_exit = False
-
-    async def serve(self):
-        return None
-
-
-async def _boot(config_path, fresh, data_dir_arg, console, verbose=False):
-    return _Runtime(), SystemConfig(), console
-
-
-cli._boot_runtime = _boot
-probos.api.create_app = lambda runtime: None
-uvicorn.Config = lambda *args, **kwargs: None
-uvicorn.Server = _Server
-webbrowser.open = lambda *args, **kwargs: True
-asyncio.run(cli._serve(data_dir=data_dir))
-sys.exit(9)  # not reached: _serve ends in os._exit
-'''
-
-
-def test_the_vessel_starts_the_probe_and_stops_it_on_shutdown(tmp_path: Path) -> None:
-    data_dir = tmp_path / "data"
-    data_dir.mkdir()
-    signals = tmp_path / "signals"
-    signals.mkdir()
-    script = tmp_path / "vessel.py"
-    script.write_text(_VESSEL, encoding="utf-8")
-    env = {
-        **os.environ, "PYTHONPATH": str(_SRC_DIR), "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8",
-        "COLUMNS": "200", "PROBOS_SKIP_EPISODIC_HEALTH_CHECK": "1",
-    }
-    done = subprocess.run(
-        [sys.executable, str(script), str(data_dir), str(signals)],
-        env=env, capture_output=True, timeout=300,  # liveness only
-    )
-    assert done.returncode == 0, (done.stdout[-2000:], done.stderr[-2000:])
-    assert (signals / "started").exists()
-    assert (signals / "stopped").exists()
-```
+The S3 pairs (`src/probos/utils/loop_lag.py`, `__main__._serve` P24-P25, `tests/test_bf930_loop_lag_probe.py`) were removed with S3: BF-932's D2 sampler (#1670) covers it. The branch never carried them after the overlap decision; nothing of them is to be applied.
 
 ### 6.12 `PROGRESS.md`
 
@@ -1369,26 +910,29 @@ REPLACE:
 | Contract | Consumer | After the change |
 |---|---|---|
 | `runPrefetchQueue` signature | `voice.ts`:588 (only production caller); `voiceChunking.test.ts` Q1-Q6 pass 5-6 args | the 7th arg defaults to `() => true`: Q1-Q6 unchanged |
-| `TTS_PREFETCH_LOOKAHEAD` | the pipelined path only (`status.sentence_pipelining_enabled`, `voice.ts`:579); pipelined UI tests exist only in `voice.prefetch.bf918.test.tsx` and `voice.pipelining.test.tsx` (Absence Verified) | P1, P2, P14 and two pipelining tests changed in place; P3, P6, P8, P9, P15-P20 hold (two-sentence replies, holds, or post-hoc assertions) |
-| `PreparedSpeech` | built only at `voice.ts`:692 | gains `durationMs` |
+| `TTS_PREFETCH_LOOKAHEAD` | the pipelined path only (`status.sentence_pipelining_enabled`, `voice.ts`:579); pipelined UI tests exist only in `voice.prefetch.bf918.test.tsx` and `voice.pipelining.test.tsx` (Absence Verified) | P1, P2, P14 and two pipelining tests changed in place; P3, P6, P8, P9, P15-P18, P20 hold (two-sentence replies, holds, or post-hoc assertions); P19 changed in place by A1 (it pinned the overlap) |
+| `PreparedSpeech` | built only at `voice.ts`:712-719 (at `08a88fd0`); its fields read by `_startBufferFilled` (:275, the duration), `_playPreparedSpeech` (:761) and `_discardPreparedSpeech` (:845-846, `audio` only) | gains `durationMs` (M1), renamed `playMs` and divided by the playback rate (A1) |
+| `_speakBrowserFallback` (A1: returns `Promise<void>`) | statement calls at `voice.ts`:569, :573, :585 (speakResponse; result ignored, unchanged), :758, :831, :837 (`_playPreparedSpeech`; now awaited, bounded) | the ignoring callers behave as before; `_synthesizeAndPlay` (single call) resolves after the browser's end instead of at once, and nothing awaits it beyond its own IIFE (`voice.ts`:625) |
+| browser-fallback UI tests | `voice.prefetch.bf918` P11, P13 (single call), V6, P19; `voice.pipelining` honest-degrade; `voice.serverTts` :129, :159 (single call) | single-call tests: no assertion depends on when `_synthesizeAndPlay` resolves; P19 and honest-degrade changed in place; V6 asserts only the browser utterance |
 | `ProfileChatTab.bf918.test.tsx` M6/M7 (:533-680) | pipelined two-sentence replies with no `duration_ms` | unknown duration: start at once; lookahead irrelevant for two sentences |
 | TTS route | `test_bf918_tts_latency.py`, `test_bf930_voice_path_timing.py`, `test_ad738_piper_tts.py`, `test_ad738e_1_per_emotion_prosody.py`, `test_bf291_piper_voice_catalog.py`, `test_ad721b1_rhubarb_backend.py`, `test_ad721e_animation_manifest.py`, `test_ad1071_tts_pipelining.py`, `test_bf918_tts_retention.py`, `test_bf918_attachment_io.py` | their stand-in runtimes have no `dream_scheduler` (SimpleNamespace) or a MagicMock one: skipped or a no-op call |
 | `DreamScheduler` | `runtime.py`:3286 (holds it), `test_dreaming.py` (:420, :448, :489-504, :619-627 set or read `_last_activity_time`), `test_bf1002_full_dream_complete_event.py` | one new field, one new method, two INFO lines; `record_activity` unchanged |
-| `__main__._serve` | source scans `test_ad708e_mdns_discovery.py`:158 (`build_advertiser(`, `.stop()`), `test_bf207_shutdown_episodic_integrity.py`:309 (`runtime.stop(), timeout=10`, `adapter.stop(), timeout=5`); subprocess `test_ad1341_s1_reset_and_erase.py`:157, :886, :970 | strings unchanged; the subprocess vessels now also start and stop the probe |
-| live log readers | the Captain's live check (section 12) | three new line kinds, all prefixed `BF-930:` |
+| live log readers | the Captain's live check (section 12) | two new line kinds (`BF-930: idle full dream starting/finished`); loop-block lines are BF-932's |
+| HXI devtools console | the operator | at most one `[voice] BF-930: browser speech gave no end or error ...` warning per browser sentence that hits the 20 s bound |
 
 ## 8. Gates (the orchestrator runs all of them)
 
 ### 8.1 Oracle tree, before the Builder starts
-- Each SEARCH of section 6 counted at its turn: 1 each; the three new files do not exist.
+- Each SEARCH of section 6 counted at its turn: 1 each; the new file did not exist (done for M1-M2). For A1: each SEARCH of 16.2 counted at its turn on `08a88fd0`: 1 each.
 - A/B on main (the new tests and the changed UI tests on the base without the source pairs):
   - UI: V1 (played before release), V4 (`posted` has two), V5 (a `start:One.` event), Q7 (first `toEqual`), and the changed P1, P2, P14 and two pipelining tests fail on assertions; Q8 fails by vitest's test timeout (on main `a` plays and its `play` never ends). V2, V3, V6 pass on both trees (preservation).
-  - Python: `test_a_spoken_reply_keeps_a_due_idle_full_dream_from_starting` fails on main at `await_count == 0` (the route does not touch the scheduler) once the import of `SPEECH_DREAM_DEFER_CAP_SECONDS` is satisfied; record the rest of that file and all of `test_bf930_loop_lag_probe.py` as new-API cases (they fail on import on main), not as A/B evidence. The control test passes on both trees apart from its log-line asserts.
+  - Python: `test_a_spoken_reply_keeps_a_due_idle_full_dream_from_starting` fails on main at `await_count == 0` (the route does not touch the scheduler) once the import of `SPEECH_DREAM_DEFER_CAP_SECONDS` is satisfied; record the rest of that file as new-API cases (they fail on import on main), not as A/B evidence. The control test passes on both trees apart from its log-line asserts.
+- A1 A/B (the A1 test pairs on `08a88fd0` without the A1 source pairs A1.1-A1.11): V7 (`played` false expected, plays at once), V8 (expected to play at once, waits), V10 (`spoken()` is `['One.', 'Two.']`: Two plays while still blocked), V11 and V12 (Three already played), changed P19 and the changed honest-degrade test (`createdAudios[1].played` is true before the browser's end) fail on assertions. V9 passes on both trees (it guards the clamp; R2 kills it). A1.12-A1.14 count once each on `08a88fd0`.
 
 ### 8.2 Focused checks on the candidate
 ```text
-d:/ProbOS/.venv/Scripts/pytest.exe tests/test_bf930_speech_defers_idle_dream.py tests/test_bf930_loop_lag_probe.py tests/test_dreaming.py tests/test_bf1002_full_dream_complete_event.py tests/test_bf918_tts_latency.py tests/test_bf930_voice_path_timing.py tests/test_ad738_piper_tts.py tests/test_ad738e_1_per_emotion_prosody.py tests/test_bf291_piper_voice_catalog.py tests/test_ad721b1_rhubarb_backend.py tests/test_ad721e_animation_manifest.py tests/test_ad1071_tts_pipelining.py tests/test_bf918_tts_retention.py tests/test_bf918_attachment_io.py tests/test_ad708e_mdns_discovery.py tests/test_bf207_shutdown_episodic_integrity.py tests/test_ad1341_s1_reset_and_erase.py -n 0 -q
-rg -l -g 'test_*.py' -e 'rglob\("\*\.py"\)' -e 'os\.walk\(' -e 'cognitive\.dreaming' -e 'DreamScheduler' -e 'probos\.__main__' -e 'probos\.utils' tests
+d:/ProbOS/.venv/Scripts/pytest.exe tests/test_bf930_speech_defers_idle_dream.py tests/test_dreaming.py tests/test_bf1002_full_dream_complete_event.py tests/test_bf918_tts_latency.py tests/test_bf930_voice_path_timing.py tests/test_ad738_piper_tts.py tests/test_ad738e_1_per_emotion_prosody.py tests/test_bf291_piper_voice_catalog.py tests/test_ad721b1_rhubarb_backend.py tests/test_ad721e_animation_manifest.py tests/test_ad1071_tts_pipelining.py tests/test_bf918_tts_retention.py tests/test_bf918_attachment_io.py -n 0 -q
+rg -l -g 'test_*.py' -e 'rglob\("\*\.py"\)' -e 'os\.walk\(' -e 'cognitive\.dreaming' -e 'DreamScheduler' tests
 d:/ProbOS/.venv/Scripts/pytest.exe <each file the rg command lists> -n 8 -q
 cd ui; npx vitest run src/audio src/components/profile/__tests__/ProfileChatTab.bf918.test.tsx src/__tests__/CrewVRM.mouthClock.bf931.test.tsx
 cd ui; npm run build
@@ -1404,40 +948,42 @@ The broad gate does not run vitest; the vitest line and `npm run build` (tsc) ar
 | U1 | voice.ts: `const TTS_PREFETCH_LOOKAHEAD = 3;` | `= 1;` | V4, P1, P2, P14, pipelining |
 | U2 | voiceChunking.ts: `for (let k = 1; k <= lookahead && k < items.length && !startWhen(ready); k += 1) {` | `for (let k = 1; false; k += 1) {` | V1, V5, Q7, Q8 |
 | U3 | voiceChunking.ts: `if (!shouldContinue()) { stopped = true; break; }` | (line deleted) | V5, Q8 |
-| U4 | voice.ts: `held += prepared !== null && prepared.durationMs > 0 ? prepared.durationMs : TTS_START_BUFFER_MS;` | `held += prepared !== null ? prepared.durationMs : TTS_START_BUFFER_MS;` | V3 |
-| U5 | the same line | `held += prepared !== null && prepared.durationMs > 0 ? prepared.durationMs : 0;` | V3, V6 |
-| U6 | voice.ts: `? data.duration_ms` | `? 0` | V1 |
+| U4 | voice.ts: `held += prepared !== null && prepared.playMs > 0 ? prepared.playMs : TTS_START_BUFFER_MS;` (A1 locator) | `held += prepared !== null ? prepared.playMs : TTS_START_BUFFER_MS;` | V3 |
+| U5 | the same line | `held += prepared !== null && prepared.playMs > 0 ? prepared.playMs : 0;` | V3, V6 |
+| U6 | voice.ts: `? data.duration_ms / _playbackRate(profile?.rate)` (A1 locator) | `? 0` | V1 |
 | U7 | voice.ts: `_startBufferFilled,` | (line deleted) | V1, V5 |
 | D1 | avatars.py: `dream_scheduler.record_speech_activity()` | `pass` | spoken-reply chain test |
 | D2 | avatars.py: same line | `dream_scheduler.record_activity()` | route cap test |
 | D3 | dreaming.py: `if at - self._speech_since >= SPEECH_DREAM_DEFER_CAP_SECONDS:` | `if False:` | cap unit test, first-reply test, route cap test |
 | D4 | dreaming.py: `if self._speech_since is None or self._last_dream_time > self._speech_since:` | `if self._speech_since is None:` | new-stretch test |
 | D5 | dreaming.py: `logger.info("BF-930: idle full dream starting idle_s=%.0f", idle_time)` | (line deleted) | control test |
-| L1 | loop_lag.py: `still_blocked = not answered.wait(self._report_wait_s)` | `still_blocked = False` | blocked-report test |
-| L2 | loop_lag.py: `if self._last_report is not None and at - self._last_report < self._report_every_s:` | `if False:` | rate-limit test |
-| L3 | loop_lag.py: `frames.reverse()` | (line deleted) | blocked-report test (order; the innermost-frames test compares two unreversed lists and does not kill it) |
-| L4 | loop_lag.py: `return frames[-max_frames:]` | `return frames[:max_frames]` | innermost-frames test |
-| L5 | loop_lag.py: `frames.append(f"{os.path.basename(directory)}/{name}:{code.co_name}:{frame.f_lineno}")` | the same f-string with `:{frame.f_locals}` appended | blocked-report test (sentinel) |
-| L6 | loop_lag.py: `if self._stop.is_set():` | `if False:` | stopped-probe test |
-| L7 | __main__.py: `loop_lag_probe.start()` | (line deleted) | vessel subprocess test |
-| L8 | __main__.py: `loop_lag_probe.stop()` | (line deleted) | vessel subprocess test |
+| R1 | voice.ts: `? data.duration_ms / _playbackRate(profile?.rate)` | `? data.duration_ms` | V7, V8 |
+| R2 | voice.ts: `return Math.max(0.25, Math.min(4.0, rate ?? 0.95));` | `return rate ?? 0.95;` | V9 |
+| B1 | voice.ts: `await _awaitBrowserSentence(_speakBrowserFallback(text, profile, agent_id, utterance_id, last));` | `_speakBrowserFallback(text, profile, agent_id, utterance_id, last);` | P19, V11, V12, pipelining honest-degrade |
+| B2 | voice.ts: `if (browserDone !== null) await _awaitBrowserSentence(browserDone);` | (line deleted) | V10 |
+| B3 | voice.ts: `}, BROWSER_SENTENCE_MAX_WAIT_MS);` | `}, BROWSER_SENTENCE_MAX_WAIT_MS * 1000);` | V12 |
+| B4 | voice.ts: `void spoken.then(() => { clearTimeout(bound); resolve(); });` | `void spoken;` | P19, V10, V11, pipelining honest-degrade |
+| B5 | voice.ts: `_resolveSpoken();` | (line deleted) | P19, V10, V11, pipelining honest-degrade |
+
+L1-L8 (the probe) went with S3. The orchestrator's campaign of record for U1-U7 and D1-D5 ran on the pre-drop candidate; rerun U4, U5 and U6 (their locators moved) and the new R and B rows on the A1 head. D1-D5 stand unless `dreaming.py` or `avatars.py` code lines differ (A1 changes only a docstring and a comment there).
 
 ### 8.4 The gate
 `d:/ProbOS/.venv/Scripts/python.exe scripts/run_test_gate.py --label bf-930-speech --receipt logs/gates/bf-930-speech.receipt.json` once on the committed head, after merging the base. The gate lock is shared with the main orchestrator: queue behind its gate, never run two at once.
 
 ## 9. Diff Reviewer: properties to verify
 
-The change claims that a spoken reply's later sentences are synthesized up to three ahead and a short first sentence waits for the next, that a spoken request keeps an idle full dream from starting for at most two hours of continuous speech, and that the vessel logs a blocked loop with its stack. Consumers that must accept it: the HXI voice path (`speakResponse` through `runPrefetchQueue`), the dream monitor loop, and the operator reading `probos.log`.
+The change claims that a spoken reply's later sentences are synthesized up to three ahead and a first sentence that plays for less than 3 s waits for the next, that a sentence the browser speaks in place of a server one ends (or hits a 20 s bound) before the next starts, and that a spoken request keeps an idle full dream from starting for at most two hours of continuous speech. Consumers that must accept it: the HXI voice path (`speakResponse` through `runPrefetchQueue`), the dream monitor loop, and the operator reading `probos.log` and the devtools console.
 1. With the default `startWhen`, `runPrefetchQueue` behaves byte-for-byte as before (Q1-Q6 unchanged); with `startWhen`, the first item starts after at most `lookahead` more preparations, and a stop during the wait plays nothing and discards each prepared item exactly once.
 2. A sentence whose duration is unknown, or whose preparation failed, never delays the first audio.
 3. `voice.ts`:548-570 (the backend gate) and `avatars.py`:250-262 (`voice_name`) are byte-identical to the base.
 4. `record_speech_activity` cannot write `_last_activity_time` once its stretch is at or past the cap, so speech alone cannot keep the monitor's full-dream predicate false; a full dream completed after the stretch began starts a new stretch; `record_activity` is unchanged.
 5. The route records activity once per accepted request, after validation and before synthesis, and a runtime without a scheduler is unaffected.
-6. The probe never runs code on the loop except `threading.Event.set`, never logs locals, arguments or values, logs at most once per `report_every_s`, logs nothing after `stop()`, and its thread is a daemon; `stop()` never blocks.
-7. The probe starts only in `__main__._serve` and is stopped in its `finally` before the heartbeat is cancelled; no booted-runtime path starts it.
-8. Each changed UI test keeps every assertion it had, changed only where lookahead 3 changes the value, with the reason inline; nothing is deleted or skipped.
-9. No file of BF-932 changes; ASCII and LF in the new text; no file outside the scope line changes; `config/system.yaml` is untouched.
-10. Each absolute word of the new text (each, every, no, only, never, none) holds against sections 1 and 7 and the Absence Verified list.
+6. (A1) In the AD-1071 queue, a sentence the browser speaks in place of a server one (failed preparation, refused `play()`, or a throw in the play half) resolves its `play` only on that utterance's `onend`/`onerror` or after `BROWSER_SENTENCE_MAX_WAIT_MS` (20 s), whichever is first; a normal end clears the timer; the bound logs one `console.warn`; a stop (`speechSynthesis.cancel()`, which fires `onerror`) ends the wait and the queue then plays nothing more; `_fireBrowserEnd` still fires exactly one terminal 'end'.
+7. (A1) The start buffer counts each prepared sentence's server duration divided by `_playbackRate(profile?.rate)`, the helper the play half uses for `audio.playbackRate`; an unknown duration or a failed prepare still counts as a full 3000 ms. The callers of `_speakBrowserFallback` in `speakResponse` (`voice.ts`:569, :573, :585) are byte-identical.
+8. Each changed UI test keeps every assertion it had, changed only where lookahead 3 (M1) or the awaited browser fallback (A1) changes the value, with the reason inline; nothing is deleted or skipped.
+9. No file of BF-932 changes; ASCII and LF in the new text; no file outside the scope line changes; `config/system.yaml` is untouched; no `loop_lag` or `__main__.py` change is on the branch.
+10. Each absolute word of the new text (each, every, no, only, never, none), including A1's code comments, tracker text and issue text, holds against sections 1 and 7 and the Absence Verified list.
+11. (A1) No claim says a reply never pauses: the PROGRESS, DECISIONS, issue and `voice.ts` text bound the coverage by the audio held, and the dream text names both monitor conditions.
 
 ## 10. Verified Against Codebase (2026-11-27, tree `32997b18`)
 
@@ -1450,11 +996,17 @@ The change claims that a spoken reply's later sentences are synthesized up to th
 - `filesystem_store.py`: write-slow line :384-385 (`behind=`, `index_entries=`); find-slow :406. `resident.py`:450 piper-slow line.
 - Tests: `voice.prefetch.bf918.test.tsx` `_flush` :91-93, `Plan` :95-105, `_makeFetch` :107-153 (`duration_ms: 0` :133), P1 :167-189, P2 :191-219, P14 :547-578, P20 :714-729 (end of file :730); `voice.pipelining.test.tsx` `_flush` :74-77, :143-152, :207-209; `voiceChunking.test.ts` `harness` :93-108, Q6 :196-203 (end of file :204); `test_bf918_tts_latency.py` `_WAV` :42, `_StubBackend` :100-104, `voice_client` :538-557, `_stub_rhubarb` :560-569; `test_ad1341_s1_reset_and_erase.py` vessel script :102-158, env :322-325.
 - Live: `probos.log.1`:64421 (23:40:49), :64422 (23:41:07), :64423 (route line, `store_ms=17618 total_ms=17782 audio_ms=3949`). `D:\ProbOS\config\system.yaml`:221-222 (300.0, 600.0).
+- (A1, tree `08a88fd0`) `voice.ts`: `SPEECH_JOIN_TIMEOUT_MS = 45000` :25; `VoiceProfile.rate` (0.1-10.0) :34; listener `console.warn('[voice] ...')` :100; `speakResponse(text, profile?, agent_id?, ...)` :370-377; lookahead comment :258-262; `_startBufferFilled` :269-278; fallback calls :569, :573, :585; queue call :605-613 (`_prepareServerSpeech(sentence, profile, emotion)` :607); `PreparedSpeech` :636-642; `_synthesizeAndPlay` :652-663 (awaited at :625); `_prepareServerSpeech(text, profile, emotion)` :668-724 (`durationMs` :716-718); `_playPreparedSpeech` :748-839 (null path :756-760, `playbackRate` :769, reject path :823-833, catch :835-838); `_resolveEffectiveProfile` :852-878 (modulated rate :864-872); `_speakBrowserFallback` :881-944 (no-engine return :914, `_fireBrowserEnd` :934-941, `speak` :943); `stopSpeaking` :960 (`cancel()` :966-968). `voiceChunking.ts`: play then `played += 1` :134-139, loop top re-check :117, `finally` discard :141-146. `dreaming.py`: `record_speech_activity` docstring :3196-3204; monitor conditions :3358-3364. `avatars.py`: comment :270-272. Tests: `voice.prefetch.bf918.test.tsx` `vi` import :5, `FakeUtterance.onend/onerror` :17-18, `playMode` :30, `speechSynthesis.cancel: vi.fn()` :81, P16 fake timers :619, P19 :695-720, V6 :837-844 (end of file :845); `voice.pipelining.test.tsx` `FakeAudio.played` :32, honest-degrade :177-219. `PROGRESS.md`:3; `DECISIONS.md`:13-20. BF-932 contract (`D:\ProbOS-worktrees\b932\prompts\bf-932-reply-never-waits.md`): blocked line :811, resumed line :820, innermost first :692, `suppressed=N` :665, selector frames mean a paused process :1771, :1792.
 
 ### Absence Verified (2026-11-27)
 
 - CLAIM: only `process_natural_language` and `decompose_only` reset the dream idle clock. RUN: Grep `record_activity|_last_activity_time` over `src` and `tests`. FOUND in `src`: `runtime.py`:5837, :6230 (dream scheduler), :4522, :4744 (emergent detector, a different clock); `dreaming.py`:3161, :3184-3193, :3333. HOLDS.
-- CLAIM: no loop-lag monitor exists. RUN: Grep `-i "loop_lag|loop lag|event.loop.(lag|block|stall)|slow_callback_duration|set_debug\(|_current_frames"` over `src`. FOUND: `novelty_gate.py`:65 (a docstring). HOLDS.
+- CLAIM: no loop-lag monitor exists. RUN: Grep `-i "loop_lag|loop lag|event.loop.(lag|block|stall)|slow_callback_duration|set_debug\(|_current_frames"` over `src`. FOUND: `novelty_gate.py`:65 (a docstring). HOLDS at `32997b18`; A1: on `08a88fd0` Grep `loop_lag|LoopLagProbe` over `src` finds nothing (S3 is off the branch); BF-932 D2 adds the sampler.
+- (A1) CLAIM: the result of `_speakBrowserFallback` is used nowhere today. RUN: Grep `_speakBrowserFallback` over `ui/src/audio/voice.ts`. FOUND: definition :881 and statement calls :569, :573, :585, :758, :831, :837. HOLDS.
+- (A1) CLAIM: no UI test asserts `playbackRate`. RUN: Grep `playbackRate` over `ui/src/**/__tests__/**`. FOUND: field declarations only (`voice.balancedEnd`:48, `voice.perEmotion`:22, `voice.pipelining`:29, `voice.prefetch.bf918`:35, `voice.serverTts`:26, `CrewVRM.mouthClock.bf931`:68, `ProfileChatTab.bf918`:94). HOLDS.
+- (A1) CLAIM: nothing outside `voice.ts` reads `PreparedSpeech.durationMs`. RUN: Grep `durationMs` over `ui/src/audio`. FOUND: `voice.ts`:275, :641, :716; the rest are `lipSyncTrack.ts`'s own segment type and its tests. HOLDS.
+- (A1) CLAIM: the UI lint has no floating-promise rule a discarded `Promise<void>` would trip. RUN: Grep `no-floating-promises|no-misused-promises` over `ui` (excluding `node_modules`). FOUND: nothing. HOLDS.
+- (A1) CLAIM: no other test of the pipelined path fails a TTS answer or refuses `play()`. RUN: Grep `failTts|playMode = 'blocked'|ok: false` over `ui/src/audio/__tests__` and `ProfileChatTab.bf918.test.tsx`. FOUND: `voice.prefetch.bf918` :447 (P11, single call), :507 (P13, single call), :696 (P19), :838 (V6); `voice.pipelining`:192 (honest-degrade); `ProfileChatTab.bf918`:310 (a thread fetch, not TTS). HOLDS.
 - CLAIM: pipelined UI tests exist only in two files. RUN: Grep `sentence_pipelining_enabled: true|pipelining: true|_makeFetch\(true` over `ui/src` (count); Grep `sentence_pipelining_enabled` over the three other files that mention it. FOUND: `voice.prefetch.bf918` 12, `voice.pipelining` 4; `CrewVRM.mouthClock.bf931`:92 and `ProfileChatTab.bf918`:176 answer `false`; `voice.balancedEnd`:110 and `ProfileChatTab.bf918`:544 pass a variable whose multi-sentence uses are pipelining-off (`voice.balancedEnd`:284) or two-sentence replies (`ProfileChatTab.bf918`:536). HOLDS.
 - CLAIM: no test reads the lookahead constant or scans `voice.ts`/`voiceChunking.ts` as text. RUN: Grep `(voice|voiceChunking)(\.ts)?\?raw|TTS_PREFETCH_LOOKAHEAD|TTS_START_BUFFER` over `ui`. FOUND: `voice.ts`:261, :593 only. HOLDS.
 - CLAIM: every UI TTS answer of a pipelined test has `duration_ms` 0 or none. RUN: Grep `duration_ms` over `ui/src/**/__tests__/**`. FOUND: 0 in the pipelined files; `voice.serverTts`:190 (1000) and :222 (100) are on the single-call path (no `sentence_pipelining_enabled` in that file). HOLDS.
@@ -1469,8 +1021,9 @@ The change claims that a spoken reply's later sentences are synthesized up to th
 - The backend gate (`voice.ts`:555, :567) and `voice_name` resolution (AD-738g's).
 - Dreams started outside the idle monitor: the Counselor's forced dream (`counselor.py`:2738), `/dream now` (`commands_memory.py`:93), the surgeon agent (`surgeon.py`:82), the dreaming organ, shutdown consolidation. A dream already running when an interview starts runs to its end.
 - What a typed DM conversation does to the idle clock (it still does not reset it; considered, deferred).
-- Dream step 7g's pairwise Jaccard (`dreaming.py`:1079-1088): a suspect only; the probe's stacks decide.
+- Dream step 7g's pairwise Jaccard (`dreaming.py`:1079-1088): BF-932's to change; its sampler's stacks decide.
 - Any config field or default; `config/system.yaml`.
+- (A1) `__main__._serve` and any loop monitor (BF-932's). The single-call path's code (`_synthesizeAndPlay`) and the `speakResponse` fallback calls. The arbiter, `SPEECH_JOIN_TIMEOUT_MS` and `runPrefetchQueue`.
 
 ## 12. Issue text (#1668, on merge) and the Captain's live check
 
@@ -1478,10 +1031,10 @@ Wave comment:
 
 ```text
 BF-930 shipped in PR #<PR> (contract prompts/bf-930-spoken-reply-pause-fix.md). Refs #1668; the issue stays open for the live re-measurement.
-- Client buffer: the sentence queue synthesizes up to three sentences ahead (was one) and holds a first sentence shorter than 3 s of audio until the next is ready, so one stalled sentence is covered by the audio already held. Unknown durations and failed syntheses start as before.
-- Dream guard: each TTS request counts as activity for the idle full dream, so a dream does not start during a spoken conversation; one stretch of speech holds it off for at most 2 h. The idle dream now logs "BF-930: idle full dream starting/finished".
-- Loop-lag probe: the vessel logs "BF-930: event loop blocked lag_ms=... stack=..." when the loop does not answer within 1 s (at most once per 30 s, code locations only).
-- Not built: write-behind of spoken audio. The 2026-10-30 stalls silenced every logger (a blocked loop). It is drafted only if a live window shows a store stall with behind>0 or lock_wait_ms>=500 and no loop-block line within 5 s.
+- Client buffer: the sentence queue synthesizes up to three sentences ahead (was one) and holds a first sentence that plays for less than 3 s (counted at the voice's rate) until the next is ready. A stall of one sentence no longer than the audio held (about 10-14 s) is not heard; a longer one, like the 17.8 s of 2026-10-30, still pauses, for less time. Unknown durations and failed syntheses start as before. A sentence the browser speaks in place of a failed one now ends before the next starts (at most 20 s wait if the browser never reports its end).
+- Dream guard: each TTS request counts as activity for the idle full dream, so while replies come less than idle_threshold_seconds apart an idle dream does not start; one stretch of speech holds it off for at most 2 h, after which the dream starts once the monitor's idle and interval conditions hold. The idle dream now logs "BF-930: idle full dream starting/finished".
+- Loop blocks: the loop-lag probe was dropped from this change; BF-932's loop-stall sampler (#1670) logs "BF-932: event loop blocked ... loop thread at: ..." instead.
+- Not built: write-behind of spoken audio. The 2026-10-30 stalls silenced every logger (a blocked loop). It is drafted only if, on a vessel running BF-932's sampler, a live window shows a store stall with behind>0 or lock_wait_ms>=500 and no "BF-932: event loop blocked" line within 5 s.
 - Corrected premise: the attachments index is about 1.2-1.4 K entries (217 KB), not 12 K; no boot-time reaper hazard.
 ```
 
@@ -1490,13 +1043,13 @@ The Captain's actions after the merge: update `D:\ProbOS` to main; `cd ui; npm r
 Live check (PowerShell; `$L = "$env:LOCALAPPDATA\ProbOS\data\logs\probos.log"`):
 1. `Select-String $L -Pattern 'BF-930: idle full dream (starting|finished)' | Select -Last 4` -- the last line should be `finished` (or none) before you start; `starting` with no `finished` after it means a dream is running: wait for `finished`.
 2. `Select-String $L -Pattern 'BF-918: tts route' | Select -Last 30` -- `total_ms` per sentence.
-3. `Select-String $L -Pattern 'BF-930: event loop blocked' | Select -Last 10` -- each line names the code that blocked the loop; paste them to #1668.
+3. `Select-String $L -Pattern 'BF-932: event loop (blocked|resumed)' | Select -Last 20` -- BF-932's sampler. The frames after `loop thread at:` name the blocker, innermost first; a first frame in `selectors.py` or `windows_events.py` means the process was paused, not blocked by code. The WARNING's ms is the stall's age when it was detected; the `resumed` line carries the whole gap. A stall the sampler suppressed writes no line: check the `suppressed=N` on the next WARNING. Paste them to #1668. If BF-930 reaches the Captain before BF-932 is merged, this line prints nothing; that is not a failure.
 4. `Select-String $L -Pattern 'BF-930: (piper request slow|attachment write slow)' | Select -Last 10` -- where a slow sentence's time went (`resume_lag_ms`, `behind=`, `index_entries=`).
 5. In the HXI devtools console: `performance.getEntriesByName('bf918:sentence-gap').map(m=>Math.round(m.duration))`.
 
-**Pass:** over at least 20 spoken sentences with the camera on, no pause is heard in the middle of a reply, every sentence gap is under about 300 ms, and no `idle full dream starting` line falls between the interview's first and last route lines. Loop-block lines are evidence for the next slice, not a failure. **Operator note:** S2 covers only the idle dream; a dream already running, or one the Counselor forces, is not held off. For more margin the Captain may raise `dreaming.idle_threshold_seconds` in his own `config/system.yaml` (today 300.0) to, say, 1800.0 for the session; it is his file and no build step touches it.
+**Pass:** over at least 20 spoken sentences with the camera on, no pause is heard in the middle of a reply where no route line in that reply has `total_ms` above about 10 s, every such sentence gap is under about 300 ms, and no `idle full dream starting` line falls between the interview's first and last route lines. A pause behind a route line with `total_ms` above the audio held is the stated limit, not a failure; post it with its loop-block lines. Loop-block lines are evidence for the next slice, not a failure. **Operator note:** S2 covers only the idle dream; a dream already running, or one the Counselor forces, is not held off. For more margin the Captain may raise `dreaming.idle_threshold_seconds` in his own `config/system.yaml` (today 300.0) to, say, 1800.0 for the session; it is his file and no build step touches it.
 
-PR title: `Spoken replies hold three sentences ahead, hold off the idle dream, and the vessel logs what blocks its loop`.
+PR title: `Spoken replies hold three sentences ahead and hold off the idle dream`.
 
 ## 13. Prior art and blind spots
 
@@ -1506,18 +1059,514 @@ PR title: `Spoken replies hold three sentences ahead, hold off the idle dream, a
   - [pyleak](https://tessl.io/registry/tessl/pypi-pyleak/files/docs/blocking-detection.md), [aiodebug](https://pypi.python.org/project/aiodebug/), [LoopSentry](https://github.com/amzker/loopsentry), [blocksnoop](https://pypi.org/project/blocksnoop/0.1.0/): rejected as dependencies for about 100 lines of stdlib code; blocksnoop's eBPF does not run on the Captain's Windows host.
   - `faulthandler.dump_traceback_later`: rejected; it dumps every thread to a stream with no rate limit or lag value.
   - The client buffer is a playout (jitter) buffer of whole sentences; no search needed.
+  - (A1) The loop-probe references above informed S3, which A1 dropped; they now bear on BF-932's sampler, not on this change.
+  - (A1, one search, 2026-11-27) Chromium cuts off an utterance at about 15 s and fires neither `end` nor `error` ([PhET utterance-queue #60](https://github.com/phetsims/utterance-queue/issues/60), [Stack Overflow 21947730](https://kiwix.lema.org/stackoverflow.com_en_all_2023-11/questions/21947730/chrome-speech-synthesis-with-longer-texts)); the common advice is sentence-sized utterances plus a timeout fallback. Adopted: D8's 20 s bound sits past that cut-off. The pause/resume keep-alive: rejected (it reportedly breaks on Android Chrome, same PhET thread).
 - Blind spots:
-  - One stack sample per block is racy: it can catch a frame just after the culprit returned. Rate-limited samples across many blocks give the distribution; multi-sample comparison is considered, deferred.
-  - A block inside C code that holds the GIL delays the watchdog itself; the report then comes late but the lag is still measured from the heartbeat, and the stack shows the Python frame that called into C.
-  - The probe starts after boot, so boot-time blocks are not reported.
-  - Barge-in now discards up to three syntheses instead of one (CPU only; Kokoro costs more per sentence).
+  - Barge-in now discards up to three syntheses instead of one, with their stored WAVs and any viseme requests they started (Kokoro costs more per sentence).
   - The orchestrator's "boot dream" was not located in `src`; if one exists it is a dream outside the idle monitor and is not held off (section 11).
+  - (A1) A browser-spoken sentence longer than 20 s (a very long sentence, or a rate well below 0.95) is overlapped by the next server sentence after the bound, with one warning: the base's behaviour, now bounded and visible.
+  - (A1) A `SpeechSynthesisUtterance` that is garbage-collected before it ends can lose its `onend` (reported for Chrome); the 20 s bound covers it. Holding a module reference to the speaking utterance: considered, deferred.
+  - (A1) The buffer uses the profile's rate; emotional modulation at play time (with an `agent_id`) can change it (D9). The buffer can then be off by the modulation factor; the first sentence still starts within `lookahead` preparations.
 
 ## 14. Acceptance criteria
 
-1. The A/B of 8.1 holds; U1-U7, D1-D5 and L1-L8 are killed as 8.3 says.
-2. The focused checks of 8.2 pass, the `rg` list and the vitest and build lines included; the pre-existing tests in those files pass unchanged apart from the five changed in place.
+1. The A/B of 8.1 holds, the A1 A/B included; U1-U7, D1-D5, R1-R2 and B1-B5 are killed as 8.3 says (U4-U6 and the R and B rows rerun on the A1 head).
+2. The focused checks of 8.2 pass, the `rg` list and the vitest and build lines included; the pre-existing tests in those files pass unchanged apart from the six changed in place.
 3. `git diff --check` is clean, the new text is ASCII, and no file outside the scope line changes; no BF-932 file and no `config/system.yaml` change.
 4. The Diff Reviewer approves against section 9.
 5. One receipted broad gate on the committed head is green.
 6. Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.
+
+## 16. Amendment A1 (2026-11-27, after review round 1 and the BF-932 overlap decision)
+
+### 16.1 What changes, why, and what it replaces
+
+| # | What | Why | Replaces |
+|---|---|---|---|
+| A1-a | S3 (loop-lag probe) dropped; 6.9-6.11, M3, D5, D6, L1-L8, properties 6-7 (old) removed | BF-932's D2 sampler covers it (overlap consult, session `ad6d6107`); the M3 review findings are moot | sections 2, 3 (D1, D5, D6), 4, 6.9-6.11, 8.3, 9 |
+| A1-b | Live check line 3 and the S4 trigger read BF-932's lines; the trigger counts only on a vessel running the sampler | without the sampler "no loop-block line within 5 s" holds for free | D1, section 12 |
+| A1-c | Repair 1: the play half awaits a browser fallback (D8, bound 20 s) | review P2: Three started at 1207 ms before browser Two ended at 1409 ms (`voice.ts`:756-760 resolved at once) | 6.2 behaviour of `_playPreparedSpeech`; P19's "Three plays meanwhile" |
+| A1-d | Repair 2: the start buffer counts playing time (D9) | review P2: a 4 s WAV at rate 2 ended in 2.3 s while the raw 4000 ms cleared the 3000 ms gate | P3 (`_startBufferFilled`), P5, P6 |
+| A1-e | Claims: "(CPU only)" removed; coverage bounded by the audio held; the dream text names both monitor conditions; the route comment bounded | review P3 x2 and property 10 | P3's comment, the 6.6 docstring, the avatars comment, 6.12, 6.13, section 12 |
+| A1-f | Trackers: PROGRESS and DECISIONS rewritten for the shipped scope, with a DECISIONS clause for the S3 drop | they still describe the probe | 6.12, 6.13 |
+
+### 16.2 The pairs (against `08a88fd0`; CRLF working copies, LF blocks; each SEARCH occurs once at its turn)
+
+#### `ui/src/audio/voice.ts`
+
+**A1.1.** SEARCH:
+```ts
+ *  pipelining. BF-930 (#1668): three (was one), so a sentence whose synthesis or
+ *  storage stalls is covered by up to three sentences of audio already held; a
+ *  stopped reply can have spent up to three syntheses (CPU only). */
+const TTS_PREFETCH_LOOKAHEAD = 3;
+```
+REPLACE:
+```ts
+ *  pipelining. BF-930 (#1668): three (was one), so a stall of one sentence's synthesis
+ *  or storage no longer than the audio already held (up to three sentences, about
+ *  10-14 s) is not heard; a longer stall still pauses. A stopped reply can have spent
+ *  up to three syntheses, their stored WAVs and any viseme requests they started. */
+const TTS_PREFETCH_LOOKAHEAD = 3;
+```
+
+**A1.2.** SEARCH:
+```ts
+/** BF-930: `startWhen` of the AD-1071 queue. A sentence of unknown duration (0 or
+ *  missing) or one whose preparation failed (`null`) counts as a full buffer, so it
+ *  starts exactly as before. */
+function _startBufferFilled(ready: Array<PreparedSpeech | null>): boolean {
+  let held = 0;
+  for (const prepared of ready) {
+    held += prepared !== null && prepared.durationMs > 0 ? prepared.durationMs : TTS_START_BUFFER_MS;
+  }
+  return held >= TTS_START_BUFFER_MS;
+}
+```
+REPLACE:
+```ts
+/** BF-930: `startWhen` of the AD-1071 queue. It counts how long each ready sentence
+ *  plays (`playMs`, at the profile's rate). A sentence of unknown duration (0 or
+ *  missing) or one whose preparation failed (`null`) counts as a full buffer, so it
+ *  starts exactly as before. */
+function _startBufferFilled(ready: Array<PreparedSpeech | null>): boolean {
+  let held = 0;
+  for (const prepared of ready) {
+    held += prepared !== null && prepared.playMs > 0 ? prepared.playMs : TTS_START_BUFFER_MS;
+  }
+  return held >= TTS_START_BUFFER_MS;
+}
+
+/** BF-930 A1: the <audio> playbackRate for a profile rate: 0.95 when unset, clamped to
+ *  [0.25, 4.0]. The play half sets it; the start buffer divides durations by it. */
+function _playbackRate(rate: number | undefined): number {
+  return Math.max(0.25, Math.min(4.0, rate ?? 0.95));
+}
+
+/** BF-930 A1: the longest the play half waits for a sentence the browser speaks in place
+ *  of a server one. Chromium cuts an utterance off at about 15 s with no end or error
+ *  event, and onend can be lost in a backgrounded tab; 20 s is past that cut-off and
+ *  past about 45 words at the default rate, and inside SPEECH_JOIN_TIMEOUT_MS (45 s). */
+export const BROWSER_SENTENCE_MAX_WAIT_MS = 20000;
+
+/** BF-930 A1: resolve when `spoken` does (the utterance's onend or onerror) or after
+ *  BROWSER_SENTENCE_MAX_WAIT_MS with one warning, whichever is first. Never rejects. */
+function _awaitBrowserSentence(spoken: Promise<void>): Promise<void> {
+  return new Promise<void>((resolve) => {
+    const bound = setTimeout(() => {
+      console.warn(`[voice] BF-930: browser speech gave no end or error within ${BROWSER_SENTENCE_MAX_WAIT_MS} ms; the reply goes on`);
+      resolve();
+    }, BROWSER_SENTENCE_MAX_WAIT_MS);
+    void spoken.then(() => { clearTimeout(bound); resolve(); });
+  });
+}
+```
+
+**A1.3.** SEARCH:
+```ts
+  /** BF-930: the server's `duration_ms`; 0 when absent or not a positive number. */
+  durationMs: number;
+}
+```
+REPLACE:
+```ts
+  /** BF-930 A1: how long it plays: the server's `duration_ms` divided by the profile's
+   *  playback rate (`_playbackRate`); 0 when the duration is absent or not a positive
+   *  number. Emotional modulation at play time can change the rate (a stated limit). */
+  playMs: number;
+}
+```
+
+**A1.4.** SEARCH:
+```ts
+      durationMs: typeof data.duration_ms === 'number' && Number.isFinite(data.duration_ms) && data.duration_ms > 0
+        ? data.duration_ms
+        : 0,
+```
+REPLACE:
+```ts
+      playMs: typeof data.duration_ms === 'number' && Number.isFinite(data.duration_ms) && data.duration_ms > 0
+        ? data.duration_ms / _playbackRate(profile?.rate)
+        : 0,
+```
+
+**A1.5.** SEARCH:
+```ts
+  if (prepared === null) {
+    _sentenceEndedAt = null; // a browser-spoken sentence is not a gap between two server ones
+    _speakBrowserFallback(text, profile, agent_id, utterance_id, last);
+    return;
+  }
+  const { audio, visemes, deferredVisemes } = prepared;
+  try {
+```
+REPLACE:
+```ts
+  if (prepared === null) {
+    _sentenceEndedAt = null; // a browser-spoken sentence is not a gap between two server ones
+    // BF-930 A1 (#1668): resolve once the browser has spoken it (bounded), so the AD-1071
+    // queue does not start the next sentence over it.
+    await _awaitBrowserSentence(_speakBrowserFallback(text, profile, agent_id, utterance_id, last));
+    return;
+  }
+  const { audio, visemes, deferredVisemes } = prepared;
+  // BF-930 A1: a browser fallback started below (play() refused, or a throw) is awaited
+  // once the server half has settled, as the null path's is.
+  let browserDone = null as Promise<void> | null;
+  try {
+```
+
+**A1.6.** SEARCH:
+```ts
+    audio.playbackRate = Math.max(0.25, Math.min(4.0, effective.rate ?? 0.95));
+```
+REPLACE:
+```ts
+    audio.playbackRate = _playbackRate(effective.rate);
+```
+
+**A1.7.** SEARCH:
+```ts
+        if (_activeAudio === audio) _activeAudio = null;
+        _speakBrowserFallback(text, profile, agent_id, utterance_id, last);
+        _finish(false);
+```
+REPLACE:
+```ts
+        if (_activeAudio === audio) _activeAudio = null;
+        browserDone = _speakBrowserFallback(text, profile, agent_id, utterance_id, last);
+        _finish(false);
+```
+
+**A1.8.** SEARCH:
+```ts
+  } catch {
+    _invalidateTtsStatus();
+    _speakBrowserFallback(text, profile, agent_id, utterance_id, last);
+  }
+}
+```
+REPLACE:
+```ts
+  } catch {
+    _invalidateTtsStatus();
+    browserDone = _speakBrowserFallback(text, profile, agent_id, utterance_id, last);
+  }
+  if (browserDone !== null) await _awaitBrowserSentence(browserDone);
+}
+```
+
+**A1.9.** SEARCH:
+```ts
+  utterance_id?: number,
+  last?: boolean,
+): void {
+  if (!('speechSynthesis' in window)) {
+```
+REPLACE:
+```ts
+  utterance_id?: number,
+  last?: boolean,
+): Promise<void> {
+  // BF-930 A1 (#1668): resolves once this utterance's terminal 'end' has fired (onend or
+  // onerror; at once when there is no engine). Callers that do not wait ignore it.
+  if (!('speechSynthesis' in window)) {
+```
+
+**A1.10.** SEARCH:
+```ts
+      ..._finalField(last, utterance_id),
+    });
+    return;
+  }
+  const utterance = new SpeechSynthesisUtterance(text);
+```
+REPLACE:
+```ts
+      ..._finalField(last, utterance_id),
+    });
+    return Promise.resolve();
+  }
+  const utterance = new SpeechSynthesisUtterance(text);
+```
+
+**A1.11.** SEARCH:
+```ts
+  let _ended = false;
+  const _fireBrowserEnd = () => {
+    if (_ended) return;
+    _ended = true;
+    _fire({ type: 'end', agent_id, utterance, source: 'browser', utterance_id, ..._finalField(last, utterance_id) });
+  };
+  utterance.onend = _fireBrowserEnd;
+  utterance.onerror = _fireBrowserEnd;
+  // 'boundary' reserved for AD-721b phoneme work; not wired in v1.
+  speechSynthesis.speak(utterance);
+}
+```
+REPLACE:
+```ts
+  let _ended = false;
+  let _resolveSpoken: () => void = () => {};
+  const spoken = new Promise<void>((resolve) => { _resolveSpoken = () => resolve(); });
+  const _fireBrowserEnd = () => {
+    if (_ended) return;
+    _ended = true;
+    _fire({ type: 'end', agent_id, utterance, source: 'browser', utterance_id, ..._finalField(last, utterance_id) });
+    _resolveSpoken();
+  };
+  utterance.onend = _fireBrowserEnd;
+  utterance.onerror = _fireBrowserEnd;
+  // 'boundary' reserved for AD-721b phoneme work; not wired in v1.
+  speechSynthesis.speak(utterance);
+  return spoken;
+}
+```
+
+The single-call path needs no change: `_synthesizeAndPlay` (`voice.ts`:652-663) now resolves after the browser's end instead of at once, and only its own IIFE awaits it (:625). `_fire` catches each listener's error (:100), so `_resolveSpoken()` is reached.
+
+#### `ui/src/audio/__tests__/voice.prefetch.bf918.test.tsx`
+
+**A1.12** (P19, changed in place). SEARCH:
+```ts
+      // Two failed: the browser speaks it, and Three plays meanwhile (R3, unchanged).
+      expect(spoken()).toEqual(['Two.']);
+      expect(createdAudios[1].played).toBe(true);
+      (speakCalls[0] as FakeUtterance).onend?.();
+      await _flush();
+      expect(f.posted).not.toContain('Next.');
+```
+REPLACE:
+```ts
+      // Two failed: the browser speaks it. BF-930 A1 (#1668, review round 1): Three now
+      // waits for the browser's end; it used to play meanwhile (R3), which with lookahead 3
+      // overlapped Two. The played-true assertion moves after Two's end.
+      expect(spoken()).toEqual(['Two.']);
+      expect(createdAudios[1].played).toBe(false);
+      (speakCalls[0] as FakeUtterance).onend?.();
+      await _flush();
+      expect(createdAudios[1].played).toBe(true);
+      expect(f.posted).not.toContain('Next.');
+```
+
+**A1.13** (V7-V12, new). SEARCH:
+```ts
+    const f = _makeFetch({ pipelining: true, failTts: [1], durations: [1500, 1500], holdTts: [2] });
+    (globalThis as any).fetch = f.fetchMock;
+    const voiceMod = await _voice();
+    voiceMod.speakResponse('One. Two.');
+    await _flush();
+    expect(spoken()).toEqual(['One.']);
+  });
+});
+```
+REPLACE:
+```ts
+    const f = _makeFetch({ pipelining: true, failTts: [1], durations: [1500, 1500], holdTts: [2] });
+    (globalThis as any).fetch = f.fetchMock;
+    const voiceMod = await _voice();
+    voiceMod.speakResponse('One. Two.');
+    await _flush();
+    expect(spoken()).toEqual(['One.']);
+  });
+
+  it('V7 A1: the start buffer counts playing time; at rate 2 a 4 s sentence holds 2 s and waits', async () => {
+    const f = _makeFetch({ pipelining: true, durations: [4000, 4000, 4000], holdTts: [2] });
+    (globalThis as any).fetch = f.fetchMock;
+    const voiceMod = await _voice();
+    voiceMod.speakResponse('One. Two. Three.', { rate: 2 });
+    await _flush();
+    expect(createdAudios.length).toBe(1);
+    expect(createdAudios[0].played).toBe(false); // 4000 ms / 2 = 2000 ms, under the 3 s start buffer
+    f.release();
+    await _flush();
+    expect(createdAudios[0].played).toBe(true);
+    expect(createdAudios[0].playbackRate).toBe(2);
+  });
+
+  it('V8 A1: at rate 0.5 a 2 s sentence plays for 4 s and starts at once', async () => {
+    const f = _makeFetch({ pipelining: true, durations: [2000, 2000], holdTts: [2] });
+    (globalThis as any).fetch = f.fetchMock;
+    const voiceMod = await _voice();
+    voiceMod.speakResponse('One. Two.', { rate: 0.5 });
+    await _flush();
+    expect(createdAudios[0].played).toBe(true);
+    expect(createdAudios[0].playbackRate).toBe(0.5);
+  });
+
+  it('V9 A1: the rate is clamped to 4 as at play time, so 13 s at rate 10 holds 3.25 s and starts at once', async () => {
+    const f = _makeFetch({ pipelining: true, durations: [13000, 4000], holdTts: [2] });
+    (globalThis as any).fetch = f.fetchMock;
+    const voiceMod = await _voice();
+    voiceMod.speakResponse('One. Two.', { rate: 10 });
+    await _flush();
+    expect(createdAudios[0].played).toBe(true);
+    expect(createdAudios[0].playbackRate).toBe(4);
+  });
+
+  it('V10 A1: a sentence whose play() is refused is spoken by the browser, and the next waits for its end', async () => {
+    playMode = 'blocked';
+    const f = _makeFetch({ pipelining: true, durations: [4000, 4000] });
+    (globalThis as any).fetch = f.fetchMock;
+    const voiceMod = await _voice();
+    voiceMod.speakResponse('One. Two.');
+    await _flush();
+    expect(spoken()).toEqual(['One.']); // its play() was refused: the browser speaks it
+    playMode = 'resolve';
+    expect(createdAudios[1].played).toBe(false);
+    (speakCalls[0] as FakeUtterance).onend?.();
+    await _flush();
+    expect(createdAudios[1].played).toBe(true);
+  });
+
+  it('V11 A1: a stop while the browser speaks a failed sentence ends the wait, and nothing after it plays', async () => {
+    const f = _makeFetch({ pipelining: true, failTts: [2], durations: [4000, 4000, 4000] });
+    (globalThis as any).fetch = f.fetchMock;
+    const voiceMod = await _voice();
+    const r = await _recordAll();
+    try {
+      voiceMod.speakResponse('One. Two. Three.');
+      await _flush();
+      createdAudios[0].end();
+      await _flush();
+      expect(spoken()).toEqual(['Two.']);
+      expect(createdAudios[1].played).toBe(false); // Three waits for Two
+      const cancel = (globalThis as any).speechSynthesis.cancel;
+      const cancels = cancel.mock.calls.length;
+      voiceMod.stopSpeaking();
+      expect(cancel.mock.calls.length).toBeGreaterThan(cancels);
+      (speakCalls[0] as FakeUtterance).onerror?.(); // what cancel() makes a real engine fire
+      await _flush();
+      expect(createdAudios[1].played).toBe(false);
+      expect(createdAudios[1].discarded).toBe(true);
+      expect(r.events.filter((e) => e.startsWith('start'))).toEqual(['start:One.']);
+    } finally {
+      r.off();
+    }
+  });
+
+  it('V12 A1: a browser sentence that never reports its end holds the next for at most BROWSER_SENTENCE_MAX_WAIT_MS, with one warning', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const f = _makeFetch({ pipelining: true, failTts: [2], durations: [4000, 4000, 4000] });
+      (globalThis as any).fetch = f.fetchMock;
+      const voiceMod = await _voice();
+      voiceMod.speakResponse('One. Two. Three.');
+      await _flush();
+      createdAudios[0].end();
+      await _flush();
+      expect(spoken()).toEqual(['Two.']); // its onend and onerror never fire
+      vi.advanceTimersByTime(voiceMod.BROWSER_SENTENCE_MAX_WAIT_MS - 1);
+      await _flush();
+      expect(createdAudios[1].played).toBe(false);
+      vi.advanceTimersByTime(1);
+      await _flush();
+      expect(createdAudios[1].played).toBe(true);
+      expect(warn.mock.calls.filter((c) => String(c[0]).includes('BF-930')).length).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+```
+
+#### `ui/src/audio/__tests__/voice.pipelining.test.tsx`
+
+**A1.14** (honest-degrade, changed in place). SEARCH:
+```ts
+    // Sentence[1] fell back to the browser in its turn and resolved at once,
+    // so the queue already moved on to sentence[2] without a new 'ended'.
+    expect(speakCalls.length).toBe(1);
+    expect(posted).toEqual(['Alpha.', 'Bravo.', 'Charlie.']);
+  });
+```
+REPLACE:
+```ts
+    // Sentence[1] fell back to the browser in its turn. BF-930 A1 (#1668): the queue now
+    // waits for that utterance's end before sentence[2] plays; it used to resolve at once
+    // and play sentence[2] over it.
+    expect(speakCalls.length).toBe(1);
+    expect(posted).toEqual(['Alpha.', 'Bravo.', 'Charlie.']);
+    expect(createdAudios[1].played).toBe(false);
+    (speakCalls[0] as { onend: (() => void) | null }).onend?.();
+    await _flush();
+    expect(createdAudios[1].played).toBe(true);
+  });
+```
+
+#### `src/probos/cognitive/dreaming.py`
+
+**A1.15.** SEARCH:
+```python
+        and this returns True. Past that age it returns False and leaves the timer alone,
+        so the idle full dream starts ``idle_threshold_seconds`` later at the latest; the
+        first reply after that dream begins a new stretch. ``now`` is a ``time.monotonic()``
+        value (default: now).
+```
+REPLACE:
+```python
+        and this returns True. Past that age it returns False and leaves the timer alone,
+        so speech no longer keeps the monitor's idle condition false; the full dream starts
+        when all of the monitor's conditions hold (``idle_threshold_seconds`` since the last
+        activity of any source, ``dream_interval_seconds`` since the last dream). The first
+        reply after that dream begins a new stretch. ``now`` is a ``time.monotonic()``
+        value (default: now).
+```
+
+#### `src/probos/routers/avatars.py`
+
+**A1.16.** SEARCH:
+```python
+    # BF-930 (#1668): a spoken reply is activity for the idle full dream, so a dream does
+    # not start in the middle of a spoken conversation. The scheduler bounds it
+    # (SPEECH_DREAM_DEFER_CAP_SECONDS). A runtime without a scheduler skips it.
+```
+REPLACE:
+```python
+    # BF-930 (#1668): a spoken reply is activity for the idle full dream, so the idle dream
+    # does not start between replies that come less than idle_threshold_seconds apart. The
+    # scheduler bounds it (SPEECH_DREAM_DEFER_CAP_SECONDS). A runtime without a scheduler
+    # skips it.
+```
+
+#### `PROGRESS.md`
+
+**A1.17.** SEARCH (line 3, whole):
+```markdown
+**BF-930 (2026-11-27), #1668 -- a spoken reply no longer pauses mid-way when one sentence's synthesis or storage stalls.** The AD-1071 sentence queue now synthesizes up to three sentences ahead (was one) and holds a first sentence shorter than 3 s of audio until the next is ready (`ui/src/audio/voice.ts`, `voiceChunking.ts`: `runPrefetchQueue` gains `startWhen`), so a stalled sentence is covered by the audio already held; an unknown duration or a failed synthesis starts as before. The TTS route records each request on the dream scheduler (`DreamScheduler.record_speech_activity`), so an idle full dream does not start during a spoken conversation; one stretch of speech holds it off for at most `SPEECH_DREAM_DEFER_CAP_SECONDS` (2 h), and the idle full dream logs `BF-930: idle full dream starting/finished`. The vessel's `_serve` runs a log-only loop-lag probe (`probos.utils.loop_lag`): a loop that does not answer a heartbeat within 1 s is logged as `BF-930: event loop blocked` with the loop thread's stack (code locations only), at most once per 30 s. Write-behind of spoken audio is not built: the 2026-10-30 stalls silenced every logger (a blocked loop), and it waits for `behind=` evidence. #1668 stays open for the Captain's live re-measurement. New `tests/test_bf930_speech_defers_idle_dream.py`, `tests/test_bf930_loop_lag_probe.py`; UI V1-V6, Q7-Q8; P1, P2, P14 and two pipelining tests updated in place for lookahead 3. Contract `prompts/bf-930-spoken-reply-pause-fix.md`.
+```
+REPLACE:
+```markdown
+**BF-930 (2026-11-27), #1668 -- a spoken reply rides out a stall of one sentence's synthesis or storage, up to the audio already held.** The AD-1071 sentence queue now synthesizes up to three sentences ahead (was one) and holds a first sentence that plays for less than 3 s until the next is ready (`ui/src/audio/voice.ts`, `voiceChunking.ts`: `runPrefetchQueue` gains `startWhen`); the buffer counts each sentence's playing time at the profile's rate. A stall no longer than the audio held (about 10-14 s) is not heard; a longer one, like the 17.8 s of 2026-10-30, still pauses, for less time. An unknown duration or a failed synthesis starts as before. A sentence the browser speaks in place of a failed one now ends before the next sentence starts; a browser that never reports that end is waited on for at most 20 s (`BROWSER_SENTENCE_MAX_WAIT_MS`). The TTS route records each request on the dream scheduler (`DreamScheduler.record_speech_activity`), so while replies come less than `idle_threshold_seconds` apart an idle full dream does not start; one stretch of speech holds it off for at most `SPEECH_DREAM_DEFER_CAP_SECONDS` (2 h), after which the dream starts once the monitor's idle and interval conditions hold. The idle full dream logs `BF-930: idle full dream starting/finished`. The contract's loop-lag probe was dropped: BF-932's loop-stall sampler (#1670) logs loop blocks. Write-behind of spoken audio is not built: the 2026-10-30 stalls silenced every logger (a blocked loop), and it waits for `behind=` evidence. #1668 stays open for the Captain's live re-measurement. New `tests/test_bf930_speech_defers_idle_dream.py` (8 tests); UI V1-V12, Q7-Q8; P1, P2, P14, P19 and two pipelining tests updated in place. Contract `prompts/bf-930-spoken-reply-pause-fix.md`.
+```
+
+#### `DECISIONS.md`
+
+**A1.18.** SEARCH:
+```markdown
+### BF-930 -- A spoken reply buffers three sentences, holds off the idle full dream, and a probe names what blocks the loop (2026-11-27, #1668)
+
+- *Scope.* `ui/src/audio/voice.ts`, `ui/src/audio/voiceChunking.ts`, `cognitive/dreaming.py` (`record_speech_activity`, `SPEECH_DREAM_DEFER_CAP_SECONDS`, idle-dream start/finish lines), `routers/avatars.py`, `utils/loop_lag.py` (new), `__main__._serve`. Contract `prompts/bf-930-spoken-reply-pause-fix.md`.
+- *D1.* Client buffer: lookahead 3 and a 3000 ms start buffer, module constants (a config field would cross the wire into the browser with no measured need). Unknown duration and a failed synthesis count as a full buffer.
+- *D2.* Speech is activity for the idle full dream, bounded: a stretch begins at the first spoken reply after the last full dream, and past 2 h speech stops resetting the idle clock, so the dream starts `idle_threshold_seconds` later at the latest. Not `record_activity()` from the route: machine-driven speech could starve dreaming for ever.
+- *D3.* The loop-lag probe is log-only, started only by the vessel's `_serve`, and its `stop()` never joins (it runs on the loop thread).
+- *D4.* Write-behind of spoken audio is deferred until a live window shows a store stall with `behind=` > 0 or `lock_wait_ms` >= 500 and no loop-block report within 5 s.
+```
+REPLACE:
+```markdown
+### BF-930 -- A spoken reply buffers three sentences and holds off the idle full dream (2026-11-27, #1668)
+
+- *Scope.* `ui/src/audio/voice.ts`, `ui/src/audio/voiceChunking.ts`, `cognitive/dreaming.py` (`record_speech_activity`, `SPEECH_DREAM_DEFER_CAP_SECONDS`, idle-dream start/finish lines), `routers/avatars.py`. Contract `prompts/bf-930-spoken-reply-pause-fix.md`.
+- *D1.* Client buffer: lookahead 3 and a 3000 ms start buffer, module constants (a config field would cross the wire into the browser with no measured need). The buffer counts the time each sentence plays (server duration divided by the clamped profile rate). Unknown duration and a failed synthesis count as a full buffer. It covers a stall up to the audio held (about 10-14 s); a longer one still pauses.
+- *D2.* Speech is activity for the idle full dream, bounded: a stretch begins at the first spoken reply after the last full dream, and past 2 h speech stops resetting the idle clock; the dream then starts when the monitor's conditions hold (`idle_threshold_seconds` since the last activity of any source, `dream_interval_seconds` since the last dream). Not `record_activity()` from the route: machine-driven speech could starve dreaming for ever.
+- *D3.* The contract's loop-lag probe (S3) was dropped before merge: BF-932's loop-stall sampler (#1670) logs the same evidence, and one sampler is kept, not two.
+- *D4.* Write-behind of spoken audio is deferred until a live window on a vessel running BF-932's sampler shows a store stall with `behind=` > 0 or `lock_wait_ms` >= 500 and no `BF-932: event loop blocked` line within 5 s.
+- *D5.* A sentence the browser speaks in place of a server one is awaited before the next sentence plays, for at most 20 s (`BROWSER_SENTENCE_MAX_WAIT_MS`, past Chromium's ~15 s utterance cut-off, which fires no end event); at the bound the reply goes on and the console logs one warning.
+```
+
+### 16.3 After the pairs
+
+1. `d:/ProbOS/.venv/Scripts/python.exe -P scripts/gen_ad_ledger.py` (no `--online`); stage `docs/development/ad-ledger-snapshot.json` and `docs/development/open-ads-report.md` if they change.
+2. `git diff --check`; `git diff --stat` shows only `voice.ts`, the two UI test files, `dreaming.py`, `avatars.py`, `PROGRESS.md`, `DECISIONS.md` and the ledger files.
+3. The orchestrator commits with the A1 subject of section 4 (no `AD-`/`BF-` token, none of close, fix, resolve), body ending `Refs #1668.`, then runs 8.1 (A1 A/B), 8.2, the 8.3 rows named there, and the gate (8.4).
