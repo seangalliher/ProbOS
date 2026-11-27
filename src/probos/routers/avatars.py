@@ -267,9 +267,10 @@ async def _synthesize_tts_impl(req: Request, runtime: Any) -> dict[str, Any]:
     # single round trip.
     defer_visemes = payload.get("defer_visemes") is True
 
-    # BF-930 (#1668): a spoken reply is activity for the idle full dream, so a dream does
-    # not start in the middle of a spoken conversation. The scheduler bounds it
-    # (SPEECH_DREAM_DEFER_CAP_SECONDS). A runtime without a scheduler skips it.
+    # BF-930 (#1668): a spoken reply is activity for the idle full dream, so the idle dream
+    # does not start between replies that come less than idle_threshold_seconds apart. The
+    # scheduler bounds it (SPEECH_DREAM_DEFER_CAP_SECONDS). A runtime without a scheduler
+    # skips it.
     dream_scheduler = getattr(runtime, "dream_scheduler", None)
     if dream_scheduler is not None:
         dream_scheduler.record_speech_activity()

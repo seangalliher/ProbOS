@@ -703,11 +703,14 @@ describe('BF-918 M5: the arbiter waits for a pipelined reply\'s last sentence (R
       await _flush();
       createdAudios[0].end();
       await _flush();
-      // Two failed: the browser speaks it, and Three plays meanwhile (R3, unchanged).
+      // Two failed: the browser speaks it. BF-930 A1 (#1668, review round 1): Three now
+      // waits for the browser's end; it used to play meanwhile (R3), which with lookahead 3
+      // overlapped Two. The played-true assertion moves after Two's end.
       expect(spoken()).toEqual(['Two.']);
-      expect(createdAudios[1].played).toBe(true);
+      expect(createdAudios[1].played).toBe(false);
       (speakCalls[0] as FakeUtterance).onend?.();
       await _flush();
+      expect(createdAudios[1].played).toBe(true);
       expect(f.posted).not.toContain('Next.');
       expect(createdAudios[1].pause).not.toHaveBeenCalled();
       createdAudios[1].end();
@@ -841,5 +844,104 @@ describe('BF-930 (#1668): a buffer of sentences, and a short first sentence wait
     voiceMod.speakResponse('One. Two.');
     await _flush();
     expect(spoken()).toEqual(['One.']);
+  });
+
+  it('V7 A1: the start buffer counts playing time; at rate 2 a 4 s sentence holds 2 s and waits', async () => {
+    const f = _makeFetch({ pipelining: true, durations: [4000, 4000, 4000], holdTts: [2] });
+    (globalThis as any).fetch = f.fetchMock;
+    const voiceMod = await _voice();
+    voiceMod.speakResponse('One. Two. Three.', { rate: 2 });
+    await _flush();
+    expect(createdAudios.length).toBe(1);
+    expect(createdAudios[0].played).toBe(false); // 4000 ms / 2 = 2000 ms, under the 3 s start buffer
+    f.release();
+    await _flush();
+    expect(createdAudios[0].played).toBe(true);
+    expect(createdAudios[0].playbackRate).toBe(2);
+  });
+
+  it('V8 A1: at rate 0.5 a 2 s sentence plays for 4 s and starts at once', async () => {
+    const f = _makeFetch({ pipelining: true, durations: [2000, 2000], holdTts: [2] });
+    (globalThis as any).fetch = f.fetchMock;
+    const voiceMod = await _voice();
+    voiceMod.speakResponse('One. Two.', { rate: 0.5 });
+    await _flush();
+    expect(createdAudios[0].played).toBe(true);
+    expect(createdAudios[0].playbackRate).toBe(0.5);
+  });
+
+  it('V9 A1: the rate is clamped to 4 as at play time, so 13 s at rate 10 holds 3.25 s and starts at once', async () => {
+    const f = _makeFetch({ pipelining: true, durations: [13000, 4000], holdTts: [2] });
+    (globalThis as any).fetch = f.fetchMock;
+    const voiceMod = await _voice();
+    voiceMod.speakResponse('One. Two.', { rate: 10 });
+    await _flush();
+    expect(createdAudios[0].played).toBe(true);
+    expect(createdAudios[0].playbackRate).toBe(4);
+  });
+
+  it('V10 A1: a sentence whose play() is refused is spoken by the browser, and the next waits for its end', async () => {
+    playMode = 'blocked';
+    const f = _makeFetch({ pipelining: true, durations: [4000, 4000] });
+    (globalThis as any).fetch = f.fetchMock;
+    const voiceMod = await _voice();
+    voiceMod.speakResponse('One. Two.');
+    await _flush();
+    expect(spoken()).toEqual(['One.']); // its play() was refused: the browser speaks it
+    playMode = 'resolve';
+    expect(createdAudios[1].played).toBe(false);
+    (speakCalls[0] as FakeUtterance).onend?.();
+    await _flush();
+    expect(createdAudios[1].played).toBe(true);
+  });
+
+  it('V11 A1: a stop while the browser speaks a failed sentence ends the wait, and nothing after it plays', async () => {
+    const f = _makeFetch({ pipelining: true, failTts: [2], durations: [4000, 4000, 4000] });
+    (globalThis as any).fetch = f.fetchMock;
+    const voiceMod = await _voice();
+    const r = await _recordAll();
+    try {
+      voiceMod.speakResponse('One. Two. Three.');
+      await _flush();
+      createdAudios[0].end();
+      await _flush();
+      expect(spoken()).toEqual(['Two.']);
+      expect(createdAudios[1].played).toBe(false); // Three waits for Two
+      const cancel = (globalThis as any).speechSynthesis.cancel;
+      const cancels = cancel.mock.calls.length;
+      voiceMod.stopSpeaking();
+      expect(cancel.mock.calls.length).toBeGreaterThan(cancels);
+      (speakCalls[0] as FakeUtterance).onerror?.(); // what cancel() makes a real engine fire
+      await _flush();
+      expect(createdAudios[1].played).toBe(false);
+      expect(createdAudios[1].discarded).toBe(true);
+      expect(r.events.filter((e) => e.startsWith('start'))).toEqual(['start:One.']);
+    } finally {
+      r.off();
+    }
+  });
+
+  it('V12 A1: a browser sentence that never reports its end holds the next for at most BROWSER_SENTENCE_MAX_WAIT_MS, with one warning', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const f = _makeFetch({ pipelining: true, failTts: [2], durations: [4000, 4000, 4000] });
+      (globalThis as any).fetch = f.fetchMock;
+      const voiceMod = await _voice();
+      voiceMod.speakResponse('One. Two. Three.');
+      await _flush();
+      createdAudios[0].end();
+      await _flush();
+      expect(spoken()).toEqual(['Two.']); // its onend and onerror never fire
+      vi.advanceTimersByTime(voiceMod.BROWSER_SENTENCE_MAX_WAIT_MS - 1);
+      await _flush();
+      expect(createdAudios[1].played).toBe(false);
+      vi.advanceTimersByTime(1);
+      await _flush();
+      expect(createdAudios[1].played).toBe(true);
+      expect(warn.mock.calls.filter((c) => String(c[0]).includes('BF-930')).length).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

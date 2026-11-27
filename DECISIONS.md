@@ -10,13 +10,14 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ## Era V — Civilization (Phases 31-36)
 
-### BF-930 -- A spoken reply buffers three sentences, holds off the idle full dream, and a probe names what blocks the loop (2026-11-27, #1668)
+### BF-930 -- A spoken reply buffers three sentences and holds off the idle full dream (2026-11-27, #1668)
 
-- *Scope.* `ui/src/audio/voice.ts`, `ui/src/audio/voiceChunking.ts`, `cognitive/dreaming.py` (`record_speech_activity`, `SPEECH_DREAM_DEFER_CAP_SECONDS`, idle-dream start/finish lines), `routers/avatars.py`, `utils/loop_lag.py` (new), `__main__._serve`. Contract `prompts/bf-930-spoken-reply-pause-fix.md`.
-- *D1.* Client buffer: lookahead 3 and a 3000 ms start buffer, module constants (a config field would cross the wire into the browser with no measured need). Unknown duration and a failed synthesis count as a full buffer.
-- *D2.* Speech is activity for the idle full dream, bounded: a stretch begins at the first spoken reply after the last full dream, and past 2 h speech stops resetting the idle clock, so the dream starts `idle_threshold_seconds` later at the latest. Not `record_activity()` from the route: machine-driven speech could starve dreaming for ever.
-- *D3.* The loop-lag probe is log-only, started only by the vessel's `_serve`, and its `stop()` never joins (it runs on the loop thread).
-- *D4.* Write-behind of spoken audio is deferred until a live window shows a store stall with `behind=` > 0 or `lock_wait_ms` >= 500 and no loop-block report within 5 s.
+- *Scope.* `ui/src/audio/voice.ts`, `ui/src/audio/voiceChunking.ts`, `cognitive/dreaming.py` (`record_speech_activity`, `SPEECH_DREAM_DEFER_CAP_SECONDS`, idle-dream start/finish lines), `routers/avatars.py`. Contract `prompts/bf-930-spoken-reply-pause-fix.md`.
+- *D1.* Client buffer: lookahead 3 and a 3000 ms start buffer, module constants (a config field would cross the wire into the browser with no measured need). The buffer counts the time each sentence plays (server duration divided by the clamped profile rate). Unknown duration and a failed synthesis count as a full buffer. It covers a stall up to the audio held (about 10-14 s); a longer one still pauses.
+- *D2.* Speech is activity for the idle full dream, bounded: a stretch begins at the first spoken reply after the last full dream, and past 2 h speech stops resetting the idle clock; the dream then starts when the monitor's conditions hold (`idle_threshold_seconds` since the last activity of any source, `dream_interval_seconds` since the last dream). Not `record_activity()` from the route: machine-driven speech could starve dreaming for ever.
+- *D3.* The contract's loop-lag probe (S3) was dropped before merge: BF-932's loop-stall sampler (#1670) logs the same evidence, and one sampler is kept, not two.
+- *D4.* Write-behind of spoken audio is deferred until a live window on a vessel running BF-932's sampler shows a store stall with `behind=` > 0 or `lock_wait_ms` >= 500 and no `BF-932: event loop blocked` line within 5 s.
+- *D5.* A sentence the browser speaks in place of a server one is awaited before the next sentence plays, for at most 20 s (`BROWSER_SENTENCE_MAX_WAIT_MS`, past Chromium's ~15 s utterance cut-off, which fires no end event); at the bound the reply goes on and the console logs one warning.
 - *Reversal.* Revert the commits; no persisted format changes.
 
 ### BF-1002 -- a full dream's dream_complete event reaches its listeners; one helper builds the payload for both emit sites (2026-11-27, #1820)

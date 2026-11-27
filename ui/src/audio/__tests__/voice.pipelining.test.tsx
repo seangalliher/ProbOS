@@ -212,10 +212,15 @@ describe('AD-1071 speakResponse — flag ON pipelines sentences', () => {
     // Advance past sentence[0].
     createdAudios[0].end();
     await _flush();
-    // Sentence[1] fell back to the browser in its turn and resolved at once,
-    // so the queue already moved on to sentence[2] without a new 'ended'.
+    // Sentence[1] fell back to the browser in its turn. BF-930 A1 (#1668): the queue now
+    // waits for that utterance's end before sentence[2] plays; it used to resolve at once
+    // and play sentence[2] over it.
     expect(speakCalls.length).toBe(1);
     expect(posted).toEqual(['Alpha.', 'Bravo.', 'Charlie.']);
+    expect(createdAudios[1].played).toBe(false);
+    (speakCalls[0] as { onend: (() => void) | null }).onend?.();
+    await _flush();
+    expect(createdAudios[1].played).toBe(true);
   });
 
   it('flag ON but browser backend does NOT pipeline (browser fallback)', async () => {

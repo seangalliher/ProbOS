@@ -3198,8 +3198,10 @@ class DreamScheduler:
         A stretch begins at the first spoken reply after the last full dream. While it is
         younger than ``SPEECH_DREAM_DEFER_CAP_SECONDS`` each reply resets the idle timer
         and this returns True. Past that age it returns False and leaves the timer alone,
-        so the idle full dream starts ``idle_threshold_seconds`` later at the latest; the
-        first reply after that dream begins a new stretch. ``now`` is a ``time.monotonic()``
+        so speech no longer keeps the monitor's idle condition false; the full dream starts
+        when all of the monitor's conditions hold (``idle_threshold_seconds`` since the last
+        activity of any source, ``dream_interval_seconds`` since the last dream). The first
+        reply after that dream begins a new stretch. ``now`` is a ``time.monotonic()``
         value (default: now).
         """
         at = time.monotonic() if now is None else now
