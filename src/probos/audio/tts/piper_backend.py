@@ -60,13 +60,17 @@ def resolve_voices_dir(voices_dir: str) -> Path:
 
 def anchor_install_path(configured: str) -> Path:
     """AD-738g: ``_anchor_path`` for the sibling Kokoro backend (AD-1025: absolute as-is,
-    relative under ``_probos_root()``, never the CWD). NEVER raises."""
+    relative under ``_probos_root()``, never the CWD). Raises ``OSError`` or ``ValueError``
+    for a path the OS cannot represent (``Path.resolve``, for example an embedded NUL); the
+    Kokoro backend catches both and degrades."""
     return _anchor_path(configured)
 
 
 def resolve_executable_path(configured: str) -> Path | None:
     """AD-738g: ``_resolve_binary_path`` for the sibling Kokoro backend (anchored; ``.exe``
-    appended on Windows when the literal path is missing). ``None`` when not found. NEVER raises."""
+    appended on Windows when the literal path is missing). ``None`` when not found. Raises
+    ``OSError`` or ``ValueError`` for a path the OS cannot represent, as ``anchor_install_path``
+    does; the Kokoro backend catches both and degrades."""
     return _resolve_binary_path(configured)
 
 

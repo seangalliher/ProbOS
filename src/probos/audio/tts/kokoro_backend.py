@@ -109,17 +109,47 @@ class KokoroBackend:
         """
         if not text or not text.strip():
             return None
+        # AD-738f (#1868): the route sends only strings; anything else from a direct caller is
+        # no role, no per-call voice and no emotion, so this method still never raises.
+        role = agent_type if isinstance(agent_type, str) else None
+        override = voice_override if isinstance(voice_override, str) else None
+        voice = self.resolve_voice(override, role)
+        speed = kokoro_speed(self._config.speed, emotion if isinstance(emotion, str) else None)
+        started = time.perf_counter()
+        wav = await self._speak(text, voice, speed)
+        # D10: one line for every attempt, the early degradations in _speak included. The role
+        # goes last (AD-738f, #1868), so the Captain can read which role spoke in which voice;
+        # no agent id is logged.
+        logger.info(
+            "AD-738g: kokoro voice=%s speed=%.2f chars=%d synth_ms=%.0f result=%s role=%s",
+            voice, speed, len(text), (time.perf_counter() - started) * 1000,
+            "ok" if wav is not None else "degraded", role or "-",
+        )
+        if wav is None:
+            return None
+        return TTSResult(audio_bytes=wav, mime="audio/wav")
+
+    async def _speak(self, text: str, voice: str, speed: float) -> bytes | None:
+        """The worker's WAV bytes, or ``None`` after a WARNING: no service, an install path the
+        OS cannot resolve or a missing file, or the service's own degradation. Never raises."""
         if self._service is None:
             logger.warning("AD-738g: no voice synthesis service on this runtime; degrading to browser")
             return None
         cfg = self._config
-        python = resolve_executable_path(cfg.python_path)
-        script = anchor_install_path(WORKER_SCRIPT)
-        model = anchor_install_path(cfg.model_path)
-        voices = anchor_install_path(cfg.voices_path)
-        missing = [str(path) for path in (script, model, voices) if not path.is_file()]
-        if python is None:
-            missing.insert(0, str(anchor_install_path(cfg.python_path)))
+        try:
+            python = resolve_executable_path(cfg.python_path)
+            script = anchor_install_path(WORKER_SCRIPT)
+            model = anchor_install_path(cfg.model_path)
+            voices = anchor_install_path(cfg.voices_path)
+            missing = [str(path) for path in (script, model, voices) if not path.is_file()]
+            if python is None:
+                missing.insert(0, str(anchor_install_path(cfg.python_path)))
+        except (OSError, ValueError) as exc:  # Path.resolve on a path the OS cannot represent
+            logger.warning(
+                "AD-738g: a tts.kokoro path cannot be resolved (%s: %s); degrading to browser",
+                type(exc).__name__, exc,
+            )
+            return None
         if python is None or missing:
             logger.warning(
                 "AD-738g: kokoro is not installed (missing: %s); run scripts/kokoro-fetch.ps1 or set "
@@ -127,8 +157,6 @@ class KokoroBackend:
                 ", ".join(missing),
             )
             return None
-        voice = self.resolve_voice(voice_override, agent_type)
-        speed = kokoro_speed(cfg.speed, emotion)
         key = KokoroWorkerKey(
             python=str(python),
             script=str(script),
@@ -137,15 +165,4 @@ class KokoroBackend:
             threads=cfg.threads,
             default_voice=cfg.voice,
         )
-        started = time.perf_counter()
-        wav = await self._service.synthesize(key, text, cfg.timeout_seconds, fields={"voice": voice, "speed": speed})
-        # AD-738f (#1868): the role goes last, so the Captain can read which role spoke in which
-        # voice; no agent id is logged.
-        logger.info(
-            "AD-738g: kokoro voice=%s speed=%.2f chars=%d synth_ms=%.0f result=%s role=%s",
-            voice, speed, len(text), (time.perf_counter() - started) * 1000,
-            "ok" if wav is not None else "degraded", agent_type or "-",
-        )
-        if wav is None:
-            return None
-        return TTSResult(audio_bytes=wav, mime="audio/wav")
+        return await self._service.synthesize(key, text, cfg.timeout_seconds, fields={"voice": voice, "speed": speed})

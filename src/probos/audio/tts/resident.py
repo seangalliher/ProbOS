@@ -159,8 +159,9 @@ class KokoroWorkerKey:
 
     The voice and speed travel on each request line (``fields``); the process is fixed to
     the interpreter, the model, the voices file, the thread count and the default voice.
-    ``-I`` isolates the interpreter: no ``PYTHON*`` variable, no user site, and neither the
-    script's nor the working directory on ``sys.path``, so the worker cannot import ``probos``.
+    ``-I`` keeps ``PYTHON*`` variables, the user site and the script's and working directories
+    off ``sys.path``. The worker cannot import ``probos`` because its venv does not contain it
+    (``scripts/kokoro-fetch.ps1`` checks this), not because of ``-I``.
     """
 
     python: str

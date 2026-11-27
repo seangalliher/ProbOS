@@ -12,6 +12,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from probos.settings.section_registry import is_secret_field_id
+
 
 class ApprovalInboxConfig(BaseModel):  # AD-1154
     """AD-1154: park an unattended consequential action instead of performing it.
@@ -665,9 +667,11 @@ class KokoroTTSConfig(BaseModel):
     """ONNX Runtime intra-op threads. Measured on a Ryzen 9 7950X3D: real-time factor 0.314
     at 4, 0.23 at 8, 0.181 at 16. 4 leaves the cores to the vessel."""
 
-    timeout_seconds: float = Field(default=30.0, gt=0.0)
+    timeout_seconds: float = Field(default=30.0, gt=0.0, le=600.0, allow_inf_nan=False)
     """Per-sentence timeout, counted from when the worker takes the request. A timeout kills
-    the worker, and the next sentence reloads the model (about 3.2 s cold)."""
+    the worker, and the next sentence reloads the model (about 3.2 s cold). At most 600 s:
+    ``threading.Timer`` takes no more than ``threading.TIMEOUT_MAX`` (4294967 s on Windows),
+    and an infinite deadline would never fire."""
 
     agent_voices: dict[str, KokoroVoiceId] = Field(default_factory=dict)
     """AD-738f (#1868) S1: the Captain's voice for a crew role (an ``agent_type``), for example
@@ -677,13 +681,30 @@ class KokoroTTSConfig(BaseModel):
     role matches no crew member and changes nothing; each sentence's log line shows its
     ``voice=`` and ``role=``."""
 
+    @field_validator("python_path", "model_path", "voices_path")
+    @classmethod
+    def _paths_can_name_a_file(cls, value: str) -> str:
+        """A path is non-blank and holds no NUL character, which no file system accepts."""
+        if not value.strip() or "\x00" in value:
+            raise ValueError("tts.kokoro: a path must be non-blank and must not contain a NUL character")
+        return value
+
     @field_validator("agent_voices")
     @classmethod
     def _keys_are_role_names(cls, value: dict[str, str]) -> dict[str, str]:
-        """A key is an ``agent_type``: lowercase letters, digits and ``_``, at most 64 characters."""
+        """A key is an ``agent_type``: lowercase letters, digits and ``_``, at most 64 characters,
+        and not a name the config API treats as a secret field (AD-741)."""
         for role in value:
             if not _ROLE_NAME.fullmatch(role):
                 raise ValueError(f"tts.kokoro.agent_voices: {role!r} is not a role name (an agent_type)")
+            if is_secret_field_id(role):
+                # /api/config hides such a key on read and refuses a patch that holds it
+                # (routers/config.py); the redaction rule stays as AD-741 wrote it.
+                raise ValueError(
+                    f"tts.kokoro.agent_voices: {role!r} contains secret, token, password, api_key or "
+                    "private_key, which the config API treats as a secret field and would hide and "
+                    "refuse; this role speaks its KOKORO_ROLE_VOICES voice or tts.kokoro.voice"
+                )
         return value
 
 

@@ -2,8 +2,9 @@
 
 Run by ``VoiceSynthesisService`` (``src/probos/audio/tts/resident.py``) as
 ``<tools/kokoro/venv python> -I scripts/kokoro_worker.py --model M --voices V --threads N --default-voice D``.
-``-I`` isolates it: no ``PYTHON*`` variable, no user site, and neither this directory nor the
-working directory on ``sys.path``, so it cannot import ``probos``.
+``-I`` keeps ``PYTHON*`` variables, the user site, this directory and the working directory
+off ``sys.path``. It cannot import ``probos`` because ``tools/kokoro/venv`` does not contain it
+(``scripts/kokoro-fetch.ps1`` checks this), not because of ``-I``.
 
 Protocol (Piper's ``--json-input``): one ASCII JSON object per stdin line,
 ``{"text", "output_file", "voice", "speed"}``. For each line the worker writes a 16-bit mono

@@ -15,8 +15,8 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 - *Scope.* #1868 slice S1. `audio/tts/backends.py`, `null_backend.py`, `piper_backend.py`, `kokoro_backend.py` (`KOKORO_ROLE_VOICES`, `resolve_voice`), `config_models/experience.py` (`KokoroTTSConfig.agent_voices`), `routers/avatars.py` (`agent_id`), `ui/src/audio/voice.ts`. Contract `prompts/ad-738f-s1-per-agent-kokoro-voices.md`.
 - *D1.* The client sends the agent's registry id; the server resolves the role with `runtime.registry.get(id).agent_type`. Not the client (the registry is the authority), and not a parse of the id string (a second source of role).
 - *D2.* `TTSBackend.synthesize` gains `agent_type: str | None = None`; the route passes it only when a role was resolved, so a body without an id makes the same call as before.
-- *D3.* The default voice is keyed by role, so it survives restarts and roster changes; two agents of one role share a voice, and a role in no map speaks the ship voice.
-- *D4.* `agent_voices` keys are checked for shape, not against the 15 roles: a new crew type must be nameable. A misspelt role changes nothing and shows on the per-sentence log line (`role=`, `voice=`).
+- *D3.* The default voice is keyed by role, so it survives restarts and roster changes; two agents of one role share a voice, and a role in no map speaks the ship voice unless the sentence carries a catalogue `voice_name`. Selecting `tts.backend: kokoro` turns the role table on even with `agent_voices: {}`.
+- *D4.* `agent_voices` keys are checked for shape, not against the 15 roles: a new crew type must be nameable. A misspelt role changes nothing and shows on the per-sentence log line (`role=`, `voice=`). A key containing secret, token, password, api_key or private_key is refused when parsed, because the config API (AD-741) would hide it on read and refuse it on write; the redaction rule itself is unchanged.
 - *Precedence.* Per-call catalogue `voice_name`, then `agent_voices[role]`, then `KOKORO_ROLE_VOICES[role]`, then `tts.kokoro.voice`.
 - *Reversal.* Revert both commits; nothing persisted changes. A leftover `agent_voices` block in `system.yaml` is then ignored (`KokoroTTSConfig` ignores unknown keys).
 
@@ -28,7 +28,7 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 - *D3.* A Kokoro request the engine cannot speak is answered with no file and the process stays; an unreadable line or a missing default voice ends the worker. A respawn costs about 3.2 s of model load and first-call initialisation.
 - *D4.* CPU, 4 threads, 30 s timeout, no prewarm in S1 (measured real-time factor 0.314; one warm-up line before recording).
 - *D5.* The 28 English voice ids are the config's `Literal`, the single catalogue; a foreign per-call voice name is ignored.
-- *Licence.* GPL-3.0-or-later phonemizer and espeak-ng run only in the operator-installed worker process, which exchanges text, voice and speed in and a WAV path out; the worker runs under `python -I` and cannot import `probos`.
+- *Licence.* GPL-3.0-or-later phonemizer and espeak-ng run only in the operator-installed worker process, which exchanges text, voice and speed in and a WAV path out; that venv does not contain `probos` (the install script checks it cannot import it), and `python -I` keeps `PYTHON*` variables and the user site out.
 - *Reversal.* Revert the four commits and set `tts.backend` back to `piper` or `browser`; no persisted format changes. `tools/kokoro/` can be deleted.
 
 ### BF-1002 -- a full dream's dream_complete event reaches its listeners; one helper builds the payload for both emit sites (2026-11-27, #1820)

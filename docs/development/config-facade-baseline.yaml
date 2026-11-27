@@ -2233,7 +2233,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: cee53d86dd41801d6f5fa4cc0ff0d0f7ce6580adeab8dba1dae2180d452fac28
+    schema_sha256: 372c6f87d7c32d4ddaf0ed99e0ac6d1596aff5df0f7d1db6340f71c8428eecbf
     fields:
     - {default: '''tools/kokoro/venv/Scripts/python''', name: python_path}
     - {default: '''tools/kokoro/kokoro-v1.0.onnx''', name: model_path}
@@ -3428,7 +3428,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: 6e700948b84d06f03a016f2eef359468159c391460a7cf3cac12216cfbb696ae
+    schema_sha256: 809d14b46f50416c1bf6ab7306c4e296e3df00b3d2ddb56961d885d272a737be
     fields:
     - {default: SystemInfo(...), name: system}
     - {default: PoolConfig(...), name: pools}
@@ -3639,7 +3639,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: bdc9a3d29c9a16a1af1e523f4107f3f2125ac176c38f602829a5c967f10cd4e5
+    schema_sha256: e4a572139c4c0559ccada982a7ef62e4216634d4841f18628ce365e2fc80b994
     fields:
     - {default: 'True', name: enabled}
     - {default: '''browser''', name: backend}

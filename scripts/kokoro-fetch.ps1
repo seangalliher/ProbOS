@@ -84,10 +84,22 @@ $Voices = Join-Path $DestDir "voices-v1.0.bin"
 $Worker = Join-Path $Root "scripts\kokoro_worker.py"
 $Probe = Join-Path $DestDir "fetch-check.wav"
 if (Test-Path $Probe) { Remove-Item $Probe -Force }
-$Line = '{"text": "Kokoro is ready, Captain.", "output_file": ' + (ConvertTo-Json $Probe) + ', "voice": "af_heart", "speed": 1.0}'
-$Answer = $Line | & $Python -I $Worker --model $Model --voices $Voices --threads 4 --default-voice af_heart
-if ($LASTEXITCODE -ne 0 -or -not (Test-Path $Probe) -or "$Answer".Trim() -ne $Probe) {
-    throw "The Kokoro worker did not speak the test line (exit $LASTEXITCODE, answer '$Answer'); its messages are above."
+# Windows PowerShell 5.1 pipes text to a native program as ASCII ($OutputEncoding), so a
+# non-ASCII destination would reach the worker as '?': escape each non-ASCII UTF-16 unit as
+# \uXXXX, which the worker's json.loads decodes. The worker answers in UTF-8; the console
+# decodes it as UTF-8 for the comparison and gets its own encoding back afterwards.
+$ProbeJson = [regex]::Replace((ConvertTo-Json $Probe), '[^\x00-\x7F]', { param($m) '\u{0:x4}' -f [int][char]$m.Value })
+$Line = '{"text": "Kokoro is ready, Captain.", "output_file": ' + $ProbeJson + ', "voice": "af_heart", "speed": 1.0}'
+$ConsoleEncoding = [Console]::OutputEncoding
+try { [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false } catch { Write-Host "[warn] cannot set the console encoding; a non-ASCII path may fail the comparison" -ForegroundColor Yellow }
+try {
+    $Answer = $Line | & $Python -I $Worker --model $Model --voices $Voices --threads 4 --default-voice af_heart
+    $Exit = $LASTEXITCODE
+} finally {
+    try { [Console]::OutputEncoding = $ConsoleEncoding } catch { }
+}
+if ($Exit -ne 0 -or -not (Test-Path $Probe) -or "$Answer".Trim() -ne $Probe) {
+    throw "The Kokoro worker did not speak the test line (exit $Exit, answer '$Answer'); its messages are above."
 }
 $Bytes = (Get-Item $Probe).Length
 Remove-Item $Probe -Force

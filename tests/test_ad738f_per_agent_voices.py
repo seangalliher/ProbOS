@@ -115,6 +115,7 @@ def test_v3_a_captain_override_changes_its_role_and_no_other() -> None:
     plain = KokoroBackend(KokoroTTSConfig())
     custom = KokoroBackend(KokoroTTSConfig(agent_voices={"counselor": "af_sky"}))
 
+    assert len(KOKORO_ROLE_VOICES) == 15  # A1: the loop below proves nothing over an empty table
     for role, voice in KOKORO_ROLE_VOICES.items():
         assert plain.resolve_voice(None, role) == voice
         assert custom.resolve_voice(None, role) == ("af_sky" if role == "counselor" else voice)
@@ -161,6 +162,23 @@ def test_c1_agent_voices_is_empty_by_default_and_checked_when_parsed() -> None:
     assert SystemConfig().tts.kokoro.agent_voices == {}
 
 
+def test_c2_a_role_key_the_config_api_would_treat_as_secret_is_refused_when_parsed() -> None:
+    from probos.settings.section_registry import is_secret_field_id
+
+    # AD-741: /api/config hides a field whose last dot segment names a secret and refuses a
+    # patch holding one, so such a role key could never be read back or saved there.
+    for role in ("secretary", "token_keeper", "password_clerk", "api_key_officer", "private_key_holder"):
+        assert is_secret_field_id(f"tts.kokoro.agent_voices.{role}")
+        with pytest.raises(ValueError, match="secret"):
+            KokoroTTSConfig(agent_voices={role: "af_sky"})
+
+    # Every built-in role, and a new role-shaped name, stays readable and writable there.
+    assert len(KOKORO_ROLE_VOICES) == 15
+    for role in [*KOKORO_ROLE_VOICES, "ensign"]:
+        assert not is_secret_field_id(f"tts.kokoro.agent_voices.{role}")
+        assert KokoroTTSConfig(agent_voices={role: "af_sky"}).agent_voices == {role: "af_sky"}
+
+
 # --- the backends ---------------------------------------------------------------------------
 
 
@@ -180,6 +198,25 @@ async def test_b1_the_backend_sends_the_roles_voice_and_logs_the_role(
     assert svc.calls[0][0] == svc.calls[1][0]  # one worker key: the voice travels on the line
     assert "AD-738g: kokoro voice=af_bella speed=1.00 chars=6" in caplog.text
     assert "result=ok role=counselor" in caplog.text
+    assert "result=ok role=-" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_b2_a_role_voice_or_emotion_that_is_not_a_string_is_ignored_and_never_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.INFO)
+    caplog.set_level(logging.INFO, logger="probos.audio.tts")
+    svc = _RecordingService()
+    backend = KokoroBackend(_installed(tmp_path, monkeypatch), service=svc)
+
+    # The route sends only strings; a direct caller's list or dict is no role, voice or emotion.
+    result = await backend.synthesize(
+        "Hello.", emotion=["calm"], voice_override={"v": 1}, agent_type=["counselor"],  # type: ignore[arg-type]
+    )
+
+    assert result is not None
+    assert svc.calls[0][3] == {"voice": "af_heart", "speed": 1.0}
     assert "result=ok role=-" in caplog.text
 
 

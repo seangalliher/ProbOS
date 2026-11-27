@@ -210,6 +210,26 @@ def test_w1_the_worker_writes_a_24khz_mono_16bit_wav_and_prints_its_path(tmp_pat
     assert not (tmp_path / (out.name + ".part")).exists()
 
 
+def test_w9_an_interrupted_write_leaves_neither_the_output_nor_a_part_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    out = tmp_path / "out.wav"
+    real_writeframes = wave.Wave_write.writeframes
+
+    def _disk_full(self, data):
+        real_writeframes(self, data[:2])  # one frame reaches the disk, then the write fails
+        raise OSError("disk full")
+
+    monkeypatch.setattr(wave.Wave_write, "writeframes", _disk_full)
+
+    with pytest.raises(OSError, match="disk full"):
+        worker.write_wav(out, [0.5, -0.5, 0.25], 24000)
+
+    # The service reads output_file once the path comes back: it must never hold a partial WAV.
+    assert not out.exists()
+    assert not (tmp_path / (out.name + ".part")).exists()
+
+
 def test_w2_the_language_follows_the_voice_prefix(tmp_path: Path) -> None:
     engine = FakeEngine()
     lines = b"".join(
@@ -504,6 +524,56 @@ def test_b6_the_catalogue_is_the_28_english_voices() -> None:
     assert all(re.fullmatch(r"[ab][fm]_[a-z]+", voice) for voice in KOKORO_VOICES)
 
 
+@pytest.mark.asyncio
+async def test_b7_every_attempt_logs_one_result_line_even_when_it_degrades_early(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.INFO)
+    caplog.set_level(logging.INFO, logger="probos.audio.tts")
+    svc = _RecordingService()
+
+    missing = _installed(tmp_path, monkeypatch, model_path=str(tmp_path / "absent.onnx"))
+    assert await KokoroBackend(missing, service=svc).synthesize("Hi.") is None
+    assert await KokoroBackend(_installed(tmp_path, monkeypatch), service=None).synthesize("Hi.") is None
+    assert await KokoroBackend(_installed(tmp_path, monkeypatch), service=svc).synthesize("   ") is None
+
+    lines = [
+        record.getMessage() for record in caplog.records
+        if record.levelno == logging.INFO and record.getMessage().startswith("AD-738g: kokoro voice=")
+    ]
+    assert len(lines) == 2  # one per attempt (D10); blank text is not an attempt
+    for line in lines:
+        assert "voice=af_heart speed=1.00 chars=3" in line
+        assert "result=degraded role=-" in line
+    assert svc.calls == []
+
+
+@pytest.mark.asyncio
+async def test_b8_a_path_that_cannot_be_resolved_degrades_and_never_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.INFO)
+    caplog.set_level(logging.INFO, logger="probos.audio.tts")
+    svc = _RecordingService()
+    installed = _installed(tmp_path, monkeypatch)
+
+    # C4: the config refuses a NUL; model_copy skips validation, as a config built in code can.
+    for name in ("python_path", "model_path", "voices_path"):
+        cfg = installed.model_copy(update={name: "tools/kokoro/a\x00b"})
+        assert await KokoroBackend(cfg, service=svc).synthesize("Hi.") is None
+    assert svc.calls == []
+    assert caplog.text.count("result=degraded") == 3
+
+    def _unrepresentable(configured: str) -> Path:
+        raise OSError(22, "The filename, directory name, or volume label syntax is incorrect")
+
+    monkeypatch.setattr(kokoro_backend, "anchor_install_path", _unrepresentable)
+    assert await KokoroBackend(installed, service=svc).synthesize("Hi.") is None
+    assert svc.calls == []
+    assert "a tts.kokoro path cannot be resolved (OSError" in caplog.text
+    assert caplog.text.count("result=degraded") == 4
+
+
 # --- config, registry, selection --------------------------------------------------------------
 
 
@@ -545,12 +615,39 @@ def test_c3_the_settings_registry_offers_kokoro() -> None:
     assert backend.enum_values == ("browser", "piper", "kokoro")
 
 
-def test_s1_select_backend_builds_kokoro_with_the_runtime_service(service) -> None:
+def test_c4_a_timeout_the_timer_cannot_take_and_a_path_no_file_can_have_are_refused() -> None:
+    import threading
+
+    # threading.Timer raises OverflowError past TIMEOUT_MAX (4294967.0 on Windows) inside its
+    # own thread, so the deadline would silently never fire; infinity and NaN never fire either.
+    assert 600.0 <= threading.TIMEOUT_MAX
+    for value in (float("inf"), float("nan"), 600.01, 4294968.0, 1e30):
+        with pytest.raises(ValueError):
+            KokoroTTSConfig(timeout_seconds=value)
+    assert KokoroTTSConfig(timeout_seconds=600.0).timeout_seconds == 600.0
+
+    for name in ("python_path", "model_path", "voices_path"):
+        for value in ("tools/kokoro/a\x00b", "", "   "):
+            with pytest.raises(ValueError):
+                KokoroTTSConfig(**{name: value})
+
+
+@pytest.mark.asyncio
+async def test_s1_select_backend_builds_kokoro_with_the_runtime_service(
+    service, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
     backend = select_backend("kokoro", TTSConfig(backend="kokoro"), service=service)
 
     assert isinstance(backend, KokoroBackend)
     assert backend.name == "kokoro"
     assert isinstance(select_backend("piper", TTSConfig(backend="piper")), PiperBackend)
+    # A1: the backend speaks through the service it was given (a dropped injection degrades).
+    recording = _RecordingService()
+    built = select_backend(
+        "kokoro", TTSConfig(backend="kokoro", kokoro=_installed(tmp_path, monkeypatch)), service=recording,
+    )
+    assert await built.synthesize("Hi.") == TTSResult(audio_bytes=b"RIFF", mime="audio/wav")
+    assert len(recording.calls) == 1
 
 
 # --- the route --------------------------------------------------------------------------------
