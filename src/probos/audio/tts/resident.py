@@ -19,6 +19,11 @@ runtime (``close``, called from ``startup/shutdown.py``).
 
 Not ``loop.set_default_executor``: that would change the pool under every other
 caller, crew cognition included, and bound none of them.
+
+AD-738g (#1662): a process is fixed by a ``WorkerKey``. ``PiperWorkerKey`` is BF-918's
+key, unchanged; ``KokoroWorkerKey`` runs ``scripts/kokoro_worker.py``, which speaks the
+same line protocol and takes each request's voice and speed as extra fields. One Kokoro
+process serves every voice, and a request it answers without audio does not retire it.
 """
 
 from __future__ import annotations
@@ -37,7 +42,7 @@ import uuid
 from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import IO, Any, Callable, Iterator, TypeVar
+from typing import IO, Any, Callable, Iterator, Mapping, Protocol, TypeVar
 
 from probos.execution.command_env import trusted_command_env
 from probos.utils.step_timing import TimingLines, ms_between
@@ -90,6 +95,27 @@ async def run_voice_work(executor: concurrent.futures.Executor | None, fn: Calla
         raise VoiceWorkRefused("BF-918: the voice executor shut down before this work ran") from None
 
 
+class WorkerKey(Protocol):
+    """AD-738g (#1662): what one resident process is fixed to; implemented by frozen, hashable dataclasses.
+
+    ``label`` names the engine in logs and in the temporary directory, ``name`` names the
+    model in logs, and ``retire_on_empty`` says whether a request answered without audio
+    retires the process (Piper: yes, as BF-918 shipped; Kokoro: no, its worker answers a
+    request it cannot speak and stays healthy, and a restart reloads the model).
+    """
+
+    @property
+    def label(self) -> str: ...
+
+    @property
+    def name(self) -> str: ...
+
+    @property
+    def retire_on_empty(self) -> bool: ...
+
+    def argv(self, output_dir: Path) -> list[str]: ...
+
+
 @dataclass(frozen=True)
 class PiperWorkerKey:
     """What one resident process is fixed to: the binary, the model and the prosody flags."""
@@ -100,6 +126,18 @@ class PiperWorkerKey:
     length_scale: float
     noise_w: float
     sentence_silence: float
+
+    @property
+    def label(self) -> str:
+        return "piper"
+
+    @property
+    def name(self) -> str:
+        return Path(self.model).stem
+
+    @property
+    def retire_on_empty(self) -> bool:
+        return True
 
     def argv(self, output_dir: Path) -> list[str]:
         """The process's command line. ``--output_dir`` is a fallback; each request names its own file."""
@@ -112,6 +150,46 @@ class PiperWorkerKey:
             "--length_scale", str(self.length_scale),
             "--noise_w", str(self.noise_w),
             "--sentence_silence", str(self.sentence_silence),
+        ]
+
+
+@dataclass(frozen=True)
+class KokoroWorkerKey:
+    """AD-738g (#1662): one resident Kokoro worker (``scripts/kokoro_worker.py``) serves every voice.
+
+    The voice and speed travel on each request line (``fields``); the process is fixed to
+    the interpreter, the model, the voices file, the thread count and the default voice.
+    ``-I`` isolates the interpreter: no ``PYTHON*`` variable, no user site, and neither the
+    script's nor the working directory on ``sys.path``, so the worker cannot import ``probos``.
+    """
+
+    python: str
+    script: str
+    model: str
+    voices: str
+    threads: int
+    default_voice: str
+
+    @property
+    def label(self) -> str:
+        return "kokoro"
+
+    @property
+    def name(self) -> str:
+        return Path(self.model).stem
+
+    @property
+    def retire_on_empty(self) -> bool:
+        return False
+
+    def argv(self, output_dir: Path) -> list[str]:
+        """The process's command line. Each request names its own output file, so ``output_dir`` is unused."""
+        return [
+            self.python, "-I", self.script,
+            "--model", self.model,
+            "--voices", self.voices,
+            "--threads", str(self.threads),
+            "--default-voice", self.default_voice,
         ]
 
 
@@ -139,7 +217,7 @@ class PiperWorker:
     every later request and starts nothing.
     """
 
-    def __init__(self, key: PiperWorkerKey) -> None:
+    def __init__(self, key: WorkerKey) -> None:
         self.key = key
         self._proc: subprocess.Popen[bytes] | None = None
         self._dir: Path | None = None
@@ -158,11 +236,14 @@ class PiperWorker:
     def alive(self) -> bool:
         return self._proc is not None and self._proc.poll() is None
 
-    def synthesize_blocking(self, text: str, timeout: float) -> PiperOutcome:
+    def synthesize_blocking(
+        self, text: str, timeout: float, fields: Mapping[str, str | float] | None = None,
+    ) -> PiperOutcome:
         """Run one request; starts the process first when it is not running.
 
         Refused (``closed``) once the worker is closed. When ``close`` came while this
-        request ran, the request releases the worker before it returns.
+        request ran, the request releases the worker before it returns. AD-738g:
+        ``fields`` (Kokoro's voice and speed) join the request line.
         """
         self.thread_started = time.perf_counter()  # BF-930: log-only
         with self._state:
@@ -170,7 +251,9 @@ class PiperWorker:
                 return PiperOutcome(None, "closed")
             self._running = True
         try:
-            return self._request(text, timeout)
+            # AD-738g: without fields the call keeps BF-918's two arguments (test stand-ins
+            # replace this method with that signature: test_bf930_voice_path_timing.py).
+            return self._request(text, timeout) if fields is None else self._request(text, timeout, fields)
         finally:
             self.thread_ended = time.perf_counter()  # BF-930: log-only
             with self._state:
@@ -179,7 +262,9 @@ class PiperWorker:
             if release:
                 self._release(wait_seconds=0.5)
 
-    def _request(self, text: str, timeout: float) -> PiperOutcome:
+    def _request(
+        self, text: str, timeout: float, fields: Mapping[str, str | float] | None = None,
+    ) -> PiperOutcome:
         """One request on this worker's process; ``synthesize_blocking`` owns the lifecycle around it."""
         out: Path | None = None
         try:
@@ -190,12 +275,16 @@ class PiperWorker:
                     return PiperOutcome(None, "closed")
             proc, out_dir = self._proc, self._dir
             if proc is None or out_dir is None or proc.stdin is None or proc.stdout is None:
-                return PiperOutcome(None, "error: no pipes to the piper process")
+                return PiperOutcome(None, f"error: no pipes to the {self.key.label} process")
             out = out_dir / f"{uuid.uuid4().hex}.wav"
             # One JSON object per line. ensure_ascii keeps every byte on the pipe ASCII,
             # and a line break in the text becomes a space, as the one-shot path's Piper
             # joined stdin's lines.
-            line = json.dumps({"text": " ".join(text.splitlines()), "output_file": str(out)}, ensure_ascii=True)
+            payload: dict[str, str | float] = {"text": " ".join(text.splitlines()), "output_file": str(out)}
+            if fields:
+                # AD-738g: per-request fields follow the two above and never replace them.
+                payload.update({name: value for name, value in fields.items() if name not in payload})
+            line = json.dumps(payload, ensure_ascii=True)
             self._timed_out = False
             timer = threading.Timer(timeout, self._expire, args=(proc,))
             timer.daemon = True
@@ -258,7 +347,7 @@ class PiperWorker:
 
     def _spawn(self) -> None:
         self._release(wait_seconds=2.0)  # a dead process's leftovers; the worker stays open
-        directory = Path(tempfile.mkdtemp(prefix="probos-piper-"))
+        directory = Path(tempfile.mkdtemp(prefix=f"probos-{self.key.label}-"))
         # BF-918 A5: the worker owns the directory from its creation, so ``_release`` removes it
         # even when the open below fails (with no stderr file yet, it closes none).
         with self._state:
@@ -276,7 +365,7 @@ class PiperWorker:
         )
         with self._state:
             self._proc = proc
-        logger.info("BF-918: resident piper started (voice=%s)", Path(self.key.model).stem)
+        logger.info("BF-918: resident %s started (voice=%s)", self.key.label, self.key.name)
 
     def kill(self) -> None:
         """Kill the process if it runs. Never blocks."""
@@ -358,11 +447,11 @@ class VoiceSynthesisService:
         self._executor: concurrent.futures.ThreadPoolExecutor | None = None
         self._in_flight = 0
         self._closed = False
-        self._resident: OrderedDict[PiperWorkerKey, PiperWorker] = OrderedDict()
-        self._busy: set[PiperWorkerKey] = set()
+        self._resident: OrderedDict[WorkerKey, PiperWorker] = OrderedDict()
+        self._busy: set[WorkerKey] = set()
         # BF-918: evicted workers whose close has not run yet; ``close`` reaches them here.
         self._retiring: set[PiperWorker] = set()
-        self._locks: dict[PiperWorkerKey, asyncio.Lock] = {}
+        self._locks: dict[WorkerKey, asyncio.Lock] = {}
         self._timing = TimingLines(logger)  # BF-930: log-only
 
     @property
@@ -397,8 +486,14 @@ class VoiceSynthesisService:
         finally:
             self._in_flight -= 1
 
-    async def synthesize(self, key: PiperWorkerKey, text: str, timeout: float) -> bytes | None:
-        """WAV bytes for ``text`` from the resident process for ``key``, or ``None`` to degrade."""
+    async def synthesize(
+        self, key: WorkerKey, text: str, timeout: float, *, fields: Mapping[str, str | float] | None = None,
+    ) -> bytes | None:
+        """WAV bytes for ``text`` from the resident process for ``key``, or ``None`` to degrade.
+
+        AD-738g: ``fields`` join the request line (Kokoro's voice and speed); Piper passes
+        none, so its line is unchanged.
+        """
         with self.admit() as admitted:
             if not admitted:
                 if not self._closed:
@@ -423,7 +518,9 @@ class VoiceSynthesisService:
                 try:
                     cold = not worker.alive
                     t_submit = time.perf_counter()
-                    future = loop.run_in_executor(self.executor, worker.synthesize_blocking, text, timeout)
+                    # AD-738g: no third argument without fields (D8 of the contract).
+                    extra: tuple[Mapping[str, str | float], ...] = () if fields is None else (fields,)
+                    future = loop.run_in_executor(self.executor, worker.synthesize_blocking, text, timeout, *extra)
                     outcome = await future
                     t_resumed = time.perf_counter()
                 except asyncio.CancelledError:
@@ -437,7 +534,7 @@ class VoiceSynthesisService:
                 except Exception:
                     # The executor shut down (the runtime is stopping) or the worker raised what
                     # it does not handle: degrade, and never reuse that worker.
-                    logger.warning("BF-918: piper request failed; the browser speaks this one", exc_info=True)
+                    logger.warning("BF-918: %s request failed; the browser speaks this one", key.label, exc_info=True)
                     self._forget(key, worker)
                     return None
                 finally:
@@ -447,9 +544,9 @@ class VoiceSynthesisService:
                 # BF-930: a request that shutdown ended is not timed; one refused at the thread's entry set no end stamp.
                 if total_ms >= SLOW_SYNTHESIS_MS and outcome.reason != "closed":
                     self._timing.emit(
-                        "BF-930: piper request slow chars=%d voice=%s total_ms=%.0f lock_wait_ms=%.0f claim_ms=%.0f "
+                        "BF-930: %s request slow chars=%d voice=%s total_ms=%.0f lock_wait_ms=%.0f claim_ms=%.0f "
                         "pool_wait_ms=%.0f work_ms=%.0f resume_lag_ms=%.0f cold=%s result=%s in_flight=%d",
-                        len(text), Path(key.model).stem, total_ms, ms_between(t_enter, t_locked),
+                        key.label, len(text), key.name, total_ms, ms_between(t_enter, t_locked),
                         ms_between(t_locked, t_claimed), ms_between(t_submit, worker.thread_started),
                         ms_between(worker.thread_started, worker.thread_ended),
                         ms_between(worker.thread_ended, t_resumed), "yes" if cold else "no",
@@ -457,14 +554,16 @@ class VoiceSynthesisService:
                     )
                 if outcome.audio is not None:
                     return outcome.audio
-                if not self._closed:  # a request that shutdown ended is not a piper failure
-                    self._log_failure(outcome, text, timeout)
+                if not self._closed:  # a request that shutdown ended is not a voice failure
+                    self._log_failure(key.label, outcome, text, timeout)
+                if outcome.reason == "empty" and not key.retire_on_empty:
+                    return None  # AD-738g: the worker answered without audio; it stays resident
                 if self._resident.get(key) is worker:
                     del self._resident[key]
                 await self._retire(worker)
                 return None
 
-    async def _claim(self, key: PiperWorkerKey) -> PiperWorker | None:
+    async def _claim(self, key: WorkerKey) -> PiperWorker | None:
         """The resident worker for ``key``, made when missing; the least recently used idle one makes room."""
         worker = self._resident.get(key)
         if worker is not None:
@@ -474,7 +573,7 @@ class VoiceSynthesisService:
             idle = next((k for k in self._resident if k not in self._busy), None)
             if idle is None:
                 logger.warning(
-                    "BF-918: all %d resident piper processes are busy; the browser speaks this one",
+                    "BF-918: all %d resident voice processes are busy; the browser speaks this one",
                     self._max_resident,
                 )
                 return None
@@ -483,7 +582,7 @@ class VoiceSynthesisService:
         self._resident[key] = worker
         return worker
 
-    def _forget(self, key: PiperWorkerKey, worker: PiperWorker) -> None:
+    def _forget(self, key: WorkerKey, worker: PiperWorker) -> None:
         if self._resident.get(key) is worker:
             del self._resident[key]
         worker.close(wait_seconds=0.5)
@@ -507,19 +606,19 @@ class VoiceSynthesisService:
             worker.close(wait_seconds=0.5)  # a no-op once the queued close has run
 
     @staticmethod
-    def _log_failure(outcome: PiperOutcome, text: str, timeout: float) -> None:
+    def _log_failure(label: str, outcome: PiperOutcome, text: str, timeout: float) -> None:
         if outcome.reason == "timeout":
             logger.warning(
-                "AD-738/BF-918: piper timed out after %ss synthesizing %d chars; killed, "
+                "AD-738/BF-918: %s timed out after %ss synthesizing %d chars; killed, "
                 "and the next request starts a new process",
-                timeout, len(text),
+                label, timeout, len(text),
             )
         elif outcome.reason == "exited":
-            logger.warning("AD-738/BF-918: piper exit=%s; stderr=%s", outcome.returncode, outcome.stderr_tail)
+            logger.warning("AD-738/BF-918: %s exit=%s; stderr=%s", label, outcome.returncode, outcome.stderr_tail)
         elif outcome.reason == "empty":
-            logger.warning("AD-738/BF-918: piper produced 0 bytes; degrading")
+            logger.warning("AD-738/BF-918: %s produced 0 bytes; degrading", label)
         else:
-            logger.warning("AD-738/BF-918: piper subprocess failed: %s", outcome.reason)
+            logger.warning("AD-738/BF-918: %s subprocess failed: %s", label, outcome.reason)
 
     def close(self) -> None:
         """Stop every resident process and the executor; refuse all later work. Idempotent; never awaits.
@@ -542,4 +641,4 @@ class VoiceSynthesisService:
         if executor is not None:
             executor.shutdown(wait=False, cancel_futures=True)
         if workers:
-            logger.info("BF-918: voice synthesis closed; stopped %d resident piper process(es)", len(workers))
+            logger.info("BF-918: voice synthesis closed; stopped %d resident voice process(es)", len(workers))
