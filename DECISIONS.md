@@ -10,6 +10,16 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ## Era V — Civilization (Phases 31-36)
 
+### AD-738f S1 -- a distinct Kokoro voice per crew role: the route resolves the speaker's role through the registry; a built-in table and a Captain override per role (2026-11-27, #1868)
+
+- *Scope.* #1868 slice S1. `audio/tts/backends.py`, `null_backend.py`, `piper_backend.py`, `kokoro_backend.py` (`KOKORO_ROLE_VOICES`, `resolve_voice`), `config_models/experience.py` (`KokoroTTSConfig.agent_voices`), `routers/avatars.py` (`agent_id`), `ui/src/audio/voice.ts`. Contract `prompts/ad-738f-s1-per-agent-kokoro-voices.md`.
+- *D1.* The client sends the agent's registry id; the server resolves the role with `runtime.registry.get(id).agent_type`. Not the client (the registry is the authority), and not a parse of the id string (a second source of role).
+- *D2.* `TTSBackend.synthesize` gains `agent_type: str | None = None`; the route passes it only when a role was resolved, so a body without an id makes the same call as before.
+- *D3.* The default voice is keyed by role, so it survives restarts and roster changes; two agents of one role share a voice, and a role in no map speaks the ship voice.
+- *D4.* `agent_voices` keys are checked for shape, not against the 15 roles: a new crew type must be nameable. A misspelt role changes nothing and shows on the per-sentence log line (`role=`, `voice=`).
+- *Precedence.* Per-call catalogue `voice_name`, then `agent_voices[role]`, then `KOKORO_ROLE_VOICES[role]`, then `tts.kokoro.voice`.
+- *Reversal.* Revert both commits; nothing persisted changes. A leftover `agent_voices` block in `system.yaml` is then ignored (`KokoroTTSConfig` ignores unknown keys).
+
 ### AD-738g S1 -- a local Kokoro voice: a resident worker in the operator's venv, keyed into the BF-918 voice service (2026-11-27, #1662)
 
 - *Scope.* `audio/tts/resident.py` (`WorkerKey`, `KokoroWorkerKey`, request `fields`), `audio/tts/kokoro_backend.py` (new), `scripts/kokoro_worker.py` (new), `scripts/kokoro-fetch.ps1` (new), `config_models/experience.py` (`KokoroTTSConfig`, `TTSConfig.kokoro`), `ui/src/audio/voice.ts` (the gate). Contract `prompts/ad-738g-s1-local-kokoro-voice.md`.

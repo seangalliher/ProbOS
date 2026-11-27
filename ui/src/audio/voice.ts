@@ -589,7 +589,7 @@ function _playNow(entry: SpeechQueueEntry, endWait: () => void): boolean {
         try {
           played = await runPrefetchQueue<PreparedSpeech>(
             sentences,
-            (sentence) => _prepareServerSpeech(sentence, profile, emotion),
+            (sentence) => _prepareServerSpeech(sentence, profile, emotion, agent_id),
             (prepared, sentence, index) => _playPreparedSpeech(prepared, sentence, profile, agent_id, utterance_id, index === last),
             () => _activeUtteranceId === utterance_id,
             TTS_PREFETCH_LOOKAHEAD,
@@ -638,7 +638,7 @@ async function _synthesizeAndPlay(
   emotion: string | undefined,
   utterance_id: number,
 ): Promise<boolean> {
-  const prepared = await _prepareServerSpeech(text, profile, emotion);
+  const prepared = await _prepareServerSpeech(text, profile, emotion, agent_id);
   if (_activeUtteranceId !== utterance_id) { _discardPreparedSpeech(prepared); return false; }
   await _playPreparedSpeech(prepared, text, profile, agent_id, utterance_id);
   return true;
@@ -651,6 +651,7 @@ async function _prepareServerSpeech(
   text: string,
   profile: VoiceProfile | undefined,
   emotion: string | undefined,
+  agent_id: string | undefined,
 ): Promise<PreparedSpeech | null> {
   try {
     // AD-738e-1: pass v1 emotion name (resolved server-side) so the TTS
@@ -660,7 +661,7 @@ async function _prepareServerSpeech(
     // to the configured tts.voice_model on miss. BF-918: ask for the visemes
     // separately (POST /api/avatars/lipsync), so first audio does not wait for
     // rhubarb.
-    const _body: { text: string; defer_visemes: boolean; emotion?: string; voice_name?: string } = {
+    const _body: { text: string; defer_visemes: boolean; emotion?: string; voice_name?: string; agent_id?: string } = {
       text,
       defer_visemes: true,
     };
@@ -669,6 +670,11 @@ async function _prepareServerSpeech(
     }
     if (profile && typeof profile.voice_name === 'string' && profile.voice_name.length > 0) {
       _body.voice_name = profile.voice_name;
+    }
+    // AD-738f (#1868): the speaking crew member's id; the server resolves it to a role for a
+    // per-role voice (Kokoro) and ignores an id it does not know.
+    if (typeof agent_id === 'string' && agent_id.length > 0) {
+      _body.agent_id = agent_id;
     }
     const resp = await fetch('/api/avatars/tts', {
       method: 'POST',
