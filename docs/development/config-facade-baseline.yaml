@@ -47,13 +47,13 @@ handoff_to_e2:
 pydantic_version: 2.12.5
 surface_counts:
   aliased_fields: 1
-  canonical_dump_leaves: 1891
-  field_definitions: 1886
+  canonical_dump_leaves: 1892
+  field_definitions: 1887
   incidental: 13
   own_models: 229
   owned: 298
   public_names: 311
-canonical_dump_sha256: 8cb35680164ba2d3d784356379df8e56f98909d871d4bf90b2c1c802f48cd655
+canonical_dump_sha256: 2f6e769684e4702cab5123823878548a211e41522cf25402e4663c26dc5d80b8
 non_instantiable:
 - A2APeerConfig
 - BaseModel
@@ -3428,7 +3428,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: 809d14b46f50416c1bf6ab7306c4e296e3df00b3d2ddb56961d885d272a737be
+    schema_sha256: 75da647dd89e3377b5a763c34b3c686234297eb3b328d4f9c79175c841fd7e5c
     fields:
     - {default: SystemInfo(...), name: system}
     - {default: PoolConfig(...), name: pools}
@@ -3629,11 +3629,12 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: ea745c2758ece4a25b87e9020b7be3b7a6f5ab90d8bc09cc859896376b710b0a
+    schema_sha256: 6a89fd5663afdb96b550325d2fd45f13a09fd7b850d8f9c7fd9682e99de4d3bc
     fields:
     - {default: '''ProbOS''', name: name}
     - {default: '''0.1.0''', name: version}
     - {default: '''INFO''', name: log_level}
+    - {default: '1.0', name: loop_stall_warn_seconds}
   TTSConfig:
     qualname: TTSConfig
     bases:

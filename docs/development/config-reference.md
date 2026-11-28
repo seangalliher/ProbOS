@@ -21,13 +21,14 @@ decision, and each one states what changes when you do.
 
 ## `system`
 
-Top-level system identity.
+Top-level system identity and process-wide diagnostics.
 
 | Field | Type | Default | Bounds | Description |
 |---|---|---|---|---|
 | `name` | `str` | `'ProbOS'` | — |  |
 | `version` | `str` | `'0.1.0'` | — |  |
 | `log_level` | `str` | `'INFO'` | — |  |
+| `loop_stall_warn_seconds` | `float` | `1.0` | ≥ 0.0, ≤ 60.0 | BF-932: seconds the event loop may go without a heartbeat before one WARNING names the code holding it (file:line function of the loop thread's innermost frames). 0 starts no sampler; otherwise at least 0.1. |
 
 ## `pools`
 

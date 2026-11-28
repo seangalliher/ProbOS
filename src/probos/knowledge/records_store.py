@@ -2,6 +2,7 @@
 
 import asyncio
 import fnmatch
+import hashlib
 import logging
 import math
 import os
@@ -18,6 +19,7 @@ import yaml
 from probos.cognitive.provenance import record_write_time
 from probos.execution.command_env import trusted_command_env
 from probos.utils.frontmatter import dump_frontmatter, load_frontmatter, split_frontmatter
+from probos.utils.loop_yield import LoopYield  # BF-932
 
 logger = logging.getLogger(__name__)
 
@@ -277,6 +279,9 @@ _SEARCH_LIMIT = 20
 #: collections open at once or more as unparsed, with either loader; the search reads with PyYAML a block libyaml
 #: cannot build or reads as nothing (A4). This replaces A5's separate search limit of 100.
 _RECORDS_YAML_LOADER: Any = yaml.CSafeLoader if getattr(yaml, "__with_libyaml__", False) else yaml.SafeLoader
+
+# BF-932 (#1670): a default-mode listing gives the event loop a turn every this many files (a count, not a time).
+_LIST_FILES_PER_YIELD = 16
 
 
 def _search_query_terms(query: str) -> list[str]:
@@ -1525,6 +1530,21 @@ class RecordsStore:
 
         return {"frontmatter": frontmatter, "content": content, "path": path}
 
+    async def entry_fingerprint(self, path: str) -> str | None:
+        """BF-932 (#1670): the sha256 hex digest of a record file's bytes, or None when the file does not exist.
+
+        Dream Step 7g takes it just before it reads a note and again just before it writes or archives that note, and
+        acts only when the two are equal: any write, rename or deletion between them changes the result. No
+        classification gate: the digest tells a caller only whether the bytes equal those of an earlier digest, and
+        Step 7g keeps one only for a note that passed ``read_entry``'s gate. No await (as in ``read_entry``), so a
+        caller that writes right after it gives the event loop no turn between the check and the write. Raises what
+        ``_safe_path`` and the file read raise.
+        """
+        file_path = self._safe_path(path)
+        if not file_path.exists():
+            return None
+        return hashlib.sha256(file_path.read_bytes()).hexdigest()
+
     async def list_entries(
         self,
         directory: str = "",
@@ -1567,8 +1587,14 @@ class RecordsStore:
         results = []
         # AD-1341 S4 (A4), BF-958: one walk for both modes; only the strict mode raises what hid a document
         found = _markdown_files(search_path, strict=strict)
+        # BF-932 (#1670): each file is read and parsed without an await, so a large directory held the event loop for
+        # the whole listing. The default mode gives the loop a turn every _LIST_FILES_PER_YIELD files; the strict mode
+        # (the stand-down's and the archive promotion's reads) keeps its one uninterrupted pass.
+        pacer = None if strict else LoopYield(_LIST_FILES_PER_YIELD)
 
         for md_file in sorted(found):
+            if pacer is not None and pacer.due():
+                await asyncio.sleep(0)
             rel_path = str(md_file.relative_to(root)).replace("\\", "/")
             # Skip archived
             if rel_path.startswith("_archived/"):

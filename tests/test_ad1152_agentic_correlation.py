@@ -355,6 +355,9 @@ async def _off_observation(
         "voices_path": "tools/kokoro/voices-v1.0.bin", "voice": "af_heart", "speed": 1.0, "threads": 4,
         "timeout_seconds": 30.0, "agent_voices": {},
     }
+    # BF-932's loop-stall threshold (1.0 s; 0 starts no sampler) was added after this capture too. The sampler is
+    # started in ProbOSRuntime.start, which this observation never calls.
+    assert config["system"].pop("loop_stall_warn_seconds") == 1.0
     # Deleted fields and changed defaults (BF-983, #1676). Each one moved the digest, which was refreshed by measurement
     # (_DEFAULT_CONFIG_RULE); the line names what the pinned digest no longer contains, or now contains.
     # BF-924 (#1654) removed the Counselor's four unread fields.

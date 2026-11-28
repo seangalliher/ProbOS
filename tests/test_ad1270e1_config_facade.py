@@ -1579,7 +1579,8 @@ def test_committed_baseline_records_the_measured_surface(
     # AD-1355 S1 (#1700) removes HolodeckBirthChamberConfig's eight fields and SystemConfig.holodeck_birth_chamber (1886 -> 1877).
     # AD-738g S1 (#1662) adds KokoroTTSConfig's seven fields and TTSConfig.kokoro (1877 -> 1885).
     # AD-738f S1 (#1868) adds KokoroTTSConfig.agent_voices (1885 -> 1886).
-    assert counts["field_definitions"] == 1886  # AD-1206 intentionally adds github_repository.
+    # BF-932 (#1670) adds system.loop_stall_warn_seconds (1886 -> 1887).
+    assert counts["field_definitions"] == 1887  # AD-1206 intentionally adds github_repository.
     assert counts["aliased_fields"] == 1
     # AD-1270 (#1324) slice 4c removes the BootCampPhaseConfig model (names 310 -> 309, models 230 -> 229).
     # AD-1346 M3c (#1604) adds AdmissionConfig (309 -> 310, 229 -> 230).
