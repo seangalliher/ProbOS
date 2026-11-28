@@ -1263,6 +1263,15 @@ def _validate_with_the_wrapper(
             payload["collected_nodeids"] = collected
             payload["collected_files"] = sorted({_scope(nodeid) for nodeid in collected})
         (directory / f"{worker}.json").write_text(json.dumps(payload), encoding="utf-8")
+    # BF-1006 (#1870): the worker-exit log the wrapper's plugin writes in the controller, every worker finishing clean.
+    exit_log = tmp_path / "run.workers.jsonl"
+    exit_log.write_text(
+        "".join(
+            json.dumps({"event": "down", "worker": worker, "error": None, "exitstatus": 0}) + "\n"
+            for worker in executed
+        ),
+        encoding="utf-8",
+    )
     return gate._validate_collection_manifests(
         directory,
         tmp_path / "run.collection.json",
@@ -1271,6 +1280,7 @@ def _validate_with_the_wrapper(
         junit_totals=gate.JUnitTotals(
             tests=len(collected), failures=0, errors=0, skipped=0, time_seconds=1.0
         ),
+        worker_exit_log=exit_log,
     )
 
 
@@ -1293,6 +1303,7 @@ def test_manifests_from_a_scheduled_run_pass_the_unmodified_wrapper_check(
     artifact = json.loads((tmp_path / "run.collection.json").read_bytes())
     assert totals.nodes == len(run.collection) == artifact["collection_count"]
     assert totals.workers == 4
+    assert totals.workers_lost == 0
     assert sum(artifact["worker_execution_counts"].values()) == len(run.collection)
     assert sorted(artifact["executed_nodeids"]) == sorted(run.collection)
 

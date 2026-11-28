@@ -70,6 +70,7 @@ _MUTATION_BACKUP_SUFFIXES = (".mutbak", ".mut_bak", ".mut.bak")
 _PYTEST_CONTROL_ENV = frozenset(
     {
         "PROBOS_GATE_COLLECTION_DIR",
+        "PROBOS_GATE_WORKER_EXIT_LOG",
         "PYTEST_ADDOPTS",
         "PYTEST_DISABLE_PLUGIN_AUTOLOAD",
         "PYTEST_PLUGINS",
@@ -154,6 +155,8 @@ class CollectionTotals:
     nodes: int
     workers: int
     sha256: str
+    # BF-1006 (#1870): workers the worker-exit log shows going down with an error; a validated run has 0.
+    workers_lost: int
 
 
 @dataclass(frozen=True)
@@ -185,6 +188,10 @@ class GateResult:
     # Report-only: the budget, or why there is none (see _compute_duration_budget).
     duration_budget: dict[str, object] | None = None
     duration_budget_skipped: str | None = None
+    # BF-1006 (#1870): the volume of the TEMP directory pytest inherits, and the worker-exit log, for every run.
+    # A failed run has no receipt, and its triage starts from these.
+    temp_volume: str | None = None
+    worker_exit_log_path: str | None = None
 
 
 class GateLock:
@@ -823,7 +830,7 @@ def _subprocess_env(repo_root: Path) -> dict[str, str]:
 
 
 def _pytest_subprocess_env(
-    repo_root: Path, collection_dir: Path
+    repo_root: Path, collection_dir: Path, *, worker_exit_log: Path
 ) -> dict[str, str]:
     env = _subprocess_env(repo_root)
     site_packages = str(Path(sysconfig.get_paths()["purelib"]).resolve())
@@ -833,6 +840,7 @@ def _pytest_subprocess_env(
     )
     env["PROBOS_GATE_COLLECTION_DIR"] = str(collection_dir.resolve())
     env["PYTHONPYCACHEPREFIX"] = str((collection_dir / "pycache").resolve())
+    env["PROBOS_GATE_WORKER_EXIT_LOG"] = str(worker_exit_log.resolve())
     return env
 
 
@@ -1236,6 +1244,66 @@ def _node_digest(values: Sequence[str]) -> str:
     return _sha256(payload)
 
 
+def _volume_of(directory: str) -> str:
+    """BF-1006 (#1870): the volume ``directory`` is on.
+
+    Its drive (``G:``) or UNC share on Windows, its mount point elsewhere. Only the
+    volume is recorded, never the directory, which names the user.
+    """
+    absolute = os.path.abspath(directory)
+    drive = os.path.splitdrive(absolute)[0]
+    if drive:
+        return drive.upper()
+    current = absolute
+    while not os.path.ismount(current):
+        parent = os.path.dirname(current)
+        if parent == current:
+            break
+        current = parent
+    return current
+
+
+def _count_lost_workers(path: Path, *, expected_workers: int) -> int:
+    """BF-1006 (#1870): the xdist workers the worker-exit log shows going down with an error.
+
+    ``scripts/_gate_pytest_plugin.py`` writes the log in the controller, one JSON object per
+    line: ``ready``; ``down``, with xdist's ``error`` (``None`` for a clean finish) and the
+    worker's own exit status when it finished; ``crash``, with the test it was running. Every
+    expected worker must have gone down, so a log that lost records refuses the run instead of
+    passing it. Every ``down`` record must carry ``error``, null or text, and only null is a
+    clean exit: an empty text still counts the worker lost.
+    """
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError as exc:
+        raise RuntimeError(f"pytest wrote no readable worker exit log: {path}: {exc}") from exc
+    down: set[str] = set()
+    lost = 0
+    for number, line in enumerate(lines, start=1):
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(f"worker exit log line {number} is not JSON: {path}") from exc
+        if (
+            not isinstance(record, dict)
+            or not isinstance(record.get("event"), str)
+            or not isinstance(record.get("worker"), str)
+        ):
+            raise RuntimeError(f"worker exit log line {number} is not a worker record: {path}")
+        if record["event"] == "down":
+            if "error" not in record or not (record["error"] is None or isinstance(record["error"], str)):
+                raise RuntimeError(
+                    f"worker exit log line {number} is a down record without a null or text error: {path}"
+                )
+            down.add(record["worker"])
+            if record["error"] is not None:
+                lost += 1
+    missing = sorted({f"gw{index}" for index in range(expected_workers)} - down)
+    if missing:
+        raise RuntimeError("worker exit log has no exit for: " + ", ".join(missing[:8]))
+    return lost
+
+
 def _validate_collection_manifests(
     collection_dir: Path,
     artifact_path: Path,
@@ -1243,6 +1311,7 @@ def _validate_collection_manifests(
     expected_workers: int,
     required_test_files: set[str],
     junit_totals: JUnitTotals,
+    worker_exit_log: Path,
 ) -> CollectionTotals:
     paths = sorted(collection_dir.glob("gw*.json"))
     expected_ids = {f"gw{index}" for index in range(expected_workers)}
@@ -1347,6 +1416,13 @@ def _validate_collection_manifests(
             "pytest JUnit total does not match protected collection: "
             f"junit={junit_totals.tests} collected={len(collected)}"
         )
+    # BF-1006 (#1870): a worker can be lost after it wrote its manifest (no crash item, no
+    # replacement manifest), so the controller's own record of every exit is checked too.
+    workers_lost = _count_lost_workers(worker_exit_log, expected_workers=expected_workers)
+    if workers_lost:
+        raise RuntimeError(
+            f"pytest lost {workers_lost} worker(s) during the run: see {worker_exit_log.name}"
+        )
 
     artifact = {
         "schema_version": 1,
@@ -1372,6 +1448,7 @@ def _validate_collection_manifests(
         nodes=len(collected),
         workers=expected_workers,
         sha256=collection_sha256,
+        workers_lost=workers_lost,
     )
 
 
@@ -1656,6 +1733,8 @@ def _write_success_receipt(
         raise RuntimeError("Cannot issue a success receipt without successful pytest")
     if result.collection_totals is None or not collection_path.is_file():
         raise RuntimeError("Cannot issue a success receipt without collection evidence")
+    if not result.temp_volume:
+        raise RuntimeError("Cannot issue a success receipt without the TEMP volume")
     head_tree = _git_bytes(repo_root, "rev-parse", "HEAD^{tree}").decode().strip()
     index_tree = _git_bytes(repo_root, "write-tree").decode().strip()
     if head_tree != index_tree:
@@ -1693,6 +1772,7 @@ def _write_success_receipt(
             "sha256": _sha256_file(collection_path),
             "totals": asdict(result.collection_totals),
         },
+        "run": {"temp_volume": result.temp_volume},
     }
     temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
     try:
@@ -1784,6 +1864,10 @@ def main(arguments: Sequence[str] | None = None) -> int:
     )
     collection_dir = junit_path.with_suffix(".collection-workers")
     collection_path = junit_path.with_suffix(".collection.json")
+    worker_exit_log_path = junit_path.with_suffix(".workers.jsonl")
+    # BF-1006 (#1870): the pytest child inherits this process's TEMP, TMP and TMPDIR (_subprocess_env),
+    # so its temporary files land on this volume.
+    temp_volume = _volume_of(tempfile.gettempdir())
     receipt_path: Path | None = None
     if args.receipt:
         receipt_path = (
@@ -1894,7 +1978,9 @@ def main(arguments: Sequence[str] | None = None) -> int:
                                 cwd=gate_root,
                                 log=log,
                                 env=_pytest_subprocess_env(
-                                    gate_root, collection_dir
+                                    gate_root,
+                                    collection_dir,
+                                    worker_exit_log=worker_exit_log_path,
                                 ),
                                 results=phases,
                             )
@@ -1941,6 +2027,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
                                                 _tracked_test_census(gate_root)
                                             ),
                                             junit_totals=junit_totals,
+                                            worker_exit_log=worker_exit_log_path,
                                         )
                                     )
                                 except RuntimeError as exc:
@@ -2063,6 +2150,12 @@ def main(arguments: Sequence[str] | None = None) -> int:
             collection_totals=collection_totals,
             duration_budget=duration_budget,
             duration_budget_skipped=duration_budget_skipped,
+            temp_volume=temp_volume,
+            worker_exit_log_path=(
+                str(worker_exit_log_path.relative_to(repo_root))
+                if worker_exit_log_path.exists()
+                else None
+            ),
         )
         _write_manifest(manifest_path, result)
         if receipt_path is not None and wrapper_exit_code == 0:

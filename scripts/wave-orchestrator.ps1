@@ -258,6 +258,22 @@ function Test-GitTreeIdentity {
     ) {
       throw "Canonical gate collection totals are absent or inconsistent"
     }
+    # BF-1006 (#1870): a success receipt states that no worker was lost and which volume TEMP was on.
+    if (
+      $collectionTotals.workers_lost -ne 0 -or
+      $manifest.collection_totals.workers_lost -ne $collectionTotals.workers_lost
+    ) {
+      throw "Canonical gate lost a worker or does not record its lost workers"
+    }
+    $run = $receipt.run
+    if (
+      $null -eq $run -or
+      -not ($run.temp_volume -is [string]) -or
+      -not $run.temp_volume -or
+      $manifest.temp_volume -ne $run.temp_volume
+    ) {
+      throw "Canonical gate receipt does not record its TEMP volume"
+    }
     return $receipt
   }
 

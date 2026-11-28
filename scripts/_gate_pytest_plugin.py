@@ -220,3 +220,85 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
         os.replace(temporary, target)
     finally:
         temporary.unlink(missing_ok=True)
+
+
+# BF-1006 (#1870): the worker-exit log. The controller writes one JSON object per line to the
+# file PROBOS_GATE_WORKER_EXIT_LOG names (the wrapper sets it; this plugin still adds no option):
+# a worker's start, its exit with xdist's error (None for a clean finish) and its own exit status
+# when it finished, and the test a worker was running when it was lost. xdist 3.8 gives the
+# controller no operating-system exit code: a killed worker is "Not properly terminated".
+# Measurement only, so a fault here -- reading xdist's objects, rendering the record or writing
+# it -- drops that record and does not change the run: xdist calls pytest_testnodedown before its
+# own crash guard. Each hook hands _write_worker_record a callable, so the reads run inside its
+# guard. The guard catches Exception, not BaseException: a process-control exception
+# (KeyboardInterrupt, SystemExit) still propagates, so an operator's cancellation is never
+# swallowed. The wrapper refuses a run whose log is missing an exit.
+_WORKER_EXIT_LOG_ENV = "PROBOS_GATE_WORKER_EXIT_LOG"
+_ERROR_TEXT_LIMIT = 500
+
+
+def _worker_name(node: object) -> str:
+    try:
+        return str(node.gateway.id)  # type: ignore[attr-defined]
+    except Exception:
+        return "unknown"
+
+
+def _error_text(error: object) -> str | None:
+    if error is None:
+        return None
+    try:
+        return str(error)[:_ERROR_TEXT_LIMIT] or type(error).__name__
+    except Exception:
+        return "<unprintable>"
+
+
+def _worker_exitstatus(node: object) -> int | None:
+    output = getattr(node, "workeroutput", None)
+    if not isinstance(output, dict):
+        return None
+    status = output.get("exitstatus")
+    return status if type(status) is int else None
+
+
+def _write_worker_record(build: Callable[[], dict[str, object]]) -> None:
+    """Append the record ``build`` returns. ``build`` runs inside the guard: only a process-control exception escapes."""
+    path = os.environ.get(_WORKER_EXIT_LOG_ENV)
+    if not path:
+        return
+    try:
+        record = {**build(), "wall": time.time()}
+        line = json.dumps(record, sort_keys=True, ensure_ascii=True, allow_nan=False)
+        with open(path, "a", encoding="utf-8") as handle:
+            handle.write(line + "\n")
+    except Exception:
+        return
+
+
+@pytest.hookimpl(optionalhook=True)
+def pytest_testnodeready(node: Any) -> None:
+    _write_worker_record(lambda: {"event": "ready", "worker": _worker_name(node)})
+
+
+@pytest.hookimpl(optionalhook=True)
+def pytest_testnodedown(node: Any, error: object | None) -> None:
+    _write_worker_record(
+        lambda: {
+            "event": "down",
+            "worker": _worker_name(node),
+            "error": _error_text(error),
+            "exitstatus": _worker_exitstatus(node),
+        }
+    )
+
+
+@pytest.hookimpl(optionalhook=True)
+def pytest_handlecrashitem(crashitem: str, report: Any, sched: Any) -> None:
+    # firstresult in xdist: returning None leaves the decision to the other implementations.
+    _write_worker_record(
+        lambda: {
+            "event": "crash",
+            "worker": _worker_name(getattr(report, "node", None)),
+            "nodeid": str(crashitem),
+        }
+    )
