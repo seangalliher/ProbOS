@@ -13,6 +13,7 @@ import hashlib
 import io
 import json
 import logging
+import os
 import struct
 import sys
 import wave
@@ -26,6 +27,7 @@ from httpx import ASGITransport, AsyncClient
 from probos.audio.tts import KokoroBackend, PiperBackend, TTSResult, select_backend
 from probos.audio.tts import kokoro_backend, resident
 from probos.audio.tts.kokoro_backend import KOKORO_VOICES, kokoro_speed
+from probos.audio.tts.piper_backend import resolve_executable_path
 from probos.audio.tts.resident import KokoroWorkerKey, PiperWorkerKey, VoiceSynthesisService
 from probos.config import AttachmentsConfig, KokoroTTSConfig, LipSyncConfig, TTSConfig
 from probos.execution.command_env import trusted_command_env
@@ -430,7 +432,10 @@ async def test_b1_the_backend_sends_the_configured_voice_and_speed_and_logs_the_
     assert len(svc.calls) == 1
     key, _text, timeout, fields = svc.calls[0]
     assert key == KokoroWorkerKey(
-        python=str(Path(sys.executable).resolve()),
+        # A3 (F-CI-1): the interpreter is absolute but NOT resolved. Resolving a POSIX venv's
+        # bin/python symlink starts the base interpreter, which cannot import the venv's packages.
+        # The script, model and voices paths are data files and stay resolved.
+        python=os.path.abspath(sys.executable),
         script=str(FAKE_WORKER.resolve()),
         model=str((tmp_path / "model.onnx").resolve()),
         voices=str((tmp_path / "voices.bin").resolve()),
@@ -572,6 +577,58 @@ async def test_b8_a_path_that_cannot_be_resolved_degrades_and_never_raises(
     assert svc.calls == []
     assert "a tts.kokoro path cannot be resolved (OSError" in caplog.text
     assert caplog.text.count("result=degraded") == 4
+
+
+def test_b9_the_interpreter_path_is_not_followed_through_a_link(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A3 (F-CI-1): a POSIX venv's bin/python links to the base interpreter, which finds no
+    # pyvenv.cfg beside itself. The link is simulated through os.path.realpath (which
+    # Path.resolve calls), so this case fails on a resolving helper on every platform.
+    link = tmp_path / "venv" / "bin" / "python"
+    link.parent.mkdir(parents=True)
+    link.write_bytes(b"")
+    target = tmp_path / "base" / "python"
+    target.parent.mkdir()
+    target.write_bytes(b"")
+    real = os.path.realpath
+
+    def _follows_the_link(path, *args, **kwargs):
+        return str(target) if os.fspath(path) == str(link) else real(path, *args, **kwargs)
+
+    monkeypatch.setattr(os.path, "realpath", _follows_the_link)
+
+    assert resolve_executable_path(str(link)) == link
+    assert resolve_executable_path(str(tmp_path / "venv" / "bin" / "absent")) is None
+    with pytest.raises(ValueError):
+        resolve_executable_path("tools/kokoro/a\x00b")
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="a symlink needs privilege on Windows; test_b9 simulates one")
+def test_b10_a_real_venv_interpreter_symlink_is_returned_unfollowed(tmp_path: Path) -> None:
+    link = tmp_path / "venv" / "bin" / "python"
+    link.parent.mkdir(parents=True)
+    link.symlink_to(sys.executable)
+
+    assert resolve_executable_path(str(link)) == link
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(sys.platform != "win32", reason="a drive-relative path (C:python.exe) exists only on Windows")
+async def test_b11_a_drive_relative_interpreter_path_is_refused_never_joined_to_the_cwd(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A3, round five: Path("C:python.exe") is not absolute, and joining it to the install root would
+    # drop the root and leave the launch to that drive's current directory.
+    for configured in ("C:python.exe", "C:"):
+        with pytest.raises(ValueError):
+            resolve_executable_path(configured)
+
+    svc = _RecordingService()
+    cfg = _installed(tmp_path, monkeypatch, python_path="C:python.exe")
+
+    assert await KokoroBackend(cfg, service=svc).synthesize("Hi.") is None
+    assert svc.calls == []
 
 
 # --- config, registry, selection --------------------------------------------------------------
