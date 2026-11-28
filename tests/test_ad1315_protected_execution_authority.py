@@ -308,9 +308,29 @@ def _child_values(layout: dict[str, Any], marker: Path) -> dict[str, str]:
     } | {"marker": str(marker)}
 
 
+class _KeptConnectionFactory:
+    """Hands the authority a default connection and keeps it, so a test reads what the authority set on it."""
+
+    def __init__(self) -> None:
+        self.connection: Any = None
+
+    async def connect(self, db_path: str) -> Any:
+        self.connection = await default_factory.connect(db_path)
+        return self.connection
+
+
 @pytest.mark.asyncio
 async def test_start_fresh_database_creates_schema_v2(tmp_path: Path) -> None:
-    layout, authority = await _started_authority(tmp_path)
+    # BF-1006 (#1870): ``synchronous`` is per connection, so the authority's level is read on the connection the
+    # authority set it on, before it stops. A connection the test opens reads only its own default (FULL in SQLite,
+    # OFF under the test suite's no-flush hook), which is not what the authority set. ``user_version`` and
+    # ``journal_mode=WAL`` belong to the file, so the test's own connection still reads those.
+    layout = _make_layout(tmp_path)
+    factory = _KeptConnectionFactory()
+    authority = _authority(layout, connection_factory=factory)
+    await authority.start()
+    cursor = await factory.connection.execute("PRAGMA synchronous")
+    synchronous = (await cursor.fetchone())[0]
     await authority.stop()
     with sqlite3.connect(layout["db"]) as db:
         tables = {
@@ -327,7 +347,6 @@ async def test_start_fresh_database_creates_schema_v2(tmp_path: Path) -> None:
         }
         version = db.execute("PRAGMA user_version").fetchone()[0]
         journal = db.execute("PRAGMA journal_mode").fetchone()[0]
-        synchronous = db.execute("PRAGMA synchronous").fetchone()[0]
         host = db.execute(
             "SELECT host_instance_id FROM authority_meta"
         ).fetchone()[0]
