@@ -3126,6 +3126,12 @@ class DreamingEngine:
         return created
 
 
+#: BF-930 (#1668): how long one stretch of spoken replies may hold off the idle full
+#: dream. A stretch begins at the first spoken reply after the last full dream; past
+#: this age speech no longer resets the idle clock (see record_speech_activity).
+SPEECH_DREAM_DEFER_CAP_SECONDS = 7200.0
+
+
 def _full_dream_complete_payload(report: DreamReport) -> dict[str, Any]:
     """The ``dream_complete`` payload of a full dream (AD-503; AD-531 and AD-551 fields).
 
@@ -3159,6 +3165,7 @@ class DreamScheduler:
         self.micro_dream_interval_seconds = micro_dream_interval_seconds
 
         self._last_activity_time: float = time.monotonic()
+        self._speech_since: float | None = None  # BF-930: start of the current spoken stretch
         self._last_dream_time: float = 0.0
         self._last_micro_dream_time: float = 0.0
         self._micro_dream_count: int = 0
@@ -3184,6 +3191,26 @@ class DreamScheduler:
     def record_activity(self) -> None:
         """Record that user activity occurred (resets idle timer)."""
         self._last_activity_time = time.monotonic()
+
+    def record_speech_activity(self, now: float | None = None) -> bool:
+        """BF-930 (#1668): a spoken reply is activity for the idle full dream, within a bound.
+
+        A stretch begins at the first spoken reply after the last full dream. While it is
+        younger than ``SPEECH_DREAM_DEFER_CAP_SECONDS`` each reply resets the idle timer
+        and this returns True. Past that age it returns False and leaves the timer alone,
+        so speech no longer keeps the monitor's idle condition false; the full dream starts
+        when all of the monitor's conditions hold (``idle_threshold_seconds`` since the last
+        activity of any source, ``dream_interval_seconds`` since the last dream). The first
+        reply after that dream begins a new stretch. ``now`` is a ``time.monotonic()``
+        value (default: now).
+        """
+        at = time.monotonic() if now is None else now
+        if self._speech_since is None or self._last_dream_time > self._speech_since:
+            self._speech_since = at
+        if at - self._speech_since >= SPEECH_DREAM_DEFER_CAP_SECONDS:
+            return False
+        self._last_activity_time = at
+        return True
 
     def start(self) -> None:
         """Start the background monitoring task."""
@@ -3337,6 +3364,9 @@ class DreamScheduler:
                     idle_time >= self.idle_threshold_seconds
                     and time_since_last_dream >= self.dream_interval_seconds
                 ):
+                    # BF-930 (#1668): the operator reads these two lines to see whether an idle dream runs.
+                    logger.info("BF-930: idle full dream starting idle_s=%.0f", idle_time)
+                    idle_dream_started_at = time.monotonic()
                     self._is_dreaming = True
                     if self._emergent_detector:
                         self._emergent_detector.set_dreaming(True)
@@ -3349,6 +3379,10 @@ class DreamScheduler:
                         report = await self.engine.dream_cycle()
                         self._last_dream_report = report
                         self._last_dream_time = time.monotonic()
+                        logger.info(
+                            "BF-930: idle full dream finished duration_ms=%.0f",
+                            (self._last_dream_time - idle_dream_started_at) * 1000,
+                        )
                         # AD-503: Emit dream complete event (monitor loop, full)
                         if self._emit_event_fn:
                             try:
