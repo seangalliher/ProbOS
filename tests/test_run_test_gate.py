@@ -112,7 +112,7 @@ def _only_manifest(repo: Path) -> dict[str, object]:
     return json.loads(manifests[0].read_text(encoding="utf-8"))
 
 
-def _gate_stub_source(exit_code: int) -> str:
+def _gate_stub_source(exit_code: int, *, defect: str = "") -> str:
     if exit_code != 0:
         return (
             "from pathlib import Path\n"
@@ -120,7 +120,7 @@ def _gate_stub_source(exit_code: int) -> str:
             "Path(__file__).with_name('gate-args.txt').write_text(' '.join(sys.argv[1:]))\n"
             f"raise SystemExit({exit_code})\n"
         )
-    return """from pathlib import Path
+    return f"DEFECT = {defect!r}\n" + """from pathlib import Path
 import hashlib
 import json
 import subprocess
@@ -141,7 +141,9 @@ junit = (
 )
 junit_path.write_text(junit)
 totals = {"tests": 1, "failures": 0, "errors": 0, "skipped": 0, "time_seconds": 0.0, "extra_reports": 0}
-collection_totals = {"nodes": 1, "workers": 1, "sha256": "fixture-nodes"}
+collection_totals = {"nodes": 1, "workers": 1, "sha256": "fixture-nodes", "workers_lost": 0}
+if DEFECT == "lost-worker":
+    collection_totals["workers_lost"] = 1
 collection_path.write_text(json.dumps({"collected_nodeids": ["tests/test_stub.py::test_stub"]}))
 manifest = {
     "wrapper_exit_code": 0,
@@ -152,6 +154,7 @@ manifest = {
     "junit_totals": totals,
     "collection_path": collection_path.relative_to(root).as_posix(),
     "collection_totals": collection_totals,
+    "temp_volume": "C:",
 }
 manifest_path.write_text(json.dumps(manifest, sort_keys=True))
 git = lambda *args: subprocess.check_output(["git", *args], cwd=root, text=True).strip()
@@ -192,7 +195,12 @@ receipt = {
         "sha256": sha(collection_path),
         "totals": collection_totals,
     },
+    "run": {"temp_volume": "C:"},
 }
+if DEFECT == "no-run":
+    del receipt["run"]
+elif DEFECT == "other-volume":
+    receipt["run"]["temp_volume"] = "Z:"
 receipt_path.write_text(json.dumps(receipt, sort_keys=True))
 """
 
@@ -926,7 +934,7 @@ def test_main_accepts_green_only_with_valid_nonempty_junit(
         **_kwargs: object,
     ) -> object:
         artifact.write_text("{}\n", encoding="utf-8")
-        return gate.CollectionTotals(nodes=2, workers=16, sha256="fixture")
+        return gate.CollectionTotals(nodes=2, workers=16, sha256="fixture", workers_lost=0)
 
     monkeypatch.setattr(
         gate, "_validate_collection_manifests", collection_validation
@@ -1448,6 +1456,21 @@ def test_main_success_receipt_binds_committed_tree_manifest_and_junit(
     assert receipt["collection"]["sha256"] == gate._sha256_file(collection_path)
     assert receipt["collection"]["totals"]["nodes"] == 1
     assert receipt["collection"]["totals"]["workers"] == 1
+    # BF-1006 (#1870): a real one-worker run through the wrapper's plugin. The controller wrote the worker-exit log,
+    # the validation read it, and the receipt records no lost worker and the TEMP volume.
+    assert receipt["collection"]["totals"]["workers_lost"] == 0
+    assert receipt["run"] == {"temp_volume": gate._volume_of(gate.tempfile.gettempdir())}
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert manifest["temp_volume"] == receipt["run"]["temp_volume"]
+    exit_log = repo / manifest["worker_exit_log_path"]
+    downs = [
+        record
+        for record in map(json.loads, exit_log.read_text(encoding="utf-8").splitlines())
+        if record["event"] == "down"
+    ]
+    assert [(record["worker"], record["error"], record["exitstatus"]) for record in downs] == [
+        ("gw0", None, 0)
+    ]
 
 
 def test_materialized_gate_tree_retries_and_verifies_cleanup(
@@ -2155,6 +2178,99 @@ def test_wave_orchestrator_verify_propagates_canonical_gate_exit(
         assert "verify_build_receipt" not in state
 
 
+_BF1006_REFUSALS = {
+    "lost-worker": "lost a worker",
+    "no-run": "TEMP volume",
+    "other-volume": "TEMP volume",
+}
+
+
+@pytest.mark.skipif(shutil.which("pwsh") is None, reason="PowerShell unavailable")
+@pytest.mark.parametrize("defect", sorted(_BF1006_REFUSALS))
+def test_wave_orchestrator_verify_refuses_a_receipt_with_a_lost_worker_or_no_temp_volume(
+    tmp_path: Path, defect: str
+) -> None:
+    """BF-1006 (#1870): the receipt validator checks the new fields; seeing them written is not enough."""
+    repo = tmp_path / f"orchestrator-{defect}"
+    scripts = repo / "scripts"
+    prompts = repo / "prompts"
+    scripts.mkdir(parents=True)
+    prompts.mkdir()
+    shutil.copy2(REPO_ROOT / "scripts" / "wave-orchestrator.ps1", scripts)
+    shutil.copy2(REPO_ROOT / "scripts" / "resolve-python.ps1", scripts)
+    (scripts / "run_test_gate.py").write_text(
+        _gate_stub_source(0, defect=defect), encoding="utf-8"
+    )
+    (prompts / "wave-plan.yaml").write_text(
+        "waves:\n  - id: test-wave\n    kind: main\n    status: pending\n",
+        encoding="utf-8",
+    )
+    (prompts / "wave-orchestrator-state.json").write_text(
+        json.dumps(
+            {
+                "current_wave": "test-wave",
+                "current_stage": "verify_build",
+                "history": [],
+                "verify_build_receipt": {
+                    "wave_id": "stale-wave",
+                    "tree": {
+                        "head": "stale",
+                        "index_tree": "stale",
+                        "status_sha256": "stale",
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    (repo / ".gitignore").write_text(
+        "/logs/\n/prompts/wave-orchestrator-state.json\n/scripts/gate-args.txt\n",
+        encoding="utf-8",
+    )
+    _git(repo, "init", "-q")
+    _git(repo, "add", ".")
+    _git(
+        repo,
+        "-c",
+        "user.name=ProbOS Tests",
+        "-c",
+        "user.email=tests@probos.invalid",
+        "commit",
+        "-q",
+        "-m",
+        "fixture",
+    )
+    env = os.environ.copy()
+    env.pop("PYTHONHOME", None)
+    env.pop("PYTHONPATH", None)
+    env["PROBOS_PYTHON"] = sys.executable
+
+    completed = subprocess.run(
+        [
+            "pwsh",
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(scripts / "wave-orchestrator.ps1"),
+            "verify",
+        ],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+        env=env,
+    )
+
+    assert completed.returncode == 5, completed.stdout + completed.stderr
+    assert "receipt validation failed" in completed.stderr
+    assert _BF1006_REFUSALS[defect] in completed.stderr
+    gate_arguments = (scripts / "gate-args.txt").read_text(encoding="utf-8")
+    assert not Path(gate_arguments.split("--receipt ", 1)[1]).exists(), "a refused receipt is removed"
+
+
 @pytest.mark.skipif(shutil.which("pwsh") is None, reason="PowerShell unavailable")
 def test_wave_orchestrator_rejects_zero_exit_without_gate_artifacts(
     tmp_path: Path,
@@ -2852,6 +2968,7 @@ _RECEIPT_KEYS = {
     "manifest",
     "junit",
     "collection",
+    "run",  # BF-1006 (#1870): the TEMP volume
 }
 _CLEAN_RECEIPT_STATUS = {
     "preflight_exit_code": 0,
@@ -3045,7 +3162,7 @@ def _stub_gate(
         if validation_fails:
             raise RuntimeError("pytest collection evidence is incomplete")
         artifact.write_text("{}\n", encoding="utf-8")
-        return gate.CollectionTotals(nodes=2, workers=16, sha256="fixture")
+        return gate.CollectionTotals(nodes=2, workers=16, sha256="fixture", workers_lost=0)
 
     monkeypatch.setattr(gate, "_build_full_command", full_command)
     monkeypatch.setattr(gate, "_validate_collection_manifests", collection_validation)
@@ -3374,17 +3491,21 @@ def test_the_budget_is_built_from_exactly_the_validated_worker_files(
     assert seen == [["gw0", "gw1", "gw2"]]
 
 
-def test_gate_result_gains_two_trailing_optional_fields(gate: ModuleType) -> None:
+def test_gate_result_ends_with_four_trailing_optional_fields(gate: ModuleType) -> None:
+    """Formerly ``test_gate_result_gains_two_trailing_optional_fields``. BF-1006 (#1870) added ``temp_volume`` and
+    ``worker_exit_log_path`` after the two duration-budget fields; every earlier field stays required."""
     import dataclasses
 
     fields = dataclasses.fields(gate.GateResult)
 
-    assert all(field.default is dataclasses.MISSING for field in fields[:-2])
-    assert [field.name for field in fields[-2:]] == [
+    assert all(field.default is dataclasses.MISSING for field in fields[:-4])
+    assert [field.name for field in fields[-4:]] == [
         "duration_budget",
         "duration_budget_skipped",
+        "temp_volume",
+        "worker_exit_log_path",
     ]
-    assert [field.default for field in fields[-2:]] == [None, None]
+    assert [field.default for field in fields[-4:]] == [None, None, None, None]
 
 
 def test_gate_timing_loader_registers_before_exec_and_is_reused(

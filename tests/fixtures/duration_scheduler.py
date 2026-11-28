@@ -41,16 +41,28 @@ first ``_assign_work_unit()`` after xdist has built the whole work queue re-orde
 that queue in place -- same scope keys, same work-unit dicts -- and then calls
 xdist. Comparing the collections, shutting down surplus workers, handing each
 worker its first unit, the low-watermark top-ups, crash handling and every later
-``schedule()`` stay xdist code.
+``schedule()`` stay xdist code, with the one exception for a replacement worker
+described below.
 
-The guarantee is order only, and it is stated as narrowly as it holds. For a run
-that completes, every collected node runs exactly once, as with stock xdist, and
-the canonical gate's collection-identity and exactly-once checks judge that run
-unchanged. xdist's own crash handling is inherited as it is: it re-queues a
-crashed worker's unit, so the crashing node is retried. Under ``--maxfail`` or
-``-x`` (CI uses ``--maxfail=10``) the run stops early, and *which* nodes ran
-before the stop depends on the order, as it does for any order change; the
-scheduler stays enabled there.
+The guarantee is order only, and it is stated as narrowly as it holds, apart from
+that exception. For a run that completes, every collected node runs exactly once,
+as with stock xdist, and the canonical gate's collection-identity and exactly-once
+checks judge that run unchanged. xdist's own crash handling is otherwise inherited
+as it is: it re-queues a crashed worker's unit, so the crashing node is retried.
+Under ``--maxfail`` or ``-x`` (CI uses ``--maxfail=10``) the run stops early, and
+*which* nodes ran before the stop depends on the order, as it does for any order
+change; the scheduler stays enabled there.
+
+One change to crash handling (BF-1006, #1870). xdist lists a replacement worker
+as soon as it is ready and registers its collection only when it has collected,
+and both ``remove_node`` and every later ``schedule()`` reschedule every listed
+worker. Stock xdist then pops a unit for a replacement that has not collected yet
+and raises ``KeyError`` on its collection. From ``schedule()`` (another worker
+finished collecting) the run aborts with exit 3. From ``remove_node`` (a second
+worker was lost) ``DSession.worker_errordown`` swallows it, so the crashed test
+is never reported and the popped unit is never sent. ``_assign_work_unit``
+returns without taking a unit for such a worker; it gets work when it registers,
+because ``DSession.worker_collectionfinish`` calls ``schedule()``.
 
 The scheduler is used only when every condition holds; otherwise the hook in
 ``tests/conftest.py`` returns ``None`` and xdist builds its stock scheduler:
@@ -310,6 +322,9 @@ class DurationOrderedLoadFileScheduling(LoadFileScheduling):
             )
 
     def _assign_work_unit(self, node: WorkerController) -> None:
+        # BF-1006 (#1870): a replacement worker is listed before it has collected; it gets work when it registers.
+        if node not in self.registered_collections:
+            return
         if self._order_pending:
             self._order_pending = False
             self._apply_duration_order()

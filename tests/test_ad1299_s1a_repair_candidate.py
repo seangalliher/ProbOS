@@ -160,7 +160,8 @@ def _real_receipt(gate: ModuleType, repo: Path, *, label: str = LABEL) -> bytes:
         sanitized_pytest_environment=[], summary="", log_path="", junit_path=str(junit),
         junit_totals=gate.JUnitTotals(tests=1, failures=0, errors=0, skipped=0, time_seconds=0.1),
         collection_path=str(collection),
-        collection_totals=gate.CollectionTotals(nodes=1, workers=1, sha256="0" * 64),
+        collection_totals=gate.CollectionTotals(nodes=1, workers=1, sha256="0" * 64, workers_lost=0),
+        temp_volume="C:",
     )
     receipt = gates / f"{label}.receipt.json"
     gate._write_success_receipt(
