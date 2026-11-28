@@ -30,6 +30,7 @@ from probos.config import PoolConfig
 from tests.fixtures.abortive_self_pipe import install_abortive_self_pipe
 from tests.fixtures.timeout_timer_release import pytest_runtest_protocol  # noqa: F401  (pytest hook)
 from tests.fixtures.recursion_limit_gc import gc_quiet_at_recursion_limit  # noqa: F401  (fixture; BF-986, #1754)
+from tests.fixtures.no_commit_flush import install_no_commit_flush, uninstall_no_commit_flush
 
 # AD-721i: defense-in-depth pytest collection ignore for the bundled in-Blender
 # render script. ``pyproject.toml`` already pins ``testpaths = ["tests"]`` so
@@ -62,6 +63,22 @@ os.environ["PYTHON_KEYRING_BACKEND"] = "keyring.backends.fail.Keyring"
 # force before any test builds a loop; it touches asyncio's self-pipe only, never a test's own socketpair --
 # see tests/fixtures/abortive_self_pipe.py (WinError 10055 at test setup).
 install_abortive_self_pipe()
+
+
+def pytest_configure(config):
+    """BF-1006 (#1870): SQLite connections start at ``synchronous=OFF`` and ``os.fsync`` does nothing, for the run.
+
+    Installed before collection, so a connection a test module opens when it is imported is covered too; see
+    ``tests/fixtures/no_commit_flush.py``. ``PROBOS_TEST_DURABLE_WRITES=1`` opts a run out. Only the connection
+    default changes: a store's own ``PRAGMA synchronous`` after connecting still wins, so no test may assert a
+    connection's default.
+    """
+    install_no_commit_flush()
+
+
+def pytest_unconfigure(config):
+    """BF-1006 (#1870): put back ``sqlite3.connect`` and ``os.fsync``."""
+    uninstall_no_commit_flush()
 
 
 @pytest.fixture(scope="session", autouse=True)
