@@ -9,6 +9,11 @@
 #      model-files-v1.0, each checked for its size and SHA-256 (the release publishes no
 #      digests; the pins are the LFS ids of the byte-identical files on
 #      huggingface.co/fastrtc/kokoro-onnx, and matched a download on 2026-11-27).
+#      With -TimedModel (AD-738g S3a), also the release model-files-v1.1 export of the same
+#      weights, which has a duration output (phoneme timings for lip-sync). The release names
+#      it kokoro-v1.0.onnx too, so it is saved as kokoro-v1.1.onnx beside S1's file; its pin is
+#      the release's own asset digest (read 2026-11-28). Nothing changes until
+#      tts.kokoro.model_path is set to it; removing that line goes back to S1's file.
 #   3. One test sentence spoken through scripts/kokoro_worker.py, the worker ProbOS runs.
 #
 # The destination must be an ASCII-only path: espeak-ng, inside the venv, cannot open its
@@ -20,10 +25,14 @@
 # Usage (from anywhere):
 #   powershell -ExecutionPolicy Bypass -File scripts\kokoro-fetch.ps1
 #   powershell -ExecutionPolicy Bypass -File scripts\kokoro-fetch.ps1 -Force   # rebuild the venv, re-download
+#   powershell -ExecutionPolicy Bypass -File scripts\kokoro-fetch.ps1 -TimedModel   # also the export with timings
 #
+# -TimedModel composes with both: -DestDir puts kokoro-v1.1.onnx in that folder beside the
+# other two files, and -Force re-downloads every file of the run, kokoro-v1.1.onnx included.
 param(
     [switch]$Force,
-    [string]$DestDir = "tools/kokoro"
+    [string]$DestDir = "tools/kokoro",
+    [switch]$TimedModel
 )
 
 $ErrorActionPreference = "Stop"
@@ -44,6 +53,10 @@ $Files = @(
     @{ name = "kokoro-v1.0.onnx"; size = 325532387; sha256 = "7d5df8ecf7d4b1878015a32686053fd0eebe2bc377234608764cc0ef3636a6c5" }
     @{ name = "voices-v1.0.bin";  size = 28214398;  sha256 = "bca610b8308e8d99f32e6fe4197e7ec01679264efed0cac9140fe9c29f1fbf7d" }
 )
+if ($TimedModel) {
+    # AD-738g S3a: release model-files-v1.1's asset, also named kokoro-v1.0.onnx, saved as kokoro-v1.1.onnx.
+    $Files += ,@{ name = "kokoro-v1.1.onnx"; url = "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.1/kokoro-v1.0.onnx"; size = 325505369; sha256 = "beb0d1848dee9a49da392cc3df26958d46cfa35d321edf434f52949153f0df3a" }
+}
 
 if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
     throw "uv is required (https://docs.astral.sh/uv/). Install it, then run this script again."
@@ -70,7 +83,8 @@ foreach ($f in $Files) {
     }
     $part = "$target.part"
     Write-Host "[get ] $($f.name) ..." -ForegroundColor Cyan
-    Invoke-WebRequest -Uri "$Base/$($f.name)" -OutFile $part -UseBasicParsing
+    $Url = if ($f.ContainsKey("url")) { $f.url } else { "$Base/$($f.name)" }
+    Invoke-WebRequest -Uri $Url -OutFile $part -UseBasicParsing
     $size = (Get-Item $part).Length
     $actual = (Get-FileHash $part -Algorithm SHA256).Hash.ToLower()
     if ($size -ne $f.size -or $actual -ne $f.sha256) {
@@ -93,10 +107,13 @@ if ($Importable) { throw "The Kokoro venv can import probos; it must not (licenc
 Write-Host "[ ok ] the Kokoro venv cannot import probos" -ForegroundColor Green
 
 $Model = Join-Path $DestDir "kokoro-v1.0.onnx"
+if ($TimedModel) { $Model = Join-Path $DestDir "kokoro-v1.1.onnx" }  # AD-738g S3a: the test line runs on the new file
 $Voices = Join-Path $DestDir "voices-v1.0.bin"
 $Worker = Join-Path $Root "scripts\kokoro_worker.py"
 $Probe = Join-Path $DestDir "fetch-check.wav"
+$Timing = "$Probe.timing.json"  # AD-738g S3a: the worker's phoneme timings beside the WAV
 if (Test-Path $Probe) { Remove-Item $Probe -Force }
+if ($TimedModel -and (Test-Path $Timing)) { Remove-Item $Timing -Force }
 # $Probe lies under $DestDir, which the guard above keeps ASCII, so the piped line needs no
 # escaping (PowerShell 5.1 pipes ASCII). The worker answers in UTF-8, and PowerShell decodes
 # a native program's output with [Console]::OutputEncoding, which need not be ASCII-compatible
@@ -117,6 +134,17 @@ if ($Exit -ne 0 -or -not (Test-Path $Probe) -or "$Answer".Trim() -ne $Probe) {
 $Bytes = (Get-Item $Probe).Length
 Remove-Item $Probe -Force
 Write-Host "[ ok ] the Kokoro worker spoke the test line ($Bytes bytes of 24 kHz WAV)" -ForegroundColor Green
+if ($TimedModel) {
+    if (-not (Test-Path $Timing)) {
+        throw "kokoro-v1.1.onnx spoke the test line but wrote no phoneme timings ($Timing), so it cannot time lip-sync. Leave tts.kokoro.model_path on kokoro-v1.0.onnx."
+    }
+    Remove-Item $Timing -Force
+    Write-Host "[ ok ] the model reports phoneme timings (lipsync.backend: synthesizer can use them)" -ForegroundColor Green
+}
 Write-Host ""
 Write-Host "Kokoro is installed at: $DestDir" -ForegroundColor White
 Write-Host "Set tts.backend: kokoro and tts.sentence_pipelining_enabled: true in config/system.yaml, then restart." -ForegroundColor White
+if ($TimedModel) {
+    $Setting = if ($PSBoundParameters.ContainsKey("DestDir")) { $Model } else { "tools/kokoro/kokoro-v1.1.onnx" }
+    Write-Host "For lip-sync timed by the voice, also set tts.kokoro.model_path: $Setting and lipsync.backend: synthesizer, then restart. Remove those two lines to go back to kokoro-v1.0.onnx." -ForegroundColor White
+}
