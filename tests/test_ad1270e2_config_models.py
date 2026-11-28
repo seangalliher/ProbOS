@@ -60,7 +60,8 @@ FIELD_TO_MODEL: dict[str, str] = {
 #: Deriving these from the models would make the assertion tautological: the
 #: point is to compare against what the values were before the file moved.
 EXPECTED_DUMPS: dict[str, dict[str, object]] = {
-    "system": {"name": "ProbOS", "version": "0.1.0", "log_level": "INFO"},
+    # BF-932 (#1670) adds system.loop_stall_warn_seconds (default 1.0) after the move.
+    "system": {"name": "ProbOS", "version": "0.1.0", "log_level": "INFO", "loop_stall_warn_seconds": 1.0},
     "pools": {
         "default_pool_size": 3,
         "max_pool_size": 7,
