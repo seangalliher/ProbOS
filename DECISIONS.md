@@ -17,7 +17,7 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 - *D2.* The warm-up calls the backend's own request path, the only place the worker key is built, so it can never start a second worker.
 - *D3.* It does not go through the route: no speech activity for the dream scheduler, and no attachment.
 - *D4.* The task is stored, never awaited at startup, and cancelled and awaited by the shutdown table before the voice service closes, rollback included.
-- *D5.* `tts.kokoro.prewarm` defaults on because it acts only on a vessel already set to `kokoro`. The cost is the worker's memory from boot in a session that never speaks.
+- *D5.* `tts.kokoro.prewarm` defaults on because it acts only on a vessel already set to `kokoro`. The cost is the worker's memory from boot in a session that never speaks, measured at about 0.5 GB working set and 1.3 GB private bytes after the warm-up (about 0.62 GB and 1.44 GB after eleven replies).
 - *Reversal.* `tts.kokoro.prewarm: false`, or revert the two commits. No persisted format changes.
 
 ### AD-738g S3a -- lip-sync timed by the synthesizer: the kokoro-onnx export that reports durations, a timing file beside each WAV, an opt-in lip-sync backend (2026-11-28, #1662)
