@@ -272,7 +272,7 @@ SECTIONS: tuple[SectionDescriptor, ...] = (
                 "tts.backend",
                 "TTS backend",
                 "enum",
-                enum_values=("browser", "piper"),
+                enum_values=("browser", "piper", "kokoro"),
             ),
             FieldDescriptor("tts.voice_model", "Piper voice model", "text"),
             FieldDescriptor("tts.length_scale", "Speech length scale", "float"),

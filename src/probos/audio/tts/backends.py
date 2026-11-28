@@ -35,6 +35,7 @@ class TTSBackend(Protocol):
         text: str,
         emotion: str | None = None,
         voice_override: str | None = None,
+        agent_type: str | None = None,
     ) -> TTSResult | None:
         """Synthesize ``text`` to audio bytes. Return ``None`` on any failure.
 
@@ -47,5 +48,10 @@ class TTSBackend(Protocol):
         ``tools/piper/voices/``, the backend uses that voice for THIS
         call only (no instance mutation). Unknown / unresolvable falls
         back to the configured ``tts.voice_model`` silently.
+
+        AD-738f (#1868): ``agent_type`` is the speaking crew member's role,
+        resolved by the route from the request's ``agent_id`` through the agent
+        registry. The route passes it only when it resolved one. A backend may
+        choose a per-role voice with it (Kokoro does) and must otherwise ignore it.
         """
         ...

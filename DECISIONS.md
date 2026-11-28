@@ -10,6 +10,28 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ## Era V — Civilization (Phases 31-36)
 
+### AD-738f S1 -- a distinct Kokoro voice per crew role: the route resolves the speaker's role through the registry; a built-in table and a Captain override per role (2026-11-27, #1868)
+
+- *Scope.* #1868 slice S1. `audio/tts/backends.py`, `null_backend.py`, `piper_backend.py`, `kokoro_backend.py` (`KOKORO_ROLE_VOICES`, `resolve_voice`), `config_models/experience.py` (`KokoroTTSConfig.agent_voices`), `routers/avatars.py` (`agent_id`), `ui/src/audio/voice.ts`. Contract `prompts/ad-738f-s1-per-agent-kokoro-voices.md`.
+- *D1.* The client sends the agent's registry id; the server resolves the role with `runtime.registry.get(id).agent_type`. Not the client (the registry is the authority), and not a parse of the id string (a second source of role).
+- *D2.* `TTSBackend.synthesize` gains `agent_type: str | None = None`; the route passes it only when a role was resolved, so a body without an id makes the same call as before.
+- *D3.* The default voice is keyed by role, so it survives restarts and roster changes; two agents of one role share a voice, and a role in no map speaks the ship voice unless the sentence carries a catalogue `voice_name`. Selecting `tts.backend: kokoro` turns the role table on even with `agent_voices: {}`.
+- *D4.* `agent_voices` keys are checked for shape, not against the 15 roles: a new crew type must be nameable. A misspelt role changes nothing and shows on the per-sentence log line (`role=`, `voice=`). A key containing secret, token, password, api_key or private_key is refused when parsed, because the config API (AD-741) would hide it on read and refuse it on write; the redaction rule itself is unchanged.
+- *Precedence.* Per-call catalogue `voice_name`, then `agent_voices[role]`, then `KOKORO_ROLE_VOICES[role]`, then `tts.kokoro.voice`.
+- *Reversal.* Revert both commits; nothing persisted changes. A leftover `agent_voices` block in `system.yaml` is then ignored (`KokoroTTSConfig` ignores unknown keys).
+
+### AD-738g S1 -- a local Kokoro voice: a resident worker in the operator's venv, keyed into the BF-918 voice service (2026-11-27, #1662)
+
+- *Scope.* `audio/tts/resident.py` (`WorkerKey`, `KokoroWorkerKey`, request `fields`), `audio/tts/kokoro_backend.py` (new), `scripts/kokoro_worker.py` (new), `scripts/kokoro-fetch.ps1` (new), `config_models/experience.py` (`KokoroTTSConfig`, `TTSConfig.kokoro`), `ui/src/audio/voice.ts` (the gate). Contract `prompts/ad-738g-s1-local-kokoro-voice.md`.
+- *D1.* Runtime: kokoro-onnx 0.6.1 in a separate venv under `tools/kokoro/`, one resident process speaking Piper's line protocol. Not the PyTorch package (multi-GB), not Kokoro-FastAPI (no documented authentication), not a ProbOS HTTP service (deferred to the remote-Mac slice).
+- *D2.* The resident service is generalised by a key Protocol, not a second worker class (DRY); Piper's line, retirement and log text stay as BF-918 shipped, except two service-wide lines that now say "voice".
+- *D3.* A Kokoro request the engine cannot speak is answered with no file and the process stays; an unreadable line or a missing default voice ends the worker. A respawn costs about 3.2 s of model load and first-call initialisation.
+- *D4.* CPU, 4 threads, 30 s timeout, no prewarm in S1 (measured real-time factor 0.314; one warm-up line before recording).
+- *D5.* The 28 English voice ids are the config's `Literal`, the single catalogue; a foreign per-call voice name is ignored.
+- *Licence.* GPL-3.0-or-later phonemizer and espeak-ng run only in the operator-installed worker process, which exchanges text, voice and speed in and a WAV path out; that venv does not contain `probos` (the install script checks it cannot import it), and `python -I` keeps `PYTHON*` variables and the user site out.
+- *Limit.* The venv must live under an ASCII-only path: espeak-ng cannot open its data from a path with a non-ASCII character (measured 2026-11-27). `scripts/kokoro-fetch.ps1` refuses such a destination before creating anything; the model, voices and output paths may be anything. An escaped installer pipe (A1's G9) was replaced by this guard, because the run it served cannot succeed.
+- *Reversal.* Revert the four commits and set `tts.backend` back to `piper` or `browser`; no persisted format changes. `tools/kokoro/` can be deleted.
+
 ### BF-1006 -- Test runs open SQLite with commit flushes off by default; the scheduler and the gate handle a lost worker (2026-11-28, #1870)
 
 - *Scope.* #1870 (F-757). `tests/fixtures/no_commit_flush.py` (new) and `tests/conftest.py`; `tests/fixtures/duration_scheduler.py`; `scripts/run_test_gate.py`, `scripts/_gate_pytest_plugin.py`, `scripts/wave-orchestrator.ps1`; the Gate workers line of `.github/agents/orchestrator.agent.md`. No production code. Contract `prompts/bf-1006-1870-test-runs-without-commit-flushes.md`.

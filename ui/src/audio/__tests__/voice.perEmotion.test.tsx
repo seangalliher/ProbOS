@@ -109,6 +109,7 @@ describe('AD-738e-1 speakResponse emotion forwarding', () => {
       text: 'hello',
       emotion: 'concerned',
       defer_visemes: true, // BF-918
+      agent_id: 'counselor', // AD-738f (#1868): the caller's agent id travels with each sentence
     });
   });
 
@@ -123,6 +124,7 @@ describe('AD-738e-1 speakResponse emotion forwarding', () => {
     await _flush();
 
     expect(postBodies.length).toBe(1);
-    expect(JSON.parse(postBodies[0])).toEqual({ text: 'hello', defer_visemes: true }); // BF-918
+    // AD-738f (#1868): this case passes the agent id 'counselor', which travels with each sentence.
+    expect(JSON.parse(postBodies[0])).toEqual({ text: 'hello', defer_visemes: true, agent_id: 'counselor' }); // BF-918
   });
 });

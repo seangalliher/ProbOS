@@ -7,9 +7,12 @@ it references no other config model and no module-level helper in
 
 from __future__ import annotations
 
+import re
 from typing import Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
+
+from probos.settings.section_registry import is_secret_field_id
 
 
 class ApprovalInboxConfig(BaseModel):  # AD-1154
@@ -617,6 +620,94 @@ class KnowledgeBrowserConfig(BaseModel):
     index_refresh_seconds: int = Field(default=300, ge=10, le=3600)
 
 
+#: AD-738g (#1662): the English Kokoro-82M voices (hexgrad/Kokoro-82M VOICES.md, read 2026-11-27):
+#: 20 American English (``a?_``) and 8 British English (``b?_``). The worker derives the
+#: language from the prefix, so a non-English voice is not offered.
+KokoroVoiceId = Literal[
+    "af_heart", "af_alloy", "af_aoede", "af_bella", "af_jessica", "af_kore", "af_nicole",
+    "af_nova", "af_river", "af_sarah", "af_sky",
+    "am_adam", "am_echo", "am_eric", "am_fenrir", "am_liam", "am_michael", "am_onyx",
+    "am_puck", "am_santa",
+    "bf_alice", "bf_emma", "bf_isabella", "bf_lily",
+    "bm_daniel", "bm_fable", "bm_george", "bm_lewis",
+]
+
+#: AD-738f (#1868): a key of ``tts.kokoro.agent_voices`` is a role name (an ``agent_type``).
+_ROLE_NAME = re.compile(r"[a-z][a-z0-9_]{0,63}")
+
+
+class KokoroTTSConfig(BaseModel):
+    """AD-738g (#1662) S1 -- the local Kokoro backend, read when ``tts.backend`` is ``kokoro``.
+
+    The operator installs the runtime and the model with ``scripts/kokoro-fetch.ps1``
+    (``tools/kokoro/``, gitignored). Relative paths anchor to the ProbOS install root, never
+    the process CWD (AD-1025). Kokoro runs on the CPU in one resident worker process; any
+    failure degrades to the browser voice.
+    """
+
+    python_path: str = "tools/kokoro/venv/Scripts/python"
+    """The operator venv's interpreter (``.exe`` appended on Windows). On Linux or macOS set
+    ``tools/kokoro/venv/bin/python``."""
+
+    model_path: str = "tools/kokoro/kokoro-v1.0.onnx"
+    """The Kokoro-82M ONNX model (Apache-2.0 weights; release ``model-files-v1.0``)."""
+
+    voices_path: str = "tools/kokoro/voices-v1.0.bin"
+    """The voices file of the same release."""
+
+    voice: KokoroVoiceId = "af_heart"
+    """The ship's voice, and the worker's default when a request's voice is missing from the
+    voices file. A per-call ``voice_name`` that is one of these ids overrides it."""
+
+    speed: float = Field(default=1.0, ge=0.5, le=2.0)
+    """Speech rate (kokoro-onnx accepts 0.5 to 2.0). The AD-738e-1 per-emotion ``length_scale``
+    divides it, clamped to the same range."""
+
+    threads: int = Field(default=4, ge=1, le=16)
+    """ONNX Runtime intra-op threads. Measured on a Ryzen 9 7950X3D: real-time factor 0.314
+    at 4, 0.23 at 8, 0.181 at 16. 4 leaves the cores to the vessel."""
+
+    timeout_seconds: float = Field(default=30.0, gt=0.0, le=600.0, allow_inf_nan=False)
+    """Per-sentence timeout, counted from when the worker takes the request. A timeout kills
+    the worker, and the next sentence reloads the model (about 3.2 s cold). At most 600 s:
+    ``threading.Timer`` takes no more than ``threading.TIMEOUT_MAX`` (4294967 s on Windows),
+    and an infinite deadline would never fire."""
+
+    agent_voices: dict[str, KokoroVoiceId] = Field(default_factory=dict)
+    """AD-738f (#1868) S1: the Captain's voice for a crew role (an ``agent_type``), for example
+    ``counselor: af_sky``. It replaces that role's built-in voice
+    (``probos.audio.tts.kokoro_backend.KOKORO_ROLE_VOICES``); a per-call ``voice_name`` that is
+    one of these ids replaces both. A role the built-in table lacks may be named. A misspelt
+    role matches no crew member and changes nothing; each sentence's log line shows its
+    ``voice=`` and ``role=``."""
+
+    @field_validator("python_path", "model_path", "voices_path")
+    @classmethod
+    def _paths_can_name_a_file(cls, value: str) -> str:
+        """A path is non-blank and holds no NUL character, which no file system accepts."""
+        if not value.strip() or "\x00" in value:
+            raise ValueError("tts.kokoro: a path must be non-blank and must not contain a NUL character")
+        return value
+
+    @field_validator("agent_voices")
+    @classmethod
+    def _keys_are_role_names(cls, value: dict[str, str]) -> dict[str, str]:
+        """A key is an ``agent_type``: lowercase letters, digits and ``_``, at most 64 characters,
+        and not a name the config API treats as a secret field (AD-741)."""
+        for role in value:
+            if not _ROLE_NAME.fullmatch(role):
+                raise ValueError(f"tts.kokoro.agent_voices: {role!r} is not a role name (an agent_type)")
+            if is_secret_field_id(role):
+                # /api/config hides such a key on read and refuses a patch that holds it
+                # (routers/config.py); the redaction rule stays as AD-741 wrote it.
+                raise ValueError(
+                    f"tts.kokoro.agent_voices: {role!r} contains secret, token, password, api_key or "
+                    "private_key, which the config API treats as a secret field and would hide and "
+                    "refuse; this role speaks its KOKORO_ROLE_VOICES voice or tts.kokoro.voice"
+                )
+        return value
+
+
 class LipSyncConfig(BaseModel):
     """AD-721b-1 — Server-side lip-sync backend selection.
 
@@ -741,11 +832,12 @@ class TTSConfig(BaseModel):
     ``POST /api/avatars/tts`` return ``{"backend": "disabled"}``; the
     browser falls back to SpeechSynthesisUtterance."""
 
-    backend: Literal["browser", "piper"] = "browser"
+    backend: Literal["browser", "piper", "kokoro"] = "browser"
     """``browser``: server returns ``{"backend": "disabled"}``, browser
     uses SpeechSynthesisUtterance (default — zero behaviour change for
     operators who don't install Piper). ``piper``: subprocess wrapper
-    around the piper binary."""
+    around the piper binary. ``kokoro`` (AD-738g): a resident Kokoro
+    worker on this machine's CPU, configured under ``kokoro``."""
 
     binary_path: str = "tools/piper/piper"
     """Path (relative to repo root or absolute) to the piper binary.
@@ -810,7 +902,8 @@ class TTSConfig(BaseModel):
     sentence_pipelining_enabled: bool = False
     """AD-1071 — Sentence-chunked TTS pipelining (voice edge). Default-OFF.
 
-    When ``True`` AND the backend is ``piper`` AND a reply contains more
+    When ``True`` AND the backend is a server backend (``piper`` or
+    ``kokoro``; AD-738g recommends it with ``kokoro``) AND a reply contains more
     than one sentence, the browser splits the finished reply into
     sentences and synthesizes + plays them SEQUENTIALLY (an ordered
     queue). The first audio then starts after synthesizing only the
@@ -823,6 +916,10 @@ class TTSConfig(BaseModel):
     exactly as before (byte-identical). Surfaced by
     ``GET /api/avatars/tts/status`` so the browser can read it via its
     existing one-time status probe."""
+
+    kokoro: KokoroTTSConfig = Field(default_factory=KokoroTTSConfig)
+    """AD-738g (#1662): the local Kokoro backend's settings, read when
+    ``backend`` is ``kokoro``."""
 
 
 class WakeWordConfig(BaseModel):

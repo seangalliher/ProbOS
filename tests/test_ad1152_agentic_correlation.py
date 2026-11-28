@@ -348,6 +348,13 @@ async def _off_observation(
     # AD-1360's inert correlation cutoff (0.0 judges no episode) was added to the memory-security section after this
     # capture too.
     assert config["security"]["memory"].pop("correlation_cutoff") == 0.0
+    # AD-738g S1's local Kokoro section was added to the speech config after this capture too. It is read only when
+    # tts.backend is "kokoro" (the default is "browser"); this observation synthesizes no speech.
+    assert config["tts"].pop("kokoro") == {
+        "python_path": "tools/kokoro/venv/Scripts/python", "model_path": "tools/kokoro/kokoro-v1.0.onnx",
+        "voices_path": "tools/kokoro/voices-v1.0.bin", "voice": "af_heart", "speed": 1.0, "threads": 4,
+        "timeout_seconds": 30.0, "agent_voices": {},
+    }
     # BF-932's loop-stall threshold (1.0 s; 0 starts no sampler) was added after this capture too. The sampler is
     # started in ProbOSRuntime.start, which this observation never calls.
     assert config["system"].pop("loop_stall_warn_seconds") == 1.0

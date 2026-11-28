@@ -16,6 +16,7 @@ output). The endpoint treats ``None`` as the signal to return
 from __future__ import annotations
 
 import logging
+import os
 import sys
 from pathlib import Path
 
@@ -56,6 +57,45 @@ def resolve_voices_dir(voices_dir: str) -> Path:
     location regardless of the process CWD. Absolute as-is; relative under
     ``_probos_root()``; NEVER the CWD. NEVER raises."""
     return _anchor_path(voices_dir)
+
+
+def anchor_install_path(configured: str) -> Path:
+    """AD-738g: ``_anchor_path`` for the sibling Kokoro backend (AD-1025: absolute as-is,
+    relative under ``_probos_root()``, never the CWD). Raises ``OSError`` or ``ValueError``
+    for a path the OS cannot represent (``Path.resolve``, for example an embedded NUL); the
+    Kokoro backend catches both and degrades."""
+    return _anchor_path(configured)
+
+
+def resolve_executable_path(configured: str) -> Path | None:
+    """AD-738g: the Kokoro backend's interpreter, anchored as ``_anchor_path`` anchors (absolute
+    as-is, relative under ``_probos_root()``, never the CWD), with ``.exe`` appended on Windows
+    when the literal path is missing. ``None`` when not found.
+
+    A3 (F-CI-1): the path is made absolute with ``os.path.abspath`` and NOT resolved. A POSIX
+    venv's ``bin/python`` is a symlink to its base interpreter, and Python finds the venv by the
+    ``pyvenv.cfg`` beside the path it was started as. Started through the link's target, it
+    cannot import the venv's packages. The ``.exe`` probe mirrors ``_resolve_binary_path``,
+    which Piper keeps unchanged. Raises ``ValueError`` for a path holding a NUL on every
+    platform (``ntpath.abspath`` would otherwise swallow it), and on Windows for a drive-relative
+    path such as ``C:python.exe``: it is not absolute, and joining it to the install root would
+    drop the root and leave the launch to that drive's current directory. The Kokoro backend
+    catches the ``ValueError`` and degrades."""
+    if "\x00" in configured:
+        raise ValueError("embedded null byte")
+    candidate = Path(configured)
+    if not candidate.is_absolute():
+        if candidate.drive:
+            raise ValueError("a drive-relative path depends on the working directory")
+        candidate = _probos_root() / candidate
+    p = Path(os.path.abspath(candidate))
+    if p.is_file():
+        return p
+    if sys.platform == "win32" and p.suffix.lower() != ".exe":
+        with_exe = p.parent / (p.name + ".exe")
+        if with_exe.is_file():
+            return with_exe
+    return None
 
 
 def _resolve_binary_path(configured: str) -> Path | None:
@@ -127,8 +167,12 @@ class PiperBackend:
         text: str,
         emotion: str | None = None,
         voice_override: str | None = None,
+        agent_type: str | None = None,
     ) -> TTSResult | None:
         """Run piper, return WAV bytes or ``None`` on any failure.
+
+        AD-738f (#1868): ``agent_type`` (the speaking crew role) is accepted for
+        the Protocol and ignored: Piper has no per-role default voice.
 
         AD-738e-1: ``emotion`` is an optional v1 ``EmotionalIntent`` name.
         When provided and known, applies per-emotion prosody overrides
@@ -145,6 +189,7 @@ class PiperBackend:
 
         NEVER raises. Empty / whitespace-only ``text`` short-circuits to
         ``None`` (no point invoking the subprocess for nothing)."""
+        del agent_type
         if not text or not text.strip():
             return None
         binary = _resolve_binary_path(self._binary_path)

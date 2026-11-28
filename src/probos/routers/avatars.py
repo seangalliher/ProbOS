@@ -93,7 +93,8 @@ async def tts_status(
     """AD-738 — One-time feature probe for the browser.
 
     The browser caches this response in module-level state in ``voice.ts``
-    and skips ``POST /api/avatars/tts`` entirely when ``backend != "piper"``.
+    and skips ``POST /api/avatars/tts`` entirely when ``backend == "browser"``
+    (AD-738g: ``piper`` and ``kokoro`` both take the server path).
     This preserves the Wave 156 zero-HTTP-per-utterance behaviour for
     operators who haven't opted in to server-side TTS (the default).
     """
@@ -261,6 +262,17 @@ async def _synthesize_tts_impl(req: Request, runtime: Any) -> dict[str, Any]:
         # boundary even though _resolve_voice_model also validates.
         voice_name = None
 
+    # AD-738f (#1868): optional ``agent_id``, the speaking crew member's registry id. The
+    # registry resolves it to a role, which a backend may use for a per-role voice (Kokoro
+    # does; Piper and null ignore it). Tier-1 boundary validation, as for ``voice_name``: a
+    # malformed, overlong or unknown id means no role, never an error.
+    agent_type: str | None = None
+    agent_id = payload.get("agent_id")
+    if isinstance(agent_id, str) and agent_id.strip() and len(agent_id) <= 128:
+        agent = runtime.registry.get(agent_id)
+        if agent is not None and isinstance(agent.agent_type, str) and agent.agent_type:
+            agent_type = agent.agent_type
+
     # BF-918 (#1626): a client that asks gets its visemes from POST /api/avatars/lipsync
     # while the audio plays, so rhubarb (0.85 s for one sentence, 2.8 s for seven,
     # measured 2026-10-22) is off the first-audio path. Any other client keeps the
@@ -279,7 +291,10 @@ async def _synthesize_tts_impl(req: Request, runtime: Any) -> dict[str, Any]:
     voice_service = getattr(runtime, "voice_synthesis", None)
     started = time.perf_counter()
     backend = select_backend(cfg.backend, cfg, service=voice_service)
-    result = await backend.synthesize(text, emotion=emotion, voice_override=voice_name)
+    # AD-738f: the role goes to the backend only when one was resolved, so a body without an
+    # agent id makes the same backend call as before.
+    role_kwargs: dict[str, str] = {} if agent_type is None else {"agent_type": agent_type}
+    result = await backend.synthesize(text, emotion=emotion, voice_override=voice_name, **role_kwargs)
     synthesized = time.perf_counter()
     if result is None:
         logger.info(

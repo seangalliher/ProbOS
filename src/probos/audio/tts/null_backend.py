@@ -20,12 +20,14 @@ class NullBackend:
         text: str,
         emotion: str | None = None,
         voice_override: str | None = None,
+        agent_type: str | None = None,
     ) -> TTSResult | None:
         """No-op. Returns ``None`` for honest-degrade.
 
         AD-738e-1: ``emotion`` accepted for Protocol compat; ignored.
         BF-291 / AD-738f: ``voice_override`` accepted for Protocol compat;
         ignored because the null backend produces no audio.
+        AD-738f (#1868): ``agent_type`` accepted for Protocol compat; ignored.
         """
-        del emotion, voice_override
+        del emotion, voice_override, agent_type
         return None

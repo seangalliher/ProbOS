@@ -573,25 +573,27 @@ function _playNow(entry: SpeechQueueEntry, endWait: () => void): boolean {
   _sentenceEndedAt = null;
 
   // Fast synchronous path: if fetch is unavailable OR the cached probe
-  // already says "not piper", run the browser fallback synchronously.
+  // already says "browser" (AD-738g: any other backend is a server one), run
+  // the browser fallback synchronously.
   if (typeof (globalThis as any).fetch !== 'function') {
     _ttsStatus = { enabled: false, backend: 'browser', sentence_pipelining_enabled: false };
     _speakBrowserFallback(text, profile, agent_id, utterance_id);
     return true;
   }
-  if (_ttsStatus !== null && (!_ttsStatus.enabled || _ttsStatus.backend !== 'piper')) {
+  if (_ttsStatus !== null && (!_ttsStatus.enabled || _ttsStatus.backend === 'browser')) {
     _speakBrowserFallback(text, profile, agent_id, utterance_id);
     return true;
   }
 
   void (async () => {
     // ZERO-HTTP guarantee for default config (Captain decision #9):
-    // probe once, cache, and skip the POST entirely when backend != "piper".
+    // probe once, cache, and skip the POST entirely when backend == "browser"
+    // (AD-738g: piper and kokoro both take the server path, as the server's gate does).
     const status = await _fetchTtsStatus();
     // BF-918 (review round 1, D7a): each await between dispatch and audio re-checks
     // that this utterance still owns the device. Stopped during the probe: speak nothing.
     if (_activeUtteranceId !== utterance_id) { _fireDropped(entry, CANCELLED_BEFORE_AUDIO); return; }
-    if (status === null || !status.enabled || status.backend !== 'piper') {
+    if (status === null || !status.enabled || status.backend === 'browser') {
       _speakBrowserFallback(text, profile, agent_id, utterance_id);
       return;
     }
@@ -614,7 +616,7 @@ function _playNow(entry: SpeechQueueEntry, endWait: () => void): boolean {
         try {
           played = await runPrefetchQueue<PreparedSpeech>(
             sentences,
-            (sentence) => _prepareServerSpeech(sentence, profile, emotion),
+            (sentence) => _prepareServerSpeech(sentence, profile, emotion, agent_id),
             (prepared, sentence, index) => _playPreparedSpeech(prepared, sentence, profile, agent_id, utterance_id, index === last),
             () => _activeUtteranceId === utterance_id,
             TTS_PREFETCH_LOOKAHEAD,
@@ -668,7 +670,7 @@ async function _synthesizeAndPlay(
   emotion: string | undefined,
   utterance_id: number,
 ): Promise<boolean> {
-  const prepared = await _prepareServerSpeech(text, profile, emotion);
+  const prepared = await _prepareServerSpeech(text, profile, emotion, agent_id);
   if (_activeUtteranceId !== utterance_id) { _discardPreparedSpeech(prepared); return false; }
   await _playPreparedSpeech(prepared, text, profile, agent_id, utterance_id);
   return true;
@@ -681,6 +683,7 @@ async function _prepareServerSpeech(
   text: string,
   profile: VoiceProfile | undefined,
   emotion: string | undefined,
+  agent_id: string | undefined,
 ): Promise<PreparedSpeech | null> {
   try {
     // AD-738e-1: pass v1 emotion name (resolved server-side) so the TTS
@@ -690,7 +693,7 @@ async function _prepareServerSpeech(
     // to the configured tts.voice_model on miss. BF-918: ask for the visemes
     // separately (POST /api/avatars/lipsync), so first audio does not wait for
     // rhubarb.
-    const _body: { text: string; defer_visemes: boolean; emotion?: string; voice_name?: string } = {
+    const _body: { text: string; defer_visemes: boolean; emotion?: string; voice_name?: string; agent_id?: string } = {
       text,
       defer_visemes: true,
     };
@@ -699,6 +702,11 @@ async function _prepareServerSpeech(
     }
     if (profile && typeof profile.voice_name === 'string' && profile.voice_name.length > 0) {
       _body.voice_name = profile.voice_name;
+    }
+    // AD-738f (#1868): the speaking crew member's id; the server resolves it to a role for a
+    // per-role voice (Kokoro) and ignores an id it does not know.
+    if (typeof agent_id === 'string' && agent_id.length > 0) {
+      _body.agent_id = agent_id;
     }
     const resp = await fetch('/api/avatars/tts', {
       method: 'POST',
