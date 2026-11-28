@@ -491,6 +491,66 @@ def test_the_order_is_applied_once_a_crash_requeue_lands_at_the_tail_and_later_s
     assert len(run.config.lines) == 1
 
 
+# --- BF-1006 (#1870): a replacement that has not collected yet gets no work until it registers ---
+
+_SIX_FILES = {f"tests/test_{name}.py": 4 for name in "abcdef"}
+
+
+def _after_one_death(make: Callable[[_Config], LoadFileScheduling]) -> tuple[_Run, _Node]:
+    """Two workers each running one 4-test file; the first dies and its replacement is listed, still collecting."""
+    run = _Run(make, _SIX_FILES)
+    dead, _survivor = run.nodes
+    assert run.scheduler.remove_node(dead) is not None, "premise: the dead worker had a test in flight"
+    replacement = _Node("gw2", run.events)
+    run.scheduler.add_node(replacement)
+    return run, replacement
+
+
+def _guarded_scheduler(config: _Config) -> LoadFileScheduling:
+    return _ordered(config, _durations({scope: 1.0 for scope in _SIX_FILES}))
+
+
+def test_a_second_death_while_the_replacement_collects_reports_the_crash_and_requeues_the_work() -> None:
+    """Stock xdist raises KeyError here and DSession.worker_errordown swallows it: the second crashed test is never
+    reported and the unit popped for the replacement is never sent. The subclass reports it and keeps every unit."""
+    stock, _ = _after_one_death(_stock)
+    with pytest.raises(KeyError):  # premise: stock xdist 3.8 hands the unregistered replacement a unit
+        stock.scheduler.remove_node(stock.nodes[1])
+
+    run, replacement = _after_one_death(_guarded_scheduler)
+    survivor = run.nodes[1]
+    in_flight = run.collection[survivor.sent[0][0]]
+    assert run.scheduler.remove_node(survivor) == in_flight, "the lost worker's test is reported, so the run fails"
+    assert replacement.sent == [] and run.scheduler.assigned_work[replacement] == {}
+    assert len(run.scheduler.workqueue) == len(_SIX_FILES), "both dead workers' units are queued again"
+
+    run.scheduler.add_node_collection(replacement, run.collection)
+    run.scheduler.schedule()  # DSession.worker_collectionfinish does this once the replacement has collected
+    assert replacement.sent, "the replacement gets work once it registers"
+    run.nodes = [replacement]
+    executed = run.run_to_completion()
+    assert sorted(executed["gw2"]) == sorted(run.collection), "every test runs exactly once, on the replacement"
+
+
+def test_a_schedule_while_a_replacement_collects_does_not_abort_the_run() -> None:
+    """DSession.worker_collectionfinish calls schedule() whenever a worker has collected. Stock xdist then raises
+    KeyError for a replacement still collecting, uncaught, and the run aborts with exit 3 (F-757)."""
+    stock, _ = _after_one_death(_stock)
+    with pytest.raises(KeyError):  # premise
+        stock.scheduler.schedule()
+
+    run, replacement = _after_one_death(_guarded_scheduler)
+    run.scheduler.schedule()
+    assert replacement.sent == [] and run.scheduler.assigned_work[replacement] == {}
+
+    run.scheduler.add_node_collection(replacement, run.collection)
+    run.scheduler.schedule()
+    assert replacement.sent, "the replacement gets work once it registers"
+    run.nodes = [run.nodes[1], replacement]
+    executed = run.run_to_completion()
+    assert sorted(sum(executed.values(), [])) == sorted(run.collection), "every test runs exactly once"
+
+
 def test_the_rebuild_is_in_place_with_the_same_scope_keys_and_work_unit_objects() -> None:
     class Recording(DurationOrderedLoadFileScheduling):
         before: list[tuple[str, dict[str, bool]]] | None = None
