@@ -2801,3 +2801,254 @@ FOUND: 1505, 2278 (test bodies), 1870 (section 13; corrected by A2)             
 #### 16.12.7 Prior art
 
 Repair round; no new design. `PathIntrinsics.GetUnresolvedProviderPathFromPSPath` is PowerShell's documented resolver for a path that need not exist. The console-decoding behaviour is the one 16.10 already cited (`about_Character_Encoding`). No external search was run.
+
+### 16.13 Amendment A3: CI repair, the interpreter path on POSIX (2026-11-27)
+
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-27. **Base:** `88676ab1` (the speech batch head before the repair). Source: GitHub Actions run 46104840915 on PR #1872; the orchestrator's runner probe, run 46106607981; the round-three brake decision **continue** (pairs P1 to P6), applied as written. A3 supersedes 16.2 and 6.4 where they define `resolve_executable_path`, and the `test_b1` expectation in 6.15; it adds 3 tests (B9, B10, B11).
+
+**Round five (2026-11-27, applied by the orchestrator under the Architect's decision "any finding from round five is repaired in place and goes straight to the gate").** The Diff Reviewer (`gpt-6.1-sol`) reported two findings. **F-CI-2 (P2, ordinary reach, not a regression: the previous helper did the same):** a Windows drive-relative interpreter path such as `C:python.exe` is not absolute, so joining it to the install root dropped the root and left the launch to that drive's current directory (16.13.1a). **A P3 on this text:** it said "every POSIX host" and "Linux is the only platform", and it quoted T3 as `disabled == kokoro`. Both are repaired in this section: the helper (P2 below), the Windows-only test B11 (P5), mutation row MA3-3, and the corrected wording. The pairs below are the final applied text.
+
+#### 16.13.1 Finding F-CI-1 (P1 on POSIX)
+
+`resolve_executable_path` (`piper_backend.py:69-74`) delegates to `_resolve_binary_path`, which returns `candidate.resolve()` (`piper_backend.py:49`). A POSIX venv's `bin/python` is a symlink to its base interpreter, and Python finds its venv from the `pyvenv.cfg` beside the path it was started as. Started through the link's target, the Kokoro worker runs in the base interpreter and cannot import the venv's packages. Wherever the venv's interpreter is a symlink (the default of `python -m venv` and `uv venv` on POSIX; `--copies` makes a real file), the backend therefore starts a worker that dies at its first import: the feature cannot work with such a venv, and the Windows gate cannot see it (a Windows venv's `python.exe` is a copy, not a link).
+
+Evidence (2026-11-27):
+- **The failures.** Run 46104840915: shard 2 failed `test_ad738g_kokoro_voice.py::test_t1_post_tts_speaks_kokoro_through_the_real_worker_loop`; shard 1 failed `test_ad738f_per_agent_voices.py::test_t1_...`, `::test_t2_...` and `::test_t3_...`. All four print `ModuleNotFoundError: No module named 'numpy'` from `tests/fixtures/fake_kokoro_worker.py` line 20 (`import numpy as np`). The same log installs `numpy==2.5.1` into the venv.
+- **The differential control.** R5 and R6 (`test_ad738g_kokoro_voice.py:368`, `:388`; no skip or platform marker; each asserts a 24 kHz WAV came back) spawn the same fake worker through `_real_key`, whose key carries `python=sys.executable` unresolved (`:70`). Both passed in the same shard-2 file run that failed T1. Same venv, same worker; the only difference is the resolved path.
+- **The runner probe.** Throwaway branch `probe/speech-symlink-20261128` (deleted), run 46106607981, `ubuntu-latest`, `uv venv .venv` then `uv pip install numpy` (numpy 2.5.5). `sys.executable` = `/home/runner/work/ProbOS/ProbOS/.venv/bin/python`; `os.path.islink` True; `os.path.realpath` = `/opt/hostedtoolcache/Python/3.12.16/x64/bin/python3.12`. Started as configured, with `-I` and without: rc 0, `sys.prefix` = the venv, `numpy 2.5.5`. Started through the resolved path, with `-I` and without: rc 1, `sys.prefix` = `/opt/hostedtoolcache/Python/3.12.16/x64`, `ModuleNotFoundError: No module named 'numpy'`.
+- **No local reproduction.** This host has no WSL or Docker and the account has no symlink privilege. The runner probe is the direct evidence; the repaired tree's own CI run is the end-to-end confirmation, because the four failing tests are the chain test (backend, real worker process, numpy importable) and they show the fix wherever the test interpreter is a symlinked venv interpreter. The platform measured is one Ubuntu runner; macOS has the same symlink default and was not measured.
+- **The repair, on the runner image, before the gate** (orchestrator; run 46107061250 for P1 to P5 and run 46108932695 for the final patch, which adds the round-five repair; throwaway branches `probe/speech-symlink-repair-20261128` and `probe/speech-symlink-final-20261128` at the PR head, both deleted; the repair applied as a patch at run time, so no unreviewed commit was pushed; the install is ci.yml's `uv sync --group dev --extra discovery --extra browser`). The four tests that failed on PR 1872, before the patch: `4 failed in 2.81s` (`2.01s` in the second run), three with `assert 'disabled' == 'kokoro'` and T3 with `assert 0 == 50` (its `duration_ms`), all with `ModuleNotFoundError: No module named 'numpy'` (the control reproduces CI's failure). After `git apply`, the six files of the focused check below at `-n 0`: P1 to P5 gave `132 passed, 1 skipped in 10.08s`; the final patch (two files, 87 insertions and 6 deletions) gave `132 passed, 2 skipped in 7.61s`, B10 included (a real symlink on Linux); the second skip is B11, which is Windows-only.
+
+`test_b1` (`test_ad738g_kokoro_voice.py:433`) asserted `python=str(Path(sys.executable).resolve())`: a test that pinned the defect as the contract. P4 updates it with the reason inline; it is not deleted, and no POSIX-only skip is added to the four tests.
+
+#### 16.13.1a Finding F-CI-2 (P2, found by the round-five review; ordinary reach, not a regression)
+
+A Windows drive-relative path such as `C:python.exe` is not absolute (`Path.is_absolute()` is False: a drive without a root). `_probos_root() / Path("C:python.exe")` keeps the other drive and drops the root, so the interpreter is found relative to that drive's current directory. The previous helper did the same; the replacement's docstring said "never the CWD", which this case falsified. The reviewer's probe: `KokoroTTSConfig(python_path="C:python.exe")` is accepted; with the CWD beside the base interpreter, both `KokoroWorkerKey.python` and a real `Popen` received that interpreter (the worker then failed importing numpy); with another CWD the same configuration degraded before launch. Repair: the helper refuses a drive-qualified, non-absolute path with `ValueError` before joining (P2), and the backend degrades as it does for a NUL. B11 (Windows only) covers the helper and the backend; MA3-3 kills its removal. Scope: the interpreter only. `model_path` and `voices_path` go through `anchor_install_path` and share the drive-relative dependence as data-file paths; that is one line for #1869 (16.13.6), not part of this repair. On POSIX `C:python.exe` is an ordinary relative file name and stays one.
+
+#### 16.13.2 The pairs (as applied)
+
+**Order.** P1, P2 to `src/probos/audio/tts/piper_backend.py`; P3 (two pairs), P4, P5 to `tests/test_ad738g_kokoro_voice.py`. Match after normalising CRLF to LF. `tests/fixtures/fake_kokoro_worker.py` and `kokoro_backend.py` do not change. Leave `kokoro_backend.py:148` alone: it only formats the "missing" message, and the resolved target of a dangling venv link is the useful thing to name there. 16.4's "`_anchor_path`, `_resolve_binary_path` and every other Piper line" still holds: P2 changes only the Kokoro-only helper (its only callers are `kokoro_backend.py:26,142`).
+
+**P1: `src/probos/audio/tts/piper_backend.py`, imports.** SEARCH:
+```python
+import logging
+import sys
+from pathlib import Path
+```
+REPLACE:
+```python
+import logging
+import os
+import sys
+from pathlib import Path
+```
+
+**P2: `piper_backend.py`, the helper** (Piper's `_anchor_path` and `_resolve_binary_path` stay byte-identical). SEARCH:
+```python
+def resolve_executable_path(configured: str) -> Path | None:
+    """AD-738g: ``_resolve_binary_path`` for the sibling Kokoro backend (anchored; ``.exe``
+    appended on Windows when the literal path is missing). ``None`` when not found. Raises
+    ``OSError`` or ``ValueError`` for a path the OS cannot represent, as ``anchor_install_path``
+    does; the Kokoro backend catches both and degrades."""
+    return _resolve_binary_path(configured)
+```
+REPLACE:
+```python
+def resolve_executable_path(configured: str) -> Path | None:
+    """AD-738g: the Kokoro backend's interpreter, anchored as ``_anchor_path`` anchors (absolute
+    as-is, relative under ``_probos_root()``, never the CWD), with ``.exe`` appended on Windows
+    when the literal path is missing. ``None`` when not found.
+
+    A3 (F-CI-1): the path is made absolute with ``os.path.abspath`` and NOT resolved. A POSIX
+    venv's ``bin/python`` is a symlink to its base interpreter, and Python finds the venv by the
+    ``pyvenv.cfg`` beside the path it was started as. Started through the link's target, it
+    cannot import the venv's packages. The ``.exe`` probe mirrors ``_resolve_binary_path``,
+    which Piper keeps unchanged. Raises ``ValueError`` for a path holding a NUL on every
+    platform (``ntpath.abspath`` would otherwise swallow it), and on Windows for a drive-relative
+    path such as ``C:python.exe``: it is not absolute, and joining it to the install root would
+    drop the root and leave the launch to that drive's current directory. The Kokoro backend
+    catches the ``ValueError`` and degrades."""
+    if "\x00" in configured:
+        raise ValueError("embedded null byte")
+    candidate = Path(configured)
+    if not candidate.is_absolute():
+        if candidate.drive:
+            raise ValueError("a drive-relative path depends on the working directory")
+        candidate = _probos_root() / candidate
+    p = Path(os.path.abspath(candidate))
+    if p.is_file():
+        return p
+    if sys.platform == "win32" and p.suffix.lower() != ".exe":
+        with_exe = p.parent / (p.name + ".exe")
+        if with_exe.is_file():
+            return with_exe
+    return None
+```
+
+**P3: `tests/test_ad738g_kokoro_voice.py`, imports (two pairs).** First SEARCH:
+```python
+import logging
+import struct
+```
+REPLACE:
+```python
+import logging
+import os
+import struct
+```
+Second SEARCH:
+```python
+from probos.audio.tts.kokoro_backend import KOKORO_VOICES, kokoro_speed
+```
+REPLACE:
+```python
+from probos.audio.tts.kokoro_backend import KOKORO_VOICES, kokoro_speed
+from probos.audio.tts.piper_backend import resolve_executable_path
+```
+
+**P4: `test_b1`'s expectation, updated with the reason inline (not deleted).** SEARCH:
+```python
+    assert key == KokoroWorkerKey(
+        python=str(Path(sys.executable).resolve()),
+```
+REPLACE:
+```python
+    assert key == KokoroWorkerKey(
+        # A3 (F-CI-1): the interpreter is absolute but NOT resolved. Resolving a POSIX venv's
+        # bin/python symlink starts the base interpreter, which cannot import the venv's packages.
+        # The script, model and voices paths are data files and stay resolved.
+        python=os.path.abspath(sys.executable),
+```
+
+**P5: new tests after `test_b8`.** SEARCH:
+```python
+    assert "a tts.kokoro path cannot be resolved (OSError" in caplog.text
+    assert caplog.text.count("result=degraded") == 4
+
+
+# --- config, registry, selection --------------------------------------------------------------
+```
+REPLACE:
+```python
+    assert "a tts.kokoro path cannot be resolved (OSError" in caplog.text
+    assert caplog.text.count("result=degraded") == 4
+
+
+def test_b9_the_interpreter_path_is_not_followed_through_a_link(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A3 (F-CI-1): a POSIX venv's bin/python links to the base interpreter, which finds no
+    # pyvenv.cfg beside itself. The link is simulated through os.path.realpath (which
+    # Path.resolve calls), so this case fails on a resolving helper on every platform.
+    link = tmp_path / "venv" / "bin" / "python"
+    link.parent.mkdir(parents=True)
+    link.write_bytes(b"")
+    target = tmp_path / "base" / "python"
+    target.parent.mkdir()
+    target.write_bytes(b"")
+    real = os.path.realpath
+
+    def _follows_the_link(path, *args, **kwargs):
+        return str(target) if os.fspath(path) == str(link) else real(path, *args, **kwargs)
+
+    monkeypatch.setattr(os.path, "realpath", _follows_the_link)
+
+    assert resolve_executable_path(str(link)) == link
+    assert resolve_executable_path(str(tmp_path / "venv" / "bin" / "absent")) is None
+    with pytest.raises(ValueError):
+        resolve_executable_path("tools/kokoro/a\x00b")
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="a symlink needs privilege on Windows; test_b9 simulates one")
+def test_b10_a_real_venv_interpreter_symlink_is_returned_unfollowed(tmp_path: Path) -> None:
+    link = tmp_path / "venv" / "bin" / "python"
+    link.parent.mkdir(parents=True)
+    link.symlink_to(sys.executable)
+
+    assert resolve_executable_path(str(link)) == link
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(sys.platform != "win32", reason="a drive-relative path (C:python.exe) exists only on Windows")
+async def test_b11_a_drive_relative_interpreter_path_is_refused_never_joined_to_the_cwd(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A3, round five: Path("C:python.exe") is not absolute, and joining it to the install root would
+    # drop the root and leave the launch to that drive's current directory.
+    for configured in ("C:python.exe", "C:"):
+        with pytest.raises(ValueError):
+            resolve_executable_path(configured)
+
+    svc = _RecordingService()
+    cfg = _installed(tmp_path, monkeypatch, python_path="C:python.exe")
+
+    assert await KokoroBackend(cfg, service=svc).synthesize("Hi.") is None
+    assert svc.calls == []
+
+
+# --- config, registry, selection --------------------------------------------------------------
+```
+
+**Focused check** (local, Windows, `-n 0`): `tests/test_ad738g_kokoro_voice.py`, `tests/test_ad738f_per_agent_voices.py`, `tests/test_ad1025_path_anchoring.py`, `tests/test_ad1025b_path_anchoring.py`, `tests/test_ad738_piper_tts.py`, `tests/test_bf918_tts_latency.py`. The path-anchoring and Piper files prove Piper did not move. The orchestrator's run on the final candidate: 133 passed, 1 skipped (B10, by design on Windows), 14.4 s; with the ledger, standing-orders and AD-1152 test files added: 240 passed, 1 skipped.
+
+#### 16.13.3 Mutation rows (A3 campaign, on Windows, one at a time on the frozen A3 candidate, file restored byte for byte; record each file's sha256)
+
+| Row | Mutant | Discriminating test | Expected on the mutant | Observed |
+|---|---|---|---|---|
+| MA3-1 | `resolve_executable_path`'s body after the docstring replaced by `return _resolve_binary_path(configured)` | B9; B1 and B10 on POSIX | B9 fails on every platform (the simulated link is followed); B1 also fails on POSIX, and B10 fails there too (it skips on Windows). On Windows B1 cannot discriminate: `Path(sys.executable).resolve()` equals `os.path.abspath(sys.executable)` because the venv's `python.exe` is not a link | **Killed.** `2 failed, 32 passed, 1 skipped`: B9 (the helper returned the simulated link's target, `.../base/python`, instead of the link) and B11 (`_resolve_binary_path("C:python.exe")` does not raise, so the old resolver fails the Windows boundary test too). B1 passes on Windows, as expected; B10 skips. `piper_backend.py` restored byte for byte (sha256 `4a2d1312b09ee4e44e8c9169509ff8155e6ff4a444298f09223d8b3f9017e28b` before and after). |
+| MA3-2 | the NUL guard (`if "\x00" in configured: raise ...`) removed | B9's `pytest.raises` | B9 fails on every platform: `ntpath.abspath` swallows the NUL and `Path.is_file()` returns `False` for it, so the helper returns `None` instead of raising. C4 (inside `test_b8`) still counts 3, because a NUL `python_path` degrades either way, which is why B9 carries this check | **Killed.** `1 failed, 33 passed, 1 skipped`: B9 only, `Failed: DID NOT RAISE <class 'ValueError'>` at its `pytest.raises` line; C4 (`test_b8`) passes. `piper_backend.py` restored byte for byte (same sha256 as MA3-1); the test file was never mutated (sha256 `c25f1f046dad2bc85e4c1f8aa3025b0d7f9798ca8be4dc9373f6f60cacef1bc5`). |
+| MA3-3 | the drive guard (`if candidate.drive: raise ValueError(...)`) removed (round five) | B11 | B11 fails on Windows: without the guard `C:python.exe` is joined to the root, which keeps drive C and drops the root, so the helper returns `None` (or a path found through drive C's current directory) instead of raising | **Killed.** `1 failed, 33 passed, 1 skipped`: B11 only, `Failed: DID NOT RAISE <class 'ValueError'>` at its first `pytest.raises` line. `piper_backend.py` restored byte for byte (same sha256 as MA3-1). |
+
+All three rows were run on the frozen final candidate (after the round-five repair).
+
+K1 to K36 and KA1, KA2 do not touch the helper or `test_b1`'s expectation; none is rerun.
+
+#### 16.13.4 Tests
+
+32 to 35 Python tests (B9, B10, B11); B10 skips on Windows (it needs a real symlink), B11 skips off Windows (a drive-relative path exists only there); UI tests stay at 3. B9 is the platform-independent discriminator for the symlink; B10 and the four T tests in CI are the POSIX evidence; B11 is the Windows boundary test.
+
+#### 16.13.5 Section 9 after A3
+
+| # | Property | Tested by |
+|---|---|---|
+| 13 (new) | The interpreter path handed to `KokoroWorkerKey.python` is anchored and absolute but never symlink-resolved; the script, model and voices paths may be. `resolve_executable_path` raises `ValueError` on a NUL on every platform and, on Windows, on a drive-relative path (`C:python.exe`); C4's counts in `test_b8` (3, then 4) are unchanged. | B1 (POSIX), B9 (every platform), B10 (POSIX), B11 (Windows), MA3-1, MA3-2, MA3-3; end to end: the four T tests in CI on Linux |
+
+Round five (the Diff Reviewer's delta pass) also checks: Piper's `_anchor_path` and `_resolve_binary_path` are byte-identical to the base, and `test_b1` was updated with its reason, not deleted. The consumers: `kokoro_backend._speak` (`kokoro_backend.py:141-161`) and C4.
+
+#### 16.13.6 Considered and deferred
+
+- **Piper's `_resolve_binary_path` also resolves** (`piper_backend.py:49`). Out of scope: a native binary does not depend on the path it was started from.
+- **A drive-relative `model_path` or `voices_path`** (found by the round-five review): both go through `anchor_install_path` and `_anchor_path`, which share the drive-relative dependence on the working directory (`C:model.onnx`). They are data files, not an executable, and the config accepts them as it accepted `python_path`. One follow-up line in #1869: refuse a drive-relative path in `KokoroTTSConfig` at parse time, for all three path fields, on Windows.
+- **A POSIX installer and a platform-aware `python_path` default** (the default `tools/kokoro/venv/Scripts/python`, `experience.py:648`, does not exist on POSIX and degrades with "not installed"): one follow-up line in #1869, not part of this work. The lesson goes there as a K-item too: the Windows-only gate cannot see symlink semantics, so a contract that launches an interpreter carries a test that simulates the link on every platform.
+
+#### 16.13.7 Verified Against Codebase (A3, 2026-11-27, tree `88676ab1`, before the repair)
+
+```text
+git log --oneline -1                                                       88676ab1 (HEAD)
+grep -n "^import logging|^import sys" src/probos/audio/tts/piper_backend.py   18, 19 (P1 SEARCH; no "import os")
+grep -n "return candidate.resolve()" src/probos/audio/tts/piper_backend.py    49
+grep -n "def resolve_executable_path" src/probos/audio/tts/piper_backend.py   69 (body: return _resolve_binary_path(configured), 74)
+grep -n "resolve_executable_path" src/probos/audio/tts/kokoro_backend.py      26 (import), 142 (only call)
+grep -n "missing.insert(0, str(anchor_install_path(cfg.python_path)))" src/probos/audio/tts/kokoro_backend.py   148
+grep -n "import numpy as np" tests/fixtures/fake_kokoro_worker.py             20
+grep -n "^import logging|^import struct" tests/test_ad738g_kokoro_voice.py    15, 16
+grep -n "from probos.audio.tts.kokoro_backend import" tests/test_ad738g_kokoro_voice.py   28
+grep -n "python=sys.executable" tests/test_ad738g_kokoro_voice.py             70 (_real_key, unresolved)
+grep -n "def test_r5_|def test_r6_" tests/test_ad738g_kokoro_voice.py         368, 388 (each asserts a 24 kHz WAV)
+grep -n "def test_b1_" tests/test_ad738g_kokoro_voice.py                      419; resolved expectation at 433
+grep -n "def test_b8_" tests/test_ad738g_kokoro_voice.py                      552; counts 3 at 565, 4 at 574 (P5 SEARCH = 573-577)
+grep -n "def test_t1_" tests/test_ad738g_kokoro_voice.py                      681
+```
+Absence Verified (A3):
+```text
+CLAIM: no other file under src/probos/audio resolves an interpreter path
+RUN:   Grep "\.resolve\(" src/probos/audio
+FOUND: piper_backend.py:34 (docstring), :38 (_probos_root), :49 (_resolve_binary_path)   HOLDS: yes
+CLAIM: the repair is not yet in this clone (A3 documents the pairs as applied elsewhere)
+RUN:   Grep "F-CI-1" src tests (*.py)
+FOUND: nothing                                                                            HOLDS: yes
+```
+
+#### 16.13.8 Prior art
+
+Repair round; no new design. The `site` documentation says Python looks for `pyvenv.cfg` beside, or one directory above, `sys.executable`, which is the path the interpreter was started as. The runner probe measured that a start through the link's target does not find the venv. No external search was run.
