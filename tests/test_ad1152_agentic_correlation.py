@@ -348,6 +348,13 @@ async def _off_observation(
     # AD-1360's inert correlation cutoff (0.0 judges no episode) was added to the memory-security section after this
     # capture too.
     assert config["security"]["memory"].pop("correlation_cutoff") == 0.0
+    # AD-738g S1's local Kokoro section was added to the speech config after this capture too. It is read only when
+    # tts.backend is "kokoro" (the default is "browser"); this observation synthesizes no speech.
+    assert config["tts"].pop("kokoro") == {
+        "python_path": "tools/kokoro/venv/Scripts/python", "model_path": "tools/kokoro/kokoro-v1.0.onnx",
+        "voices_path": "tools/kokoro/voices-v1.0.bin", "voice": "af_heart", "speed": 1.0, "threads": 4,
+        "timeout_seconds": 30.0, "agent_voices": {},
+    }
     # Deleted fields and changed defaults (BF-983, #1676). Each one moved the digest, which was refreshed by measurement
     # (_DEFAULT_CONFIG_RULE); the line names what the pinned digest no longer contains, or now contains.
     # BF-924 (#1654) removed the Counselor's four unread fields.
