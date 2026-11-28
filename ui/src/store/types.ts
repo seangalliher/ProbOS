@@ -208,11 +208,18 @@ export interface BuildFailureReport {
   fix_descriptions: string[];
   review_result: string;
   review_issues: string[];
+  review_suggestions?: string[];  // BF-978 (#1809): optional; a report without it shows no suggestions
   resolution_options: Array<{
     id: string;
     label: string;
     description: string;
   }>;
+}
+
+/** BF-978 (#1809): a build's review lists as the build_success event sent them; BuildReviewLists checks their shape. */
+export interface BuildReviewNotes {
+  issues?: string[];
+  suggestions?: string[];
 }
 
 export interface TransporterChunkStatus {
@@ -334,6 +341,7 @@ export interface ChatMessage {
   selfModProposal?: SelfModProposal;
   buildProposal?: BuildProposal;
   buildFailureReport?: BuildFailureReport;
+  buildReview?: BuildReviewNotes;  // BF-978 (#1809): set on a build_success message
   architectProposal?: ArchitectProposalView;
 }
 

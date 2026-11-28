@@ -52,6 +52,7 @@ from probos.tools.code_execution_tool import CodeExecutionTool, _execution_error
 from probos.tools.permissions import ToolPermissionStore
 from probos.tools.protocol import ToolPermission, ToolResult
 from probos.tools.registry import ToolRegistry
+from tests.offered_tools import McpSearchToolStandIn, offer, offer_mcp  # #1796: the loop runs only offered tools.
 from tests.test_ad1066_code_execution_tool import (
     _ctx, _loop_runtime, _runtime, _tool_use,
 )
@@ -590,7 +591,24 @@ def _observer_runtime(store, *, tool_id="fixture_failure", error="fixture subsys
     return runtime, tool
 
 
+async def _offer_tools(runtime, agent_id, called=None) -> None:
+    """#1796: a dispatch run offers the tools its agent is granted, so the fixture grants the registered tools its
+    scripted model calls (by id or provider alias; every registered tool when ``called`` is None). An MCP tool is
+    offered by the AD-1241 workbench, never by a grant, so it is skipped; a tool the agent already holds is left alone."""
+    for tool_id in runtime.tool_registry.list_ids():
+        if tool_id.startswith("mcp:") or (
+            called is not None and tool_id not in called and llm_function_name(tool_id) not in called
+        ):
+            continue
+        if not runtime.tool_permission_store.get_active_grants_sync(agent_id, tool_id):
+            await runtime.tool_permission_store.issue_grant(agent_id, tool_id, ToolPermission.READ)
+
+
 async def _run(runtime, responses, **kwargs) -> WorkItemAgenticOutcome:
+    await _offer_tools(runtime, "counselor-ezri", {  # #1796: the loop runs only offered tools, so the scripted calls' tools are offered.
+        block.tool_call.name for response in responses for block in getattr(response, "content_blocks", ())
+        if isinstance(block, ToolUseBlock)
+    })
     return await WorkItemAgenticExecutor(llm_client=_ScriptedLLM(responses)).run(
         agent_id="counselor-ezri", instructions="Fixture instructions",
         task_text="assembled context must not be persisted", runtime=runtime,
@@ -599,6 +617,7 @@ async def _run(runtime, responses, **kwargs) -> WorkItemAgenticOutcome:
 
 
 async def _dm(agent, raw="Captain raw request") -> str:
+    await _offer_tools(agent._runtime, agent.id)  # #1796: the loop runs only offered tools, so the fixture's tools are offered.
     return await CognitiveAgent._maybe_run_conversational_agentic(
         agent, {
             "intent": "direct_message", "thread_id": "owned-thread",
@@ -832,6 +851,7 @@ async def test_direct_executor_observes_all_returned_stop_reasons(faults, stoppe
             responses.append(RuntimeError("fixture LLM failure after completed tool"))
         else:
             responses.append(_text_response("Honest fallback"))
+        await _offer_tools(runtime, "counselor-ezri", {tool.tool_id})  # #1796: the loop runs only offered tools, so the scripted call's tool is offered.
         outcome = await WorkItemAgenticExecutor(llm_client=_LLM(responses)).run(
             agent_id="counselor-ezri", instructions="", task_text="", runtime=runtime,
             max_iterations=1 if stopped_reason == "max_iterations" else 3,
@@ -1015,6 +1035,7 @@ async def test_delegated_real_parent_child_loops_file_child_fault_and_preserve_e
         agentic_tools=AgenticToolsConfig(delegation_enabled=True),
     )
     runtime.fault_report_store = store
+    await runtime.tool_permission_store.issue_grant("bashir-1", tool.tool_id, ToolPermission.READ)  # #1796: the loop runs only offered tools; the delegated child's run offers its granted tools.
     runtime.attachment_store = FilesystemAttachmentStore(tmp_path / "attachments")
     responses = []
     for _ in range(3):
@@ -1062,6 +1083,7 @@ async def test_real_crew_outer_passes_share_child_turn_and_preserve_plan_and_fou
     runtime, tool = _observer_runtime(store)
     progress = _SequencedTool("progress_probe", [])
     runtime.tool_registry.register(progress, provider="test", default_permissions={"ensign": "read"})
+    await _offer_tools(runtime, "a1")  # #1796: the loop runs only offered tools, so the fixture's tools are offered.
     runtime.attachment_store = FilesystemAttachmentStore(tmp_path / "attachments")
     assert inspect.signature(WorkItemAgenticExecutor.run).parameters["max_iterations"].default is None
     inner_limit = inspect.signature(AgenticLoop).parameters["max_iterations"].default
@@ -1277,6 +1299,7 @@ async def test_real_dm_fault_attempted_uses_only_exact_raw_key(
     store, events = faults
     runtime, tool = _observer_runtime(store)
     agent = _agent(runtime)
+    await _offer_tools(runtime, agent.id)  # #1796: the loop runs only offered tools, so the fixture's tools are offered.
     params = {
         **params,
         "text": "PRIVATE_ATTACHMENT PRIVATE_RECALL PRIVATE_VISUAL",
@@ -1376,6 +1399,7 @@ async def test_mcp_confirmation_is_neutral_through_real_shared_loop(faults, stru
     tool, bridge, risk = _mcp_fixture()
     risk.risk = McpToolRisk.CONFIRM
     await _grant_fixture(runtime, tool)
+    offer_mcp(runtime, tool.tool_id)  # #1796: the loop runs only offered tools, so the scripted call's tool is offered.
     alias = llm_function_name(tool.tool_id)
     assert alias != tool.tool_id and tool_fault_adapter_kind(runtime.tool_registry, tool.tool_id) is ToolFaultAdapterKind.MCP
     for _ in range(4):
@@ -1466,6 +1490,7 @@ async def test_legacy_dm_raw_selection_and_explicit_exhaustion_override(
         continue_or_ask_enabled=exhausted, continue_or_ask_max_passes=1,
     )
     agent = _agent(runtime)
+    await _offer_tools(runtime, agent.id)  # #1796: the loop runs only offered tools, so the fixture's tools are offered.
     agent._llm_client = _ScriptedLLM([
         _use_with_text(tool.tool_id, "Partial evidence"),
         _use_with_text(tool.tool_id, "Still partial"),
@@ -1574,6 +1599,7 @@ async def test_real_governed_fault_chain_neutral_turn_privacy_and_one_approval(
     browser = None
     if adapter == "mcp":
         tool, bridge, risk = _mcp_fixture()
+        offer_mcp(runtime, tool.tool_id)  # #1796: the loop runs only offered tools, so the scripted call's tool is offered.
         failure_params = neutral_params = {}
     else:
         browser, page, session_id, _ = await _browser_fixture()
@@ -1662,6 +1688,10 @@ async def test_adapter_query_projection_limits_aliases_and_current_registration(
     tool, bridge, risk = _mcp_fixture()
     risk.risk = McpToolRisk.CONFIRM
     await _grant_fixture(runtime, tool)
+    # #1796: the loop runs only offered tools, so the scripted call's tool is offered. A correction projection offers an
+    # MCP adapter only through its source's AD-1241 offer, which needs a valid search tool in the source registry.
+    offer_mcp(runtime, tool.tool_id)
+    runtime.tool_registry.register(McpSearchToolStandIn(), provider="AD-1019c", tags=["find_mcp_tool", "mcp"])
     projected = _session_correction_runtime(
         runtime, agent_id="counselor-ezri", department="counseling", rank="lieutenant",
     )
@@ -1812,7 +1842,7 @@ async def test_raw_capture_preserves_result_transcript_and_event_bytes(structure
             structured_tool_messages=structured,
         )
         result = await loop.run(
-            system_prompt="Instructions", user_message="Task", tools=[], context={"agent_id": "agent"},
+            system_prompt="Instructions", user_message="Task", tools=[*offer("fixture")], context={"agent_id": "agent"},  # #1796: the loop runs only offered tools, so the scripted call's tool is offered.
             **({"fault_capture": capture} if supported else {}),
         )
         values.append((
@@ -1842,7 +1872,7 @@ async def test_parallel_capture_follows_request_identity_not_completion_order(st
         structured_tool_messages=structured,
     )
     result = await loop.run(
-        system_prompt="", user_message="", tools=[], context={"agent_id": "agent"},
+        system_prompt="", user_message="", tools=[*offer("web_search", "read_page", "write_file")], context={"agent_id": "agent"},  # #1796: the loop runs only offered tools, so the scripted calls' tools are offered.
         fault_capture=capture,
     )
     assert executor.peak_concurrency == 2 and executor.finished == ["read_page", "web_search", "write_file"]
@@ -1893,6 +1923,7 @@ async def test_reused_executor_owns_distinct_captures_for_overlapping_runs(fault
         async def run():
             return await harness.run_build(BuildSpec(title="Fixture", description=""), str(repository))
     else:
+        await _offer_tools(runtime, "agent", {"read_file"})  # #1796: the loop runs only offered tools, so the scripted call's tool is offered.
         executor = WorkItemAgenticExecutor(llm_client=llm)
 
         async def run():

@@ -32,6 +32,7 @@ from probos.tools.delegate_task_tool import DelegateTaskTool
 from probos.tools.protocol import ToolPermission, ToolResult, ToolType
 from probos.tools.registry import ToolPermissionDenied, ToolRegistry
 from probos.storage.sqlite_factory import default_factory
+from tests.offered_tools import offer  # #1796: the loop runs only offered tools.
 from tests.test_ad1315_protected_execution_authority import (
     _admission,
     _authority,
@@ -638,7 +639,7 @@ async def test_agentic_loop_parallel_swapped_completion_crosses_broker(
     result = await loop.run(
         system_prompt="sys",
         user_message="run both",
-        tools=[],
+        tools=[*offer("web_search", "read_page", "http_fetch")],  # #1796: the loop runs only offered tools, so the scripted calls' tools are offered.
         context={"agent_id": "selected-agent-canary"},
     )
     await release_task
@@ -791,6 +792,7 @@ async def test_real_delegate_executor_forwards_parent_operation_to_child(
     runtime = _delegation_runtime(tmp_path, client)
     runtime.tool_registry = registry
     runtime.effect_broker = broker
+    await runtime.tool_permission_store.issue_grant("child", "child_effect", ToolPermission.READ)  # #1796: the loop runs only offered tools; the child's dispatch run offers its granted tools.
     delegate = DelegateTaskTool(
         runtime=runtime,
         llm_client=client,
@@ -1350,7 +1352,7 @@ async def test_permission_denied_agentic_completion_carries_persisted_ids(
     await loop.run(
         system_prompt="sys",
         user_message="denied",
-        tools=[],
+        tools=[*offer("web_search")],  # #1796: the loop runs only offered tools, so the scripted call's tool is offered; the registry's denial (this case's subject) is unchanged.
         context={"agent_id": "selected-agent-canary"},
     )
     operation = (await authority.query_effect_operations())[0]

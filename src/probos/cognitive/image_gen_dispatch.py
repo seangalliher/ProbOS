@@ -24,6 +24,9 @@ from typing import Any
 
 import httpx
 
+from probos.admission.seam import check_at
+from probos.admission.taxonomy import SEAM_MODEL_CALL
+
 logger = logging.getLogger(__name__)
 
 
@@ -167,6 +170,7 @@ async def dispatch_image_gen(
         headers["Authorization"] = f"Bearer {api_key}"
 
     url = f"{base_url}/images/generations"
+    check_at(getattr(runtime, "admission_service", None), effect=SEAM_MODEL_CALL, presented_id=agent_id)  # AD-1346 M3e3b (D206): the image endpoint's model-call check, in shadow; it blocks nothing
     try:
         async with httpx.AsyncClient(timeout=timeout_s) as client:
             resp = await client.post(url, json=payload, headers=headers)

@@ -20,6 +20,7 @@ import pytest
 from probos.cognitive.economic_judgment_organ import resolve_tier_pricing
 from probos.cognitive.model_registry import ModelDescriptor, ModelRegistry
 from probos.cognitive.swe_harness.agentic_loop import AgenticLoop
+from tests.offered_tools import offer_scripted  # #1796: the loop runs only offered tools.
 from tests.test_ad1324_loop_tier_choice import Client, Tools, answer, controller, read, write
 
 DIRECTIVE = '@@next_tier {"tier":"fast","reason":"easy_step"}'
@@ -103,7 +104,7 @@ async def _arm(name: str, goal: str, completion: dict[int, int] | None = None) -
         llm_client=client, tool_executor=tools, tier=tier, max_iterations=10,
         **({"tier_controller": ctl} if ctl is not None else {}),
     )
-    result = await loop.run(system_prompt="s", user_message="u", tools=[], context={"agent_id": "ezri"})
+    result = await loop.run(system_prompt="s", user_message="u", tools=[*offer_scripted(scripted)], context={"agent_id": "ezri"})  # #1796: the loop runs only offered tools, so the scripted calls' tools are offered.
     registry = _registry()
     cost = 0.0
     for req, response in zip(client.requests, client.served, strict=True):

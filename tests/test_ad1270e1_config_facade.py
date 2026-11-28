@@ -1522,10 +1522,14 @@ def test_committed_baseline_records_the_measured_surface(
     # owned 297 -> 296, own_models 229 -> 228, and the check prints names=309.
     # AD-1346 M3c (#1604) adds the owned model AdmissionConfig: public_names 309 -> 310, owned 296 -> 297,
     # own_models 228 -> 229, and the check prints names=310.
-    assert counts["public_names"] == 310  # AD-1346 M3c (#1604): AdmissionConfig
-    assert counts["owned"] == 297  # AD-1346 M3c (#1604): AdmissionConfig is owned
+    # AD-1355 S1 (#1700) removes the owned model HolodeckBirthChamberConfig: public_names 310 -> 309,
+    # owned 297 -> 296, own_models 229 -> 228, and the check prints names=309.
+    # #1414 A3 adds the owned function drop_null_sections, which load_config and the HXI config save share:
+    # public_names 309 -> 310, owned 296 -> 297, and the check prints names=310.
+    assert counts["public_names"] == 310  # #1414 A3: drop_null_sections
+    assert counts["owned"] == 297  # #1414 A3: drop_null_sections is owned
     assert counts["incidental"] == 13
-    assert counts["own_models"] == 229  # AD-1346 M3c (#1604): AdmissionConfig
+    assert counts["own_models"] == 228  # AD-1355 S1 (#1700): HolodeckBirthChamberConfig
     # AD-1152 adds only the default-False event_correlation_enabled leaf.
     # AD-1190 adds the four default-None delegation_tree_max_* ceilings (1787 -> 1791).
     # AD-1189 adds the default-0 deferred_tool_schema_threshold_bytes (1791 -> 1792).
@@ -1566,11 +1570,19 @@ def test_committed_baseline_records_the_measured_surface(
     # AD-1270 (#1324) slice 4c removes BootCampPhaseConfig.enabled and SystemConfig.boot_camp_phase (1881 -> 1879).
     # AD-1270 (#1324) slice 4c removes boot_camp.nudge_cooldown_seconds with AD-638's phases 2 and 3 (1879 -> 1878).
     # AD-1346 M3c (#1604) adds AdmissionConfig.shadow_enabled and SystemConfig.admission (1878 -> 1880).
-    assert counts["field_definitions"] == 1880  # AD-1206 intentionally adds github_repository.
+    # AD-1356 S4 (#1722) adds ApprovalInboxConfig's three agent_work_*_decider fields (1880 -> 1883).
+    # BF-957 (#1760) adds RecordsConfig's three git_* doctor thresholds (1883 -> 1886).
+    # BF-962 (#1792) removes orientation.populate_ward_room_department, which nothing read (1886 -> 1885).
+    # AD-1360 (#1828) adds security.memory.correlation_cutoff (1885 -> 1886).
+    # AD-1355 S1 (#1700) removes HolodeckBirthChamberConfig's eight fields and SystemConfig.holodeck_birth_chamber (1886 -> 1877).
+    # BF-932 (#1670) adds system.loop_stall_warn_seconds (1877 -> 1878).
+    assert counts["field_definitions"] == 1878  # AD-1206 intentionally adds github_repository.
     assert counts["aliased_fields"] == 1
     # AD-1270 (#1324) slice 4c removes the BootCampPhaseConfig model (names 310 -> 309, models 230 -> 229).
-    assert len(baseline["names"]) == 310  # AD-1346 M3c (#1604): AdmissionConfig (309 -> 310)
-    assert len(baseline["models"]) == 230  # AD-1346 M3c (#1604): AdmissionConfig (229 -> 230)
+    # AD-1346 M3c (#1604) adds AdmissionConfig (309 -> 310, 229 -> 230).
+    # AD-1355 S1 (#1700) removes HolodeckBirthChamberConfig (310 -> 309).
+    assert len(baseline["names"]) == 310  # #1414 A3: drop_null_sections (309 -> 310)
+    assert len(baseline["models"]) == 229  # AD-1355 S1 (#1700): HolodeckBirthChamberConfig (230 -> 229)
 
 
 def test_committed_baseline_records_the_awkward_models(
@@ -1806,7 +1818,9 @@ def test_check_is_green_on_the_committed_baseline() -> None:
     assert proc.returncode == 0, proc.stderr
     assert "config facade check passed" in proc.stdout
     # AD-1270 (#1324) slice 4c removes BootCampPhaseConfig (names=310 -> names=309).
-    assert "names=310" in proc.stdout  # AD-1346 M3c (#1604): AdmissionConfig (names=309 -> names=310)
+    # AD-1346 M3c (#1604) adds AdmissionConfig (names=309 -> names=310).
+    # AD-1355 S1 (#1700) removes HolodeckBirthChamberConfig (names=310 -> names=309).
+    assert "names=310" in proc.stdout  # #1414 A3: drop_null_sections (names=309 -> names=310)
 
 
 def test_config_facade_runs_between_the_other_two_config_phases() -> None:

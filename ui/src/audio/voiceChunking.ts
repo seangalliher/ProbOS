@@ -25,6 +25,9 @@ const _ABBR = '\u0001';
  *
  *  Heuristic (basic-regex v1):
  *   - split on sentence-final punctuation ``[.!?]`` followed by whitespace,
+ *   - (BF-929) also split after that punctuation plus closing quotes or brackets
+ *     when whitespace and then a capital letter or a digit follow, so
+ *     ``He said "done." Next.`` splits and ``"Stop!" he said.`` does not,
  *   - preserve order, trim each chunk, drop empties,
  *   - keep a trailing fragment that has no terminal punctuation,
  *   - do NOT split on a small set of common abbreviations (``Dr.``, ``Mr.`` …),
@@ -50,6 +53,9 @@ export function splitIntoSentences(text: string, maxChunks = 40): string[] {
   const chunks = guarded
     // Insert a split sentinel after terminal punctuation + whitespace.
     .replace(/([.!?]+)\s+/g, `$1${_SPLIT}`)
+    // BF-929: and after terminal punctuation that closing quotes or brackets follow, when the next word starts a sentence.
+    // One terminal mark is enough (a run of marks is cut at the same place, after its last one); a quantified mark here would rescan the run from every mark.
+    .replace(/([.!?]["')\]}\u201d\u2019\u00bb]+)\s+(?=["'(\[{\u201c\u2018\u00ab]*[\p{Lu}\p{N}])/gu, `$1${_SPLIT}`)
     .split(_SPLIT)
     // Restore protected abbreviation periods, then trim.
     .map((s) => s.split(_ABBR).join('.').trim())
@@ -80,6 +86,12 @@ export function splitIntoSentences(text: string, maxChunks = 40): string[] {
  *   - a `prepare` that rejects counts as `null`; a `play` that throws is swallowed
  *     and the queue moves on (AD-1071's honest-degrade).
  *  Lookahead 0 is AD-1071's sequential queue. Returns the number of items played.
+ *  BF-930 (#1668): `startWhen` holds the FIRST item. Before it plays, the queue keeps
+ *  preparing items 1..lookahead until `startWhen(ready)` is true (`ready` is item 0 and
+ *  every later item prepared so far, in order) or all of them are ready, so it starts
+ *  after at most `lookahead` more preparations. `shouldContinue` is re-checked after
+ *  each one; a stop during the wait plays nothing and discards every prepared item.
+ *  The default (`() => true`) starts at once, as before.
  *  Pure control flow: the Audio/fetch side-effects live in the injected callbacks. */
 export async function runPrefetchQueue<P>(
   items: string[],
@@ -88,6 +100,7 @@ export async function runPrefetchQueue<P>(
   shouldContinue: () => boolean,
   lookahead = 1,
   discard: (prepared: P | null) => void = () => {},
+  startWhen: (ready: Array<P | null>) => boolean = () => true,
 ): Promise<number> {
   const pending: Array<Promise<P | null>> = [];
   const ensure = (k: number): void => {
@@ -107,6 +120,17 @@ export async function runPrefetchQueue<P>(
       consumed = i + 1;
       if (!shouldContinue()) { discard(prepared); break; }
       for (let k = i + 1; k <= i + lookahead; k += 1) ensure(k);
+      if (i === 0) {
+        // BF-930 (#1668): hold the first item until enough is ready to cover a stall.
+        const ready: Array<P | null> = [prepared];
+        let stopped = false;
+        for (let k = 1; k <= lookahead && k < items.length && !startWhen(ready); k += 1) {
+          ready.push(await pending[k]);
+          if (!shouldContinue()) { stopped = true; break; }
+        }
+        // Items 1..k stay unconsumed, so the finally below discards them.
+        if (stopped) { discard(prepared); break; }
+      }
       try {
         await play(prepared, items[i], i);
       } catch {

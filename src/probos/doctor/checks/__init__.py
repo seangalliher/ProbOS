@@ -21,6 +21,7 @@ from probos.doctor.checks import (  # noqa: F401
     security_check,
     crew_scope_check,
     disk_check,
+    records_git_check,  # BF-957: after disk, before federation
     federation_check,
     overlay_check,
     sandbox_check,

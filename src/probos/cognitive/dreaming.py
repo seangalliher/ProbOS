@@ -55,11 +55,34 @@ from probos.types import (
     MemorySource,
     episode_ran_in_plan_mode,
 )
+from probos.utils.loop_yield import LoopYield  # BF-932
 
 if TYPE_CHECKING:
     from probos.cognitive.procedure_challenger import ProcedureChallenger
 
 logger = logging.getLogger(__name__)
+
+# BF-932 (#1670): Step 7g gives the event loop a turn every this many notebook reads or word sets, and every this many
+# pair iterations. Counts, not times: the loop-stall sampler (probos.utils.loop_stall) shows what a turn costs.
+_STEP_7G_READS_PER_YIELD = 16
+_STEP_7G_PAIRS_PER_YIELD = 2000
+
+
+async def _reads_as_loaded(records_store: Any, item: dict) -> bool:
+    """BF-932 (#1670): True when a note Step 7g loaded still has the bytes it had then (its fingerprint is unchanged).
+
+    Step 7g gives the event loop turns between its reads and its writes, so a note can be revised meanwhile; any write
+    changes the file's bytes. ``item["_fp"]`` is the fingerprint the step took just before it read the note.
+    ``RecordsStore.entry_fingerprint`` has no await, so a caller that writes or renames right after this check gives
+    the loop no turn between the check and that write. A fingerprint that cannot be taken counts as changed; nothing
+    raised here reaches the caller.
+    """
+    try:
+        fp = await records_store.entry_fingerprint(item["path"])
+        return fp is not None and fp == item["_fp"]
+    except Exception:
+        logger.debug("Step 7g: could not fingerprint %s", item["path"], exc_info=True)
+        return False
 
 
 def _outcome_evidence(episodes: list[Any]) -> list[Any]:
@@ -940,6 +963,10 @@ class DreamingEngine:
 
                 threshold = self.config.notebook_consolidation_threshold
                 min_entries = self.config.notebook_consolidation_min_entries
+                # BF-932 (#1670): this step's reads and comparisons have no await of their own, so they gave the
+                # event loop no turn for the whole step; these counters give it one every so many units.
+                read_pacer = LoopYield(_STEP_7G_READS_PER_YIELD)
+                pair_pacer = LoopYield(_STEP_7G_PAIRS_PER_YIELD)
 
                 for agent_cs, entries in agents_entries.items():
                     if len(entries) < min_entries:
@@ -947,12 +974,17 @@ class DreamingEngine:
                     # Load content for each entry
                     loaded: list[dict] = []
                     for ent in entries:
+                        if read_pacer.due():
+                            await asyncio.sleep(0)  # BF-932: read_entry reads and parses without an await
                         try:
+                            # BF-932 (#1670): the file's fingerprint before the read, so a write that lands after it
+                            # reads as changed at the publication checks below; nothing suspends between the two.
+                            fp = await self._records_store.entry_fingerprint(ent["path"])
                             doc = await self._records_store.read_entry(
                                 ent["path"], reader_id="system",
                             )
-                            if doc:
-                                loaded.append({**ent, "_content": doc.get("content", ""), "_doc": doc})
+                            if doc and fp is not None:
+                                loaded.append({**ent, "_content": doc.get("content", ""), "_doc": doc, "_fp": fp})
                         except Exception:
                             pass
                     if len(loaded) < min_entries:
@@ -960,10 +992,18 @@ class DreamingEngine:
                     # Pairwise similarity → single-linkage clustering
                     n = len(loaded)
                     adj: dict[int, set[int]] = {i: set() for i in range(n)}
+                    # BF-932: each note's word set once (text_to_words is pure), not once per pair
+                    entry_words: list[set[str]] = []
+                    for item in loaded:
+                        if read_pacer.due():
+                            await asyncio.sleep(0)  # BF-932: give the event loop a turn
+                        entry_words.append(text_to_words(item["_content"]))
                     for i in range(n):
-                        words_i = text_to_words(loaded[i]["_content"])
+                        words_i = entry_words[i]
                         for j in range(i + 1, n):
-                            words_j = text_to_words(loaded[j]["_content"])
+                            if pair_pacer.due():
+                                await asyncio.sleep(0)  # BF-932: give the event loop a turn
+                            words_j = entry_words[j]
                             sim = jaccard_similarity(words_i, words_j)
                             if sim >= threshold:
                                 adj[i].add(j)
@@ -1008,6 +1048,20 @@ class DreamingEngine:
                         if unique_observations:
                             consolidated += "\n\n## Consolidated Observations\n\n"
                             consolidated += "\n\n---\n\n".join(unique_observations)
+                        # BF-932 (#1670): publish only when every member still reads as this step loaded it. The turns
+                        # above let a revision land after a read; the write below would overwrite it (the primary) or
+                        # archive it unmerged (the others). Nothing between this check and write_entry's file write
+                        # awaits, so no writer runs between them. A stale cluster waits for the next dream.
+                        stale = [
+                            item["path"] for item in cluster_items
+                            if not await _reads_as_loaded(self._records_store, item)
+                        ]
+                        if stale:
+                            logger.info(
+                                "Step 7g: skipped a cluster of %d notes of agent %s; changed after the read: %s",
+                                len(cluster_items), agent_cs, ", ".join(stale),
+                            )
+                            continue
                         # Write consolidated entry
                         await self._records_store.write_entry(
                             author=primary.get("frontmatter", {}).get("author", "system"),
@@ -1017,6 +1071,13 @@ class DreamingEngine:
                         )
                         # Archive non-primary entries
                         for other in others:
+                            # BF-932 (#1670): the primary's write and each rename below await git (and the indexer), so a
+                            # member can be revised after the check above. A member that no longer reads as loaded stays
+                            # live, so its revision is not archived unmerged; nothing between this check and the rename
+                            # awaits.
+                            if not await _reads_as_loaded(self._records_store, other):
+                                logger.info("Step 7g: left %s live; it changed after the read", other["path"])
+                                continue
                             try:
                                 old_path = self._records_store._safe_path(other["path"])
                                 new_dir = old_path.parent / "_archived"
@@ -1063,6 +1124,8 @@ class DreamingEngine:
                     # Load content for cross-agent comparison
                     cross_loaded: list[dict] = []
                     for ent in agent_dept_entries:
+                        if read_pacer.due():
+                            await asyncio.sleep(0)  # BF-932: read_entry reads and parses without an await
                         try:
                             doc = await self._records_store.read_entry(
                                 ent["path"], reader_id="system",
@@ -1076,12 +1139,20 @@ class DreamingEngine:
                     # Find cross-agent matches
                     n_cross = len(cross_loaded)
                     cross_adj: dict[int, set[int]] = {i: set() for i in range(n_cross)}
+                    # BF-932: each note's word set once (text_to_words is pure), not once per pair
+                    cross_words: list[set[str]] = []
+                    for item in cross_loaded:
+                        if read_pacer.due():
+                            await asyncio.sleep(0)  # BF-932: give the event loop a turn
+                        cross_words.append(text_to_words(item["_content"]))
                     for i in range(n_cross):
-                        words_i = text_to_words(cross_loaded[i]["_content"])
+                        words_i = cross_words[i]
                         for j in range(i + 1, n_cross):
+                            if pair_pacer.due():
+                                await asyncio.sleep(0)  # BF-932: give the event loop a turn
                             if cross_loaded[i]["agent"] == cross_loaded[j]["agent"]:
                                 continue  # skip same-agent pairs
-                            words_j = text_to_words(cross_loaded[j]["_content"])
+                            words_j = cross_words[j]
                             sim = jaccard_similarity(words_i, words_j)
                             if sim >= conv_threshold:
                                 cross_adj[i].add(j)
@@ -1107,10 +1178,14 @@ class DreamingEngine:
                             # Compute coherence = avg pairwise similarity
                             pairs = 0
                             total_sim = 0.0
+                            # BF-932: the word sets built above, in the component's order; the sum's order is unchanged
+                            member_words = [cross_words[idx] for idx in component]
                             for ci in range(len(component)):
-                                wi = text_to_words(cluster_entries[ci]["_content"])
+                                wi = member_words[ci]
                                 for cj in range(ci + 1, len(component)):
-                                    wj = text_to_words(cluster_entries[cj]["_content"])
+                                    if pair_pacer.due():
+                                        await asyncio.sleep(0)  # BF-932: give the event loop a turn
+                                    wj = member_words[cj]
                                     total_sim += jaccard_similarity(wi, wj)
                                     pairs += 1
                             coherence = total_sim / pairs if pairs else 0.0
@@ -3126,6 +3201,29 @@ class DreamingEngine:
         return created
 
 
+#: BF-930 (#1668): how long one stretch of spoken replies may hold off the idle full
+#: dream. A stretch begins at the first spoken reply after the last full dream; past
+#: this age speech no longer resets the idle clock (see record_speech_activity).
+SPEECH_DREAM_DEFER_CAP_SECONDS = 7200.0
+
+
+def _full_dream_complete_payload(report: DreamReport) -> dict[str, Any]:
+    """The ``dream_complete`` payload of a full dream (AD-503; AD-531 and AD-551 fields).
+
+    ``DreamScheduler.force_dream`` and its monitor loop both emit it. The five numeric
+    values are the report's own fields: BF-1002 (#1820 bf-989 R6) removed a ``len()`` of
+    the ``int`` ``episodes_replayed``, whose ``TypeError`` lost the completion at both sites.
+    """
+    return {
+        "dream_type": "full",
+        "duration_ms": report.duration_ms,
+        "episodes_replayed": report.episodes_replayed,
+        "clusters_found": report.clusters_found,
+        "notebook_consolidations": report.notebook_consolidations,
+        "convergence_reports_generated": report.convergence_reports_generated,
+    }
+
+
 class DreamScheduler:
     """Background scheduler that triggers dream cycles during idle periods."""
 
@@ -3142,6 +3240,7 @@ class DreamScheduler:
         self.micro_dream_interval_seconds = micro_dream_interval_seconds
 
         self._last_activity_time: float = time.monotonic()
+        self._speech_since: float | None = None  # BF-930: start of the current spoken stretch
         self._last_dream_time: float = 0.0
         self._last_micro_dream_time: float = 0.0
         self._micro_dream_count: int = 0
@@ -3167,6 +3266,26 @@ class DreamScheduler:
     def record_activity(self) -> None:
         """Record that user activity occurred (resets idle timer)."""
         self._last_activity_time = time.monotonic()
+
+    def record_speech_activity(self, now: float | None = None) -> bool:
+        """BF-930 (#1668): a spoken reply is activity for the idle full dream, within a bound.
+
+        A stretch begins at the first spoken reply after the last full dream. While it is
+        younger than ``SPEECH_DREAM_DEFER_CAP_SECONDS`` each reply resets the idle timer
+        and this returns True. Past that age it returns False and leaves the timer alone,
+        so speech no longer keeps the monitor's idle condition false; the full dream starts
+        when all of the monitor's conditions hold (``idle_threshold_seconds`` since the last
+        activity of any source, ``dream_interval_seconds`` since the last dream). The first
+        reply after that dream begins a new stretch. ``now`` is a ``time.monotonic()``
+        value (default: now).
+        """
+        at = time.monotonic() if now is None else now
+        if self._speech_since is None or self._last_dream_time > self._speech_since:
+            self._speech_since = at
+        if at - self._speech_since >= SPEECH_DREAM_DEFER_CAP_SECONDS:
+            return False
+        self._last_activity_time = at
+        return True
 
     def start(self) -> None:
         """Start the background monitoring task."""
@@ -3245,19 +3364,10 @@ class DreamScheduler:
             # AD-503: Emit dream complete event
             if self._emit_event_fn:
                 try:
-                    self._emit_event_fn(
-                        "dream_complete",
-                        {
-                            "dream_type": "full",
-                            "duration_ms": getattr(report, "duration_ms", 0),
-                            "episodes_replayed": len(getattr(report, "episodes_replayed", [])),
-                            "clusters_found": getattr(report, "clusters_found", 0),
-                            "notebook_consolidations": getattr(report, "notebook_consolidations", 0),
-                            "convergence_reports_generated": getattr(report, "convergence_reports_generated", 0),
-                        },
-                    )
+                    self._emit_event_fn("dream_complete", _full_dream_complete_payload(report))
                 except Exception:
-                    logger.debug("Dream complete event emission failed", exc_info=True)
+                    # BF-1002: WARNING; at DEBUG this line hid the loss of each full-dream completion.
+                    logger.warning("BF-1002: full dream_complete emission failed (force_dream)", exc_info=True)
             if self._post_dream_fn:
                 try:
                     self._post_dream_fn(report)
@@ -3329,6 +3439,9 @@ class DreamScheduler:
                     idle_time >= self.idle_threshold_seconds
                     and time_since_last_dream >= self.dream_interval_seconds
                 ):
+                    # BF-930 (#1668): the operator reads these two lines to see whether an idle dream runs.
+                    logger.info("BF-930: idle full dream starting idle_s=%.0f", idle_time)
+                    idle_dream_started_at = time.monotonic()
                     self._is_dreaming = True
                     if self._emergent_detector:
                         self._emergent_detector.set_dreaming(True)
@@ -3341,22 +3454,17 @@ class DreamScheduler:
                         report = await self.engine.dream_cycle()
                         self._last_dream_report = report
                         self._last_dream_time = time.monotonic()
+                        logger.info(
+                            "BF-930: idle full dream finished duration_ms=%.0f",
+                            (self._last_dream_time - idle_dream_started_at) * 1000,
+                        )
                         # AD-503: Emit dream complete event (monitor loop, full)
                         if self._emit_event_fn:
                             try:
-                                self._emit_event_fn(
-                                    "dream_complete",
-                                    {
-                                        "dream_type": "full",
-                                        "duration_ms": getattr(report, "duration_ms", 0),
-                                        "episodes_replayed": len(getattr(report, "episodes_replayed", [])),
-                                        "clusters_found": getattr(report, "clusters_found", 0),
-                                        "notebook_consolidations": getattr(report, "notebook_consolidations", 0),
-                                        "convergence_reports_generated": getattr(report, "convergence_reports_generated", 0),
-                                    },
-                                )
+                                self._emit_event_fn("dream_complete", _full_dream_complete_payload(report))
                             except Exception:
-                                logger.debug("Dream complete event emission failed", exc_info=True)
+                                # BF-1002: WARNING; at DEBUG this line hid the loss of each full-dream completion.
+                                logger.warning("BF-1002: full dream_complete emission failed (monitor loop)", exc_info=True)
                         if self._post_dream_fn:
                             try:
                                 self._post_dream_fn(report)

@@ -23,6 +23,7 @@ from pydantic import BaseModel
 
 from probos.routers.auth import require_crew_scope
 from probos.routers.chat import _validate_and_store_attachment
+from probos.cycle_trace import issue_entry_id  # AD-1360 S2b (#1828)
 from probos.routers.deps import get_runtime
 from probos.types import AnchorFrame, Episode, IntentMessage
 from probos.perception import VISION_OBSERVATION_DESCRIPTOR  # noqa: F401  registers descriptor
@@ -109,6 +110,8 @@ async def _write_anchor_episode(
                 "AD-733 v1 wire shape proven; consumer is the AD-733a VisionConsumer."
             ),
             source="direct",
+            # AD-1360 S2b (#1828): the frame upload is an HXI request outside any cycle; its own id.
+            correlation_id=issue_entry_id(getattr(runtime, "cycle_registry", None), kind="hxi_request"),
             importance=8,
             anchors=AnchorFrame(
                 channel="perception",

@@ -16,6 +16,7 @@ import pytest
 
 from probos.cognitive.swe_harness.agentic_loop import AgenticLoop
 
+from tests.offered_tools import offer_scripted  # #1796: the loop runs only offered tools.
 from tests.test_ad1320_agentic_budget_awareness import (
     BUDGET, MARKER, THRESHOLDS, Client, Resp, Tools, answer, fetch, state,
 )
@@ -43,7 +44,7 @@ async def _arm(script: list[Resp], *, treated: bool) -> dict[str, Any]:
         max_total_iterations=50, max_iterations=20, **extra,
     )
     result = await loop.run(
-        system_prompt="You are Ezri.", user_message="Research.", tools=[],
+        system_prompt="You are Ezri.", user_message="Research.", tools=[*offer_scripted(script)],  # #1796: the loop runs only offered tools, so the scripted calls' tools are offered.
         context={"agent_id": "counselor-ezri"},
     )
     return {

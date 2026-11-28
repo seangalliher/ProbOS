@@ -71,7 +71,8 @@ _EXPECTED = "\n".join((
     "completed, 2 fell back)",
 ))
 _WORST_LABEL = "[Inherited from the crew of generation 999999: not your own memory]"
-_WORST_MARKER = "[source:archive relevance:1.00 age:59s]"
+# BF-950: the entry's own age (at most five digits of days) and STALE; it was "age:59s", the retrieval's age.
+_WORST_MARKER = "[source:archive relevance:1.00 age:99999d STALE]"
 
 
 @pytest.fixture(autouse=True)

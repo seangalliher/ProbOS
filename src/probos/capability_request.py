@@ -50,6 +50,8 @@ import uuid
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Callable, Literal
 
+from probos.admission.seam import check_at
+from probos.admission.taxonomy import EFFECT_STORE_WRITE
 from probos.events import EventType
 from probos.protocols import EventEmitterMixin
 
@@ -85,6 +87,15 @@ _THREAD_ID_MAX = 64
 #: producer with a wider field (fault reports allow 128) narrows to the consumer's
 #: contract instead of forwarding a value that will be rejected outright.
 THREAD_ID_MAX_CHARS: int = _THREAD_ID_MAX
+
+
+def is_action_tool_id(tool_id: Any) -> bool:
+    """True when ``tool_id`` is a str the action payload's tool-id pattern accepts (``validate_action_payload``).
+
+    BF-982 (round 1): ``agent_work_runner.approval_payload`` reads it to file a call whose registered id it refuses
+    under the provider alias instead."""
+    return type(tool_id) is str and _TOOL_ID_RE.fullmatch(tool_id) is not None
+
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS capability_requests (
@@ -211,7 +222,7 @@ def validate_action_payload(payload: Any) -> dict[str, Any] | None:
     session_id = payload["session_id"]
     thread_id = payload["thread_id"]
 
-    if type(tool_id) is not str or _TOOL_ID_RE.fullmatch(tool_id) is None:
+    if not is_action_tool_id(tool_id):
         return None
     if type(action) is not str or _ACTION_RE.fullmatch(action) is None:
         return None
@@ -689,6 +700,7 @@ class CapabilityRequestStore(EventEmitterMixin):
         connection_factory: "ConnectionFactory | None" = None,
         emit_event: Callable[..., Any] | None = None,
         trust_network: "TrustNetworkProtocol | None" = None,
+        admission: object = None,  # AD-1346 M3e4d6 (D322): the service file_request and decide hand check_at; None checks nothing
     ) -> None:
         self.db_path = db_path
         self._connection_factory = connection_factory
@@ -697,6 +709,7 @@ class CapabilityRequestStore(EventEmitterMixin):
             self._connection_factory = default_factory
         self._emit_event = emit_event
         self._trust_network = trust_network
+        self._admission = admission  # AD-1346 M3e4d6 (D322): constructor-injected; no set_admission, so the class keeps 15 direct methods
         self._db: Any = None
         # In-memory cache: request_id -> CapabilityRequest
         self._cache: dict[str, CapabilityRequest] = {}
@@ -778,6 +791,7 @@ class CapabilityRequestStore(EventEmitterMixin):
             payload=payload,
             triage=triage,
         )
+        check_at(self._admission, effect=EFFECT_STORE_WRITE, presented_id=agent_id)  # AD-1346 M3e4d6 (D321): the filing's store-write check, in shadow, before its row's INSERT; it blocks nothing
         if self._db:
             await self._db.execute(
                 "INSERT INTO capability_requests "
@@ -999,6 +1013,7 @@ class CapabilityRequestStore(EventEmitterMixin):
         request filed through the ladder is decided on its committed row
         (:func:`_decide_ladder_row`); ``None`` then also means that row refused it.
         """
+        check_at(self._admission, effect=EFFECT_STORE_WRITE, presented_id=decided_by)  # AD-1346 M3e4d6 (D321): the decision's store-write check, in shadow, before either writer; it blocks nothing
         async with self._decision_lock:
             req = await self.get(request_id)
             if req is None:
@@ -1168,3 +1183,11 @@ class CapabilityRequestStore(EventEmitterMixin):
             finally:
                 await db.close()
         return self._cache.get(request_id)
+
+
+def requests_for_work_item(store: CapabilityRequestStore, work_item_id: str) -> list[CapabilityRequest]:
+    """BF-947: the requests in ``store``'s cache linked to ``work_item_id``, in any status, oldest first. No I/O."""
+    return sorted(
+        (req for req in store._cache.values() if req.work_item_id == work_item_id),
+        key=_created_at_sort_key,
+    )

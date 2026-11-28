@@ -1,0 +1,10 @@
+{
+  "status": "unavailable",
+  "code": "local_merge_unavailable",
+  "build_id": "b7d41c09e2a1",
+  "merged": false,
+  "branch": "builder-b7d41c09",
+  "worktree_path": "/work/ProbOS-builders/builder-b7d41c09",
+  "commit": "9f2c1ab",
+  "message": "Not merged. Local merge is unavailable (BF-897), and a build is delivered through GitHub (AD-1336): until that delivery route exists the candidate branch stays unmerged. Candidate: branch builder-b7d41c09, commit 9f2c1ab, kept in /work/ProbOS-builders/builder-b7d41c09. Push it and open a pull request yourself, or reject the build to discard its worktree and branch."
+}

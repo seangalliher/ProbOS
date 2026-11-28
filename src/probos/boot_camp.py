@@ -44,6 +44,9 @@ class AgentBootCampState:
     dm_conversations: int = 0
     graduated: bool = False
     graduated_at: float | None = None
+    # BF-992: the id this agent's episodes carry; ``activate`` sets it (the sovereign id, else the
+    # slot id). Posts, DMs and trust stay keyed by ``agent_id``, the slot id.
+    memory_id: str = ""
 
 
 class BootCampCoordinator:
@@ -141,7 +144,8 @@ class BootCampCoordinator:
         """Start boot camp for all crew agents.
 
         Args:
-            crew_agents: List of dicts with agent_id, callsign, department.
+            crew_agents: List of dicts with agent_id, callsign, department and, optionally,
+                memory_id (BF-992: the id the agent's episodes carry; absent or empty, the agent_id).
         """
         if not self._config.enabled:
             logger.info("AD-638: Boot camp disabled by config")
@@ -172,6 +176,7 @@ class BootCampCoordinator:
                 callsign=callsign,
                 department=agent_info.get("department", ""),
                 enrolled_at=self._started_at,
+                memory_id=agent_info.get("memory_id") or agent_id,  # BF-992
             )
 
         logger.info(
@@ -206,9 +211,9 @@ class BootCampCoordinator:
         if elapsed_min < self._config.min_time_minutes:
             return False
 
-        # Episode count
+        # Episode count, under the id the agent's episodes carry (BF-992), not the slot id
         try:
-            episode_count = await self._episodic.count_for_agent(agent_id)
+            episode_count = await self._episodic.count_for_agent(state.memory_id)
         except Exception:
             logger.debug("AD-638: Episode count failed for %s, treating as 0", agent_id)
             episode_count = 0

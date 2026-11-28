@@ -14,12 +14,14 @@ from probos.config import DmAgenticConfig, SystemConfig
 from probos.events import EventType
 from probos.runtime import ProbOSRuntime
 from probos.tools.permissions import ToolPermissionStore
+from probos.tools.protocol import ToolPermission  # #1796: a dispatch run offers its granted tools.
 from probos.tools.registry import ToolRegistry
 from probos.types import LLMResponse
 from probos.ws_event_stream import WSEventStreamHub
 from tests import test_ad1133_live_crew_session_refresh as live
 from tests import test_ad1152_agentic_correlation as correlation
 from tests import test_ad1224_durable_tool_start as durable
+from tests.offered_tools import offer  # #1796: the loop runs only offered tools.
 from tests.test_ad1224_durable_tool_start import conversation_stores, open_log  # noqa: F401
 
 
@@ -71,7 +73,7 @@ async def test_on_thread_identity_is_exact_strict_bounded(
         ]), tools,
     )
     context = {"agent_id": "agent", "thread_id": thread_id}
-    await loop.run(system_prompt="sys", user_message="task", tools=[], context=context)
+    await loop.run(system_prompt="sys", user_message="task", tools=[*offer("read_page")], context=context)  # #1796: the loop runs only offered tools, so the scripted calls' tool is offered.
     tool_events = [event["data"] for event in events if event["type"] in correlation.LOOP_EVENTS[1:]]
     assert len(tool_events) == 2
     assert all(data.get("thread_id") == expected for data in tool_events)
@@ -91,7 +93,7 @@ async def test_off_valid_thread_does_not_change_payload_or_cardinality() -> None
         tool_executor=correlation._ToolRecorder(), event_emit_fn=runtime.emit_event,
     )
     await loop.run(
-        system_prompt="sys", user_message="task", tools=[],
+        system_prompt="sys", user_message="task", tools=[*offer("read_page")],  # #1796: the loop runs only offered tools, so the scripted call's tool is offered.
         context={"agent_id": "agent", "thread_id": "authoritative"},
     )
     assert len(events) == 4
@@ -120,7 +122,7 @@ async def test_overlapping_runs_capture_thread_before_delayed_emission() -> None
     )
     contexts = [{"agent_id": "same", "thread_id": name} for name in ("first", "second")]
     tasks = [asyncio.create_task(loop.run(
-        system_prompt=context["thread_id"], user_message="task", tools=[], context=context,
+        system_prompt=context["thread_id"], user_message="task", tools=[*offer("read_page")], context=context,  # #1796: the loop runs only offered tools, so the scripted calls' tool is offered.
     )) for context in contexts]
     try:
         await asyncio.gather(*tasks)
@@ -173,6 +175,7 @@ async def test_real_conversation_live_start_precedes_completion_and_matches_dura
     )
     runtime.tool_registry = registry
     runtime.tool_permission_store = ToolPermissionStore()
+    await runtime.tool_permission_store.issue_grant("conversation-agent", "dispatch_probe", ToolPermission.READ)  # #1796: the loop runs only offered tools; a dispatch run offers its granted tools.
     runtime.capability_gap_driver = None
     runtime.intent_bus = None
     runtime.event_log = log
@@ -248,7 +251,7 @@ async def test_cancellation_retains_only_started_observation() -> None:
         correlation._ScriptedClient([correlation._tool_turn("first")]), _HeldTool(),
     )
     task = asyncio.create_task(loop.run(
-        system_prompt="sys", user_message="task", tools=[],
+        system_prompt="sys", user_message="task", tools=[*offer("read_page")],  # #1796: the loop runs only offered tools, so the scripted call's tool is offered.
         context={"agent_id": "a", "thread_id": "cancel-room"},
     ))
     try:

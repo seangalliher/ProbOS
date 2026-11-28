@@ -18,6 +18,8 @@ import re
 
 import pytest
 
+from tests.fixtures.logger_levels import restored_logger_levels
+
 _ISO = re.compile(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}  ")
 _CLOCK_ONLY = re.compile(r"^\d{2}:\d{2}:\d{2}  ")
 
@@ -31,8 +33,10 @@ def _handlers() -> tuple[logging.Handler, ...]:
     for h in saved:
         root.removeHandler(h)
     try:
-        _setup_logging("INFO", verbose=False)
-        return tuple(root.handlers)
+        # BF-993: _setup_logging pins eleven named loggers at WARNING; put them back.
+        with restored_logger_levels():
+            _setup_logging("INFO", verbose=False)
+            return tuple(root.handlers)
     finally:
         for h in list(root.handlers):
             root.removeHandler(h)

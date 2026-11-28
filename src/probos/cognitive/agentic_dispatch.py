@@ -35,6 +35,7 @@ from probos.artifacts.refs import validate_artifact_ref
 from probos.cognitive.agentic_disposition import AGENTIC_DISPOSITION  # AD-1180
 from probos.cognitive.swe_harness.agentic_loop import (
     AGENTIC_DEFAULT_TIER,
+    UNOFFERED_TOOL_REFUSAL,
     AgenticBudgetAwarenessState,
 )
 from probos.cognitive.swe_harness.result_offload import workspace_delivery_context  # AD-1240
@@ -85,7 +86,12 @@ from probos.tools.delegation_evidence import (
     DelegationEvidenceCollector,
     delegation_status,
 )
-from probos.tools.executor import ToolExecutor, classify_tool_error, wire_durable_tool_records
+from probos.tools.executor import (
+    ToolExecutor,
+    classify_tool_error,
+    wire_durable_tool_records,
+    wire_secret_masked_event,
+)
 from probos.tools.protocol import (
     ToolPermission,
     ToolResult,
@@ -107,8 +113,8 @@ logger = logging.getLogger(__name__)
 _STRICT_APPROVAL_DISPATCH: ContextVar[EffectDispatchContext | None] = ContextVar(
     "strict_approval_dispatch", default=None
 )
-# AD-1347 S3 A1 (F3): set for the one call a run's confinement admitted under the Captain's single-use approval of that
-# exact call, so AD-1154's inbox does not park it again. Credential entry (the inbox's step 3) is still refused.
+# AD-1347 S3 A1 (F3): set for the one call a run's confinement admitted (a single-use approval of that exact call, or
+# a workspace-result read, AD-1356 S1.3), so AD-1154's inbox does not park it again. Credential entry stays refused.
 _CONFINED_ADMISSION: ContextVar[bool] = ContextVar("confined_admission", default=False)
 _MAX_ARTIFACT_CANDIDATES_PER_RESULT = 64
 _MAX_ARTIFACT_REFS = 32
@@ -298,46 +304,68 @@ _PLAN_MODE_TOOL_REFUSAL: str = (
     "switches to execute mode; finish the plan and name the step that needs "
     "this tool."
 )
-# AD-1347 S3 (#1627): agent-created work runs confined. Its calls to the tools in the run's set run as usual; a call to
-# any other tool is put to the run's gate, which files it for the Captain's approval (an AD-1154 ``action``) or admits
-# the one call an approval on record covers. Error-shaped and final, in the AD-1154 voice; never defect evidence.
+# AD-1347 S3 (#1627): agent-created work runs confined. AD-1356 S1.1: a call whose tool id the executor's registry does
+# not hold is refused before the run's set is consulted. Its other calls to the tools in the run's set run as usual; a
+# call to any other tool is put to the run's gate, which admits it, files it for approval (an AD-1154 ``action``, whose
+# decider follows its tier, AD-1356 S3 and S4), answers it (BF-947) or refuses it. Error-shaped and final, in the
+# AD-1154 voice; never defect evidence.
 CONFINED_CALL_FILED: str = (
-    "That call needs the Captain's approval before it runs. It was filed for review and did not run. Do not "
-    "repeat it: a repeat is folded into the same request. Finish what the read-only tools allow and report "
-    "what remains open."
+    "That call needs approval before it runs. It was filed for review and did not run. Do not repeat it: a "
+    "repeat is folded into the same request. Finish what the tools that run directly allow and report what "
+    "remains open."
 )
 CONFINED_CALL_NOT_FILED: str = (
-    "That call needs the Captain's approval before it runs, and it could not be filed for review, so it did "
-    "not run. Finish what the read-only tools allow and report what remains open."
+    "That call needs approval before it runs, and it could not be filed for review, so it did not run. Finish "
+    "what the tools that run directly allow and report what remains open."
+)
+# BF-947: the refusal for ``CONFINEMENT_ANSWERED``.
+CONFINED_CALL_ANSWERED: str = (
+    "That call already ran in this work under its approval, so it did not run again. Its result is in your task "
+    "text or earlier in this run."
+)
+# AD-1356 S1.1: the refusal, under a confinement, of a call whose tool id the executor's registry does not hold.
+UNREGISTERED_TOOL_REFUSAL: str = (
+    "That call names no registered tool, so it did not run and was not filed for approval. Use "
+    "search_capabilities to find a registered tool for this step."
 )
 CONFINEMENT_ADMIT = "admit"
 CONFINEMENT_FILED = "filed"
 CONFINEMENT_REFUSED = "refused"
+CONFINEMENT_ANSWERED = "answered"  # BF-947
 
 # AD-1189 / AD-1156: refusals of calls that never ran. They say nothing about
 # the tool, so they are never defect evidence.
-_NEVER_RAN_REFUSALS: frozenset[str] = frozenset(
-    {_DEFERRED_SCHEMA_REFUSAL, _PLAN_MODE_TOOL_REFUSAL, CONFINED_CALL_FILED, CONFINED_CALL_NOT_FILED}
-)
+_NEVER_RAN_REFUSALS: frozenset[str] = frozenset({
+    _DEFERRED_SCHEMA_REFUSAL, _PLAN_MODE_TOOL_REFUSAL, CONFINED_CALL_FILED, CONFINED_CALL_NOT_FILED,
+    CONFINED_CALL_ANSWERED, UNREGISTERED_TOOL_REFUSAL,
+    UNOFFERED_TOOL_REFUSAL,  # BF-965 (#1796): the loop refused a tool outside the offer
+})
 
 
 @dataclass(frozen=True)
 class ToolCallConfinement:
-    """AD-1347 S3: the calls a run makes directly (``tool_ids``) and the gate every other call is put to.
+    """AD-1347 S3: the calls a run makes directly (``tool_ids``) and the gate for the run's other calls.
 
-    ``gate(agent_id, tool_id, params)`` answers ``CONFINEMENT_ADMIT`` (run it), ``CONFINEMENT_FILED`` (filed for the
-    Captain's approval) or anything else (not filed). Enforced first in the executor's invoke, before plan mode and the
-    AD-1154 browser inbox, so the decision is made at the tool call, never by reading the plan.
+    ``gate(agent_id, tool_id, params)`` answers ``CONFINEMENT_ADMIT`` (run it), ``CONFINEMENT_FILED`` (filed for
+    approval), ``CONFINEMENT_ANSWERED`` (BF-947: refused with ``CONFINED_CALL_ANSWERED``) or anything else
+    (not filed). Enforced in the executor's invoke after AD-1356 S1.1's refusal of a tool id the registry does not
+    hold, and before plan mode and the AD-1154 browser inbox, so the decision is made at the tool call, never by
+    reading the plan. BF-947: ``record``, when set, is handed results of admitted calls (``record_admitted``).
+    BF-982: ``tool_ids``, ``gate`` and ``record`` see the registered id a provider alias resolves to; an ambiguous
+    name, or any name when the executor has no registry, is passed as the model sent it.
     """
 
     tool_ids: frozenset[str]
     gate: Callable[[str, Any, Any], Awaitable[str]]
+    record: Callable[[str, Any, Any, ToolResult], None] | None = None
 
     def __post_init__(self) -> None:
+        # AD-1356 S4: ``tool_ids`` may be empty (it is when neither routine nor elevated is ``auto``).
         if (
-            type(self.tool_ids) is not frozenset or not self.tool_ids
+            type(self.tool_ids) is not frozenset
             or any(type(tool_id) is not str or not tool_id for tool_id in self.tool_ids)
             or not callable(self.gate)
+            or (self.record is not None and not callable(self.record))
         ):
             raise ValueError("tool_call_confinement_invalid")
 
@@ -353,7 +381,21 @@ class ToolCallConfinement:
             verdict = CONFINEMENT_REFUSED
         if verdict == CONFINEMENT_ADMIT:
             return None
+        if verdict == CONFINEMENT_ANSWERED:
+            return ToolResult(error=CONFINED_CALL_ANSWERED)
         return ToolResult(error=CONFINED_CALL_FILED if verdict == CONFINEMENT_FILED else CONFINED_CALL_NOT_FILED)
+
+    def record_admitted(self, agent_id: str, tool_id: Any, params: Any, result: ToolResult) -> None:
+        """BF-947: hand an admitted call's result to ``record`` when one is set; a ``record`` that raises is logged."""
+        if self.record is None:
+            return
+        try:
+            self.record(agent_id, tool_id, params, result)
+        except Exception:
+            logger.warning(
+                "BF-947: the result of an admitted call from agent %s was not kept for a later run", agent_id[:12],
+                exc_info=True,
+            )
 
 
 @dataclass(frozen=True)
@@ -805,13 +847,32 @@ class _DispatchGuardMixin:
 
         confinement = self._confinement
         confined_admission = False
-        if confinement is not None and tool_id not in confinement.tool_ids:
-            refusal = await confinement.refuse_or_admit(agent_id, tool_id, params)
+        admitted_params = params  # BF-947: what the gate was asked, for record_admitted
+        # BF-982: the id the confinement's set, gate and record see. A provider alias (the only name a model is shown
+        # for an mcp: tool) becomes the registered id it resolves to, so one call is filed, kept and approved under one
+        # id and filed_call_tier reads the tool's own tier; the runner's gate files the alias instead when the action
+        # payload's tool-id pattern refuses the id (approval_payload). Plan mode, deferred schemas, the browser checks
+        # and the executor below keep the name the model sent: each answers an alias and its id alike or
+        # resolves it itself.
+        confined_id = tool_id
+        # AD-1356 S1.1: under a confinement, when the executor has a registry, a str tool id that resolves to no
+        # registered tool is refused here, before the confinement's set and gate, so it is never filed. An ambiguous
+        # name (``_resolve_tool_id`` answers None) goes on to the gate.
+        if confinement is not None and self._registry is not None and type(tool_id) is str:
+            resolved = self._resolve_tool_id(tool_id)
+            if resolved is not None and self._registry.get(resolved) is None:
+                strict_log("confinement", "confinement_refused")
+                return refuse(ToolResult(error=UNREGISTERED_TOOL_REFUSAL), "confinement_refused")
+            if resolved is not None:
+                confined_id = resolved
+        if confinement is not None and confined_id not in confinement.tool_ids:
+            refusal = await confinement.refuse_or_admit(agent_id, confined_id, params)
             if refusal is not None:
                 strict_log("confinement", "confinement_refused")
                 return refuse(refusal, "confinement_refused")
-            # AD-1347 S3 A1 (F3): the Captain approved exactly this call, once; AD-1154's inbox below does not park it
-            # again (credential entry there stays refused).
+            # AD-1347 S3 A1 (F3): the gate admitted this call, under an approval of exactly this call, once,
+            # or as a read of a workspace-result path, which needs none (AD-1356 S1.3). AD-1154's inbox below does not
+            # park an admitted call (credential entry there stays refused).
             confined_admission = True
         if self._plan_mode_tool_ids is not None and tool_id not in self._plan_mode_tool_ids:
             if strict_dispatch is not None:
@@ -881,10 +942,12 @@ class _DispatchGuardMixin:
         if restricted and result.error is None:
             result = replace(result, output=_bound_browser_output(result.output))
         if dispositions and result.error is None:
-            return replace(
+            result = replace(
                 result,
                 output=_with_disposition(result.output, " ".join(dispositions)),
             )
+        if confined_admission and confinement is not None:
+            confinement.record_admitted(agent_id, confined_id, admitted_params, result)
         return result
 
 
@@ -909,9 +972,10 @@ class _DispatchConfigurationMixin:
     """
 
     def __init__(
-        self, *, registry: Any, effect_broker: Any = None
+        self, *, registry: Any, effect_broker: Any = None, secret_masker: Any = None
     ) -> None:
-        super().__init__(registry=registry, effect_broker=effect_broker)
+        # AD-1337 S2: forwards the masker, so the dispatch executor masks on both of its paths.
+        super().__init__(registry=registry, effect_broker=effect_broker, secret_masker=secret_masker)
         self.denied_tools: list[str] = []
         # AD-1153: None = unarmed = today's behaviour. Set only by
         # ``restrict_browser_actions``.
@@ -957,7 +1021,8 @@ class _DispatchConfigurationMixin:
         self._plan_mode_tool_ids = tool_ids
 
     def confine_calls(self, confinement: ToolCallConfinement) -> None:
-        """AD-1347 S3: put every call to a tool outside ``confinement.tool_ids`` to its gate, first in :meth:`invoke`."""
+        """AD-1347 S3: put every call to a tool outside ``confinement.tool_ids`` to its gate in :meth:`invoke`, after
+        AD-1356 S1.1 refuses a call whose tool id the registry does not hold."""
         self._confinement = confinement
 
     def restrict_browser_actions(self, actions: frozenset[str]) -> None:
@@ -1219,9 +1284,9 @@ class _ApprovalGuardMixin:
             return ToolResult(error=_APPROVAL_CREDENTIAL_REFUSAL)
 
         if _CONFINED_ADMISSION.get():
-            # AD-1347 S3 A1 (F3): the run's confinement admitted this exact call under the Captain's single-use approval
-            # of it, so it is not parked again; credential entry (step 3, above) stays refused.
-            logger.info("AD-1347: %s.%s for agent %s runs under the Captain's approval of this call", tool_id, action, agent_id[:12])
+            # AD-1347 S3 A1 (F3): the run's confinement admitted this exact call under a single-use approval of it,
+            # so it is not parked again; credential entry (step 3, above) stays refused.
+            logger.info("AD-1347: %s.%s for agent %s runs under an approval of this call", tool_id, action, agent_id[:12])
             return None
 
         scope_key = self._resolve_scope_key(
@@ -1467,6 +1532,15 @@ class _ApprovalGuardMixin:
                 cap_int,
             )
         return True
+
+
+def _runtime_secret_masker(runtime: Any) -> Any:
+    """AD-1337 S2: ``runtime.secret_masker`` when it is a real ``SecretMasker`` (startup/finalize.py builds it),
+    else None: a runtime finalize never ran on (a test double) masks nothing, and a ``MagicMock`` attribute is not
+    handed to the executor, which would refuse it."""
+    from probos.security.secret_masking import secret_masker_of
+
+    return secret_masker_of(runtime)  # AD-1337 S3: the one filter every seam that takes a masker shares
 
 
 class DispatchToolExecutor(
@@ -2106,7 +2180,9 @@ def classify_tool_fault_error(error: Any) -> str | None:
             _BROWSER_READ_ONLY_REFUSAL, _APPROVAL_PARKED_REFUSAL_NO_ID,
             _APPROVAL_INBOX_FULL_REFUSAL, _APPROVAL_CREDENTIAL_REFUSAL,
             _DEFERRED_SCHEMA_REFUSAL, _PLAN_MODE_TOOL_REFUSAL,
-            CONFINED_CALL_FILED, CONFINED_CALL_NOT_FILED,  # AD-1347 S3
+            CONFINED_CALL_FILED, CONFINED_CALL_NOT_FILED, CONFINED_CALL_ANSWERED,  # AD-1347 S3, BF-947
+            UNREGISTERED_TOOL_REFUSAL,  # AD-1356 S1.1
+            UNOFFERED_TOOL_REFUSAL,  # BF-965 (#1796): a refused unoffered call is not a fault
             "consensus_blocked", "requires_confirmation",
         )
         or error.startswith(_APPROVAL_PARKED_REFUSAL.split("{request_id}", 1)[0])
@@ -2160,6 +2236,18 @@ def _without_deferred_schema_refusals(agentic_result: Any) -> Any:
         ],
         tool_results=kept,
     )
+
+
+def without_never_ran_refusals(agentic_result: Any) -> Any:
+    """BF-965 (#1796): the public name of the strip above, for a route outside this module.
+
+    A fault observer reads a run through it, so a call answered by a
+    ``_NEVER_RAN_REFUSALS`` text never counts toward a defect. The fault
+    classification alone is not enough: ``collect_tool_fault_batch`` takes its
+    same-run defect before its noise filter. The DM route applies the strip in
+    ``run``; the native builder calls this.
+    """
+    return _without_deferred_schema_refusals(agentic_result)
 
 
 def _duplicate_tool_ids(items: Any) -> set[str]:
@@ -2301,7 +2389,12 @@ def _project_tool_invocations(result: Any) -> ToolInvocations | None:
                 "them rather than risk contradicting a successful write",
                 len(dropped), sorted(set(dropped)),
             )
-        return ToolInvocations.from_names(attempted, succeeded)
+        # AD-1358 S2 (#1750): a record that left calls out says so. Without the mark, a turn whose every
+        # call was unverifiable would read as "called no tool", which it did not. The mark rides the
+        # record through the pass union (``merged_with``) and the wire, so no later pass can make the
+        # record look complete. The lists, and so the write verdict, are unchanged: ``step_4n`` reads
+        # ``attempted`` only.
+        return ToolInvocations.from_names(attempted, succeeded, incomplete=bool(dropped))
     except Exception:
         logger.warning(
             "AD-1295: tool-invocation projection raised; this turn carries no "
@@ -2940,6 +3033,7 @@ class WorkItemAgenticExecutor:
         executor = DispatchToolExecutor(
             registry=registry,
             effect_broker=getattr(runtime, "effect_broker", None),
+            secret_masker=_runtime_secret_masker(runtime),
         )
         observed_tool_results: list[tuple[Any, Any]] = []
         owned_view_references: list[owned_steps.OwnedStepsViewReference] = []
@@ -2998,6 +3092,9 @@ class WorkItemAgenticExecutor:
             executor, event_log=getattr(runtime, "event_log", None),
             work_item_id_provider=work_item_id_provider,
         )
+        # AD-1337 S2: SECRET_MASKED for this executor's masked calls. Not lifecycle traffic: at most one event per
+        # call, and only when something was masked or withheld.
+        wire_secret_masked_event(executor, emit_fn=getattr(runtime, "emit_event", None))
 
         mesh_ids: list[str] = []
         if intent_bus is not None and registry is not None:
@@ -3550,9 +3647,11 @@ class WorkItemAgenticExecutor:
             ]
         # AD-1156: plan mode narrows the offer to its allowlist and arms the
         # matching invoke-time guard -- one decision, two consequences (BF-690).
-        # The guard is what holds for a tool the model names without being
-        # offered it, because the registry resolves every REGISTERED tool; it
-        # refuses before a call is resolved, parked (AD-1154) or run. Filtered
+        # BF-965: the loop refuses a tool the model names without being offered
+        # it before any executor sees the call; this guard stays as defence in
+        # depth, because the registry resolves every REGISTERED tool and a direct
+        # executor call is checked against no offer. It refuses before a call is
+        # resolved, parked (AD-1154) or run. Filtered
         # after every block has contributed, so a tool added to the union later
         # is withheld until it is classified, not offered by default.
         if plan_mode_tool_ids is not None:
@@ -3939,6 +4038,11 @@ class WorkItemAgenticExecutor:
         # AD-1189: an armed manifest needs the same seam; both off => no kwarg.
         if (mcp_offer_armed and mcp_offer is not None) or manifest_offer is not None:
             _loop_kwargs["refresh_tools"] = _refresh_tools
+        # BF-965: a withheld, loadable tool is named only inside load_tools, so the
+        # loop's offer check admits it and the AD-1189 guard answers the call. Unarmed
+        # => no kwarg, so a loop double pinning the unarmed keywords is unchanged.
+        if manifest_offer is not None:
+            _loop_kwargs["also_offered"] = manifest_offer.loadable_names
         # AD-1146: opt into the provider's real multi-turn message array
         # (assistant.tool_calls + role:"tool" results). Default-OFF — with the
         # flag off the loop builds the AD-545 flattened prompt verbatim. Read
@@ -4083,6 +4187,11 @@ class WorkItemAgenticExecutor:
             **resolve_event_correlation_settings(_agentic_loop_cfg),
             **_loop_kwargs,
         )
+        # AD-1337 S3 (#1560): the render seam masks with this run's executor's masker, assigned after construction for
+        # the reason AD-1240 gives below (the AD-1152 golden pins the constructor keywords).
+        from probos.security.secret_masking import secret_masker_of
+
+        loop.secret_masker = secret_masker_of(executor)
         # AD-1240: the owner is assigned after construction (never as a constructor
         # keyword), so every loop double that pins the constructor keywords is
         # unaffected. The run context carries the SAME authorized registry view this

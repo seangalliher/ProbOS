@@ -35,6 +35,7 @@ from probos.cognitive.cognitive_agent import (
     CognitiveAgent,
     _conversational_thread_id,
 )
+from probos.cycle_trace import new_cycle_id
 from probos.threads import ChatThreadStore
 from probos.types import IntentMessage
 
@@ -65,6 +66,7 @@ def _agent(runtime=None, *, agent_id="agentezri", callsign="Ezri"):
         callsign=callsign,
         agent_type="counselor",
         _runtime=runtime,
+        _issue_cycle_id=new_cycle_id,  # AD-1360 (#1828): perceive issues its own cycle id through the agent
     )
 
 

@@ -46,6 +46,7 @@ from typing import TYPE_CHECKING, Any, Callable, Literal
 from probos.fault_issue_filings import (
     ISSUE_FILING_SCHEMA, FaultIssueFilings, fault_transaction,
 )
+from probos.tools.protocol import is_caller_input_error
 
 if TYPE_CHECKING:
     from probos.fault_detection import (
@@ -297,8 +298,8 @@ def canonical_tool_id(
 ) -> str:
     """AD-1269: the registered id behind an observed name, or the name verbatim.
 
-    The resolver is INJECTED rather than imported. This module is foundation and
-    stdlib-only; the authority that can answer the question
+    The resolver is INJECTED rather than imported. This module is foundation; the
+    authority that can answer the question
     (``llm_function_name_claimants`` over ``ToolRegistry.list_ids``) lives under
     ``cognitive/``, and reaching for it here would invert the layering. The
     caller that already holds a registry supplies the callable.
@@ -356,6 +357,9 @@ def detect_tool_defect(
     less-frequent competing defect. Each distinct name is resolved once per
     call; the ``max()`` and the threshold are otherwise unchanged.
 
+    AD-1356 S1.2: a result whose output ``is_caller_input_error`` marks for its
+    canonical tool is not counted.
+
     Never raises: a malformed outcome yields ``None`` and the caller takes the
     ordinary step-limit path, which is exactly today's behaviour.
     """
@@ -393,7 +397,10 @@ def detect_tool_defect(
                 continue
             raw = getattr(result, "output", "")
             raw_text = raw if type(raw) is str else str(raw)
-            key = (_canonical(observed), normalise_error(raw_text))
+            tool = _canonical(observed)
+            if is_caller_input_error(tool, raw_text):  # AD-1356 S1.2: the call's input was wrong, not the tool
+                continue
+            key = (tool, normalise_error(raw_text))
             entry = tally.get(key)
             if entry is None:
                 tally[key] = [1, raw_text, observed]

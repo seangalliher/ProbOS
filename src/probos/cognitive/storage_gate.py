@@ -68,7 +68,7 @@ class StorageGate:
                 utility_score=0.0,
             )
 
-        dup_id = self._check_near_duplicate(content)
+        dup_id = self._check_near_duplicate(content, self._owners(episode))
         if dup_id is not None:
             self._record_fingerprint(episode, content)
             self._emit_rejection(episode, "near_duplicate")
@@ -120,13 +120,25 @@ class StorageGate:
                     parts.append(str(result))
         return " ".join(parts)
 
-    def _check_near_duplicate(self, content: str) -> str | None:
-        """Return the duplicate episode ID when content matches recent memory."""
+    @staticmethod
+    def _owners(episode: Episode) -> frozenset[str]:
+        """The episode's owner key: the set of its agent ids; an ownerless episode's key is empty."""
+        return frozenset(episode.agent_ids)
+
+    def _check_near_duplicate(self, content: str, owners: frozenset[str]) -> str | None:
+        """Return the duplicate episode ID when content matches a recent episode of the same owners.
+
+        BF-967 (#1798): only fingerprints whose owner key equals ``owners`` are compared, so one agent's episode
+        never rejects another's, and an ownerless episode compares only with ownerless ones. The window stays one
+        deque shared by every writer, so a same-owner comparison reaches exactly what it reached before.
+        """
         if not content:
             return None
 
         content_words = text_to_words(content)
         for recent in self._recent:
+            if recent["owners"] != owners:
+                continue
             sim = jaccard_similarity(content_words, recent["content_words"])
             if sim >= self._duplicate_threshold:
                 return recent["id"]
@@ -171,7 +183,11 @@ class StorageGate:
         episode: Episode,
         content: str,
     ) -> str | None:
-        """Check for potential contradictions with recent episodes."""
+        """Check for potential contradictions with recent episodes.
+
+        BF-967 (#1798): reads every owner's fingerprints, unlike the near-duplicate check. It only logs and never
+        changes the decision, so it cannot cost an agent an episode.
+        """
         if not content:
             return None
 
@@ -212,6 +228,7 @@ class StorageGate:
         outcomes_summary = self._summarize_outcomes(episode)
         self._recent.append({
             "id": episode.id,
+            "owners": self._owners(episode),
             "content": content,
             "content_words": text_to_words(content),
             "outcomes_summary": outcomes_summary,
@@ -240,7 +257,7 @@ class StorageGate:
 
     @property
     def recent_count(self) -> int:
-        """Number of episodes in the recent dedup window."""
+        """Number of fingerprints in the recent window, across all owners; each owner's check reads only its own."""
         return len(self._recent)
 
     def snapshot(self) -> dict[str, Any]:

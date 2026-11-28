@@ -433,6 +433,12 @@ class TestSelfMonitoringContextBuilder:
         result = await loop._build_self_monitoring_context(agent, "Bones", rt)
         assert "notebook_content" in result
         assert "analysis" in result["notebook_content"]["snippet"]
+        # BF-949: the pull reads only the agent's own notebook, as the agent; the real-store
+        # test is tests/test_bf949_notebook_reader_identity.py.
+        records.search.assert_awaited_once_with(
+            "medical", scope="ship", reader_id="Bones", reader_department="medical",
+            directory="notebooks/Bones",
+        )
 
     @pytest.mark.asyncio
     async def test_pending_notebook_read_injected(self) -> None:

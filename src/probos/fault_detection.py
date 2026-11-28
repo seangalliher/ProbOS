@@ -21,7 +21,7 @@ from probos.fault_report import (
     canonical_tool_id,
     detect_tool_defect,
 )
-from probos.tools.protocol import ToolResult
+from probos.tools.protocol import ToolResult, is_caller_input_error
 
 logger = logging.getLogger(__name__)
 
@@ -293,6 +293,8 @@ def collect_tool_fault_batch(
                     "can be established, so it contributes no diagnostic vote"
                 )
                 continue
+            if is_caller_input_error(canonical, raw):
+                continue  # AD-1356 S1.2: the call's input was wrong; neither fault nor success evidence
             defect = ToolDefect(
                 tool_id=canonical, error_text=raw, count=1,
                 observed_as="" if name == canonical else name,

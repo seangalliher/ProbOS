@@ -67,7 +67,7 @@ ProbOS/
 | `perception/` | Visual perception — frame ingestion and episode anchoring |
 | `consultation/` | Consultation workspaces |
 | `creative/`, `recreation/` | Creative expression and social gaming between agents |
-| `holodeck/` | Holodeck birth chamber and scenarios |
+| `holodeck/` | Holodeck scenarios and team simulations |
 
 ### Knowledge and Records
 

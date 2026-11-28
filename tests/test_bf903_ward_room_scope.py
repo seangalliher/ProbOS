@@ -339,19 +339,6 @@ _SUBSCRIBE_REFUSED = {
 }
 
 
-class _Chamber:
-    """A Birth Chamber that has graduated no one, so ``AssignmentService`` defers every subscription to it (AD-486)."""
-
-    def __init__(self) -> None:
-        self.queued: list[tuple[str, str]] = []
-
-    def is_graduated(self, agent_id: str) -> bool:
-        return False
-
-    def queue_pending_subscription(self, agent_id: str, channel_id: str, subscribe: Any) -> None:
-        self.queued.append((agent_id, channel_id))
-
-
 class _Procedure:
     """The members the teaching route reads from an approved Level-5 procedure."""
 
@@ -381,8 +368,8 @@ def _client(runtime: Any) -> _AsyncClient:
 
 async def test_an_assignment_naming_a_refused_visitor_changes_nothing_and_answers_403(rig: _Rig, tmp_path: Path) -> None:
     """W9 (A4): POST /api/assignments checks every member before the channel, a subscription or a row exists, so a
-    request naming a visitor without ward_room.read answers 403 with the reason and leaves no assignment, channel,
-    subscription or deferred subscription; a visitor holding ward_room.read joins with every member subscribed.
+    request naming a visitor without ward_room.read answers 403 with the reason and leaves no assignment, channel
+    or subscription; a visitor holding ward_room.read joins with every member subscribed.
     Before A4 the service swallowed the refusal: 200, every member recorded, the members after the visitor not
     subscribed."""
     service = AssignmentService(db_path=str(tmp_path / "assignments.db"), ward_room=rig.ward_room)
@@ -393,7 +380,6 @@ async def test_an_assignment_naming_a_refused_visitor_changes_nothing_and_answer
         refused_visitor = await _visitor(rig, CAP_DM_SEND)
         reader = await _visitor(rig, CAP_WARD_ROOM_READ)
         channels = [c.id for c in await rig.ward_room.list_channels()]
-        chamber = _Chamber()
         async with _client(runtime) as client:
             refused = await client.post(
                 "/api/assignments",
@@ -401,17 +387,14 @@ async def test_an_assignment_naming_a_refused_visitor_changes_nothing_and_answer
             )
             assert refused.status_code == 403, refused.text
             assert refused.json() == _SUBSCRIBE_REFUSED
-            service.set_birth_chamber(chamber)
-            deferred = await client.post(
+            again = await client.post(
                 "/api/assignments",
                 json={"name": "Away", "assignment_type": "away_team", "members": [CREW_SLOT, refused_visitor]},
             )
-            assert deferred.status_code == 403, deferred.text
-            assert chamber.queued == []
+            assert again.status_code == 403, again.text
             assert await service.list_assignments() == []
             assert [c.id for c in await rig.ward_room.list_channels()] == channels
             assert [p["surface"] for p in _refusals(rig.events)] == ["ward_room.subscribe", "ward_room.subscribe"]
-            service.set_birth_chamber(None)
             served = await client.post(
                 "/api/assignments",
                 json={"name": "Away", "assignment_type": "away_team", "members": [CREW_SLOT, reader, "captain"]},

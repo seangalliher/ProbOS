@@ -98,6 +98,9 @@ class IntentResult:
     # is never duplicated into metadata. Only *facts about* the payload belong
     # here, and they are bounded and versioned so this cannot become a second
     # body channel. See ``prompts/ad-1248-dm-reply-value.md`` DD-5.
+    # AD-1360 (#1828): a cognitive cycle's result also carries ``correlation_id``,
+    # the cycle's AD-492 id (at most 64 characters), for a caller that stores an
+    # episode after the cycle has ended.
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
@@ -372,6 +375,28 @@ class LLMResponse:
     # cache replays; "" when none was appended (the default; the Ollama-native transport, the mock
     # client, test doubles, errors). The single-call fallback's BF-204 grounds on it.
     applied_system_suffix: str = ""
+
+
+def llm_response_text(response: object) -> str:
+    """BF-988 (#1523 F-19): the text of an LLM client's reply, stripped; "" when it holds none.
+
+    ``LLMResponse`` carries its text in ``content`` and has no ``text`` attribute. A reply whose
+    ``error`` is a non-empty ``str`` is not an answer and reads "" (the clients answer a refused or
+    failed call with ``content=""`` and ``error`` set). Otherwise a ``str`` ``content`` is the text;
+    an object whose ``content`` is not a ``str`` (a test double) is read by its ``str`` ``text``.
+    Anything else reads "": never ``str(response)``, whose dataclass repr is not an answer and
+    carries the provider's ``answered_model`` text (AD-1327).
+    """
+    error = getattr(response, "error", None)
+    if isinstance(error, str) and error:
+        return ""
+    content = getattr(response, "content", None)
+    if isinstance(content, str):
+        return content.strip()
+    text = getattr(response, "text", None)
+    if isinstance(text, str):
+        return text.strip()
+    return ""
 
 
 class EscalationTier(Enum):
@@ -720,6 +745,14 @@ class Episode:
     # deferred capture AD; consumed by the AD-873 reranker's affect term (off by
     # default → byte-identical). NOT measured affect yet — the storage slot.
     affect_salience: float = 0.0
+    # AD-1360 (#1828): the record AD-607b's correlation rule reads, written by EpisodicMemory.store() and nowhere else
+    # (a producer's values are replaced). stored_at is the primary write's epoch time; correlation_verdict is what the
+    # cycle-id registry said of correlation_id then: "resolved", "unresolved", "empty" or "unchecked"
+    # (probos.cycle_trace). 0.0 and "" = not recorded (stored before AD-1360, seeded or restored): never judged.
+    # Neither is in compute_episode_hash, like correlation_id (BF-740), so no stored hash changes.
+    # Not compared either: an episode read back from a memory equals the one its producer built.
+    stored_at: float = field(default=0.0, compare=False)
+    correlation_verdict: str = field(default="", compare=False)
 
 
 # ------------------------------------------------------------------

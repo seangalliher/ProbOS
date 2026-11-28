@@ -30,7 +30,7 @@ from probos.startup.activation_receipts import (
 
 if TYPE_CHECKING:
     from probos.capability_request import CapabilityRequestStore
-    from probos.config import SystemConfig
+    from probos.config import CognitiveConfig, SystemConfig
 
 logger = logging.getLogger(__name__)
 
@@ -712,6 +712,98 @@ def _wire_mesh_intent_tools(*, runtime: Any) -> list[str]:
     return ids
 
 
+def _configured_api_key_pairs(cognitive: CognitiveConfig) -> tuple[tuple[str, str], ...]:
+    """``(f"llm_api_key_{tier}", key)`` for each tier of ``_LLM_TIERS`` whose resolved key is not empty (#1820 R1).
+
+    ``CognitiveConfig.tier_config`` resolves a tier without its own key to the shared one, so the shared key appears
+    once for each such tier. ``_wire_secret_masker`` gives these pairs to the secret masker, which reads them on
+    each pass.
+    """
+    from probos.cognitive.llm_client import _LLM_TIERS  # AD-732: single source of truth
+
+    pairs: list[tuple[str, str]] = []
+    for tier in _LLM_TIERS:
+        key = cognitive.tier_config(tier)["api_key"]
+        if key:
+            pairs.append((f"llm_api_key_{tier}", key))
+    return tuple(pairs)
+
+
+def _wire_secret_masker(*, runtime: Any) -> Any:
+    """AD-1337 S2 (#1560): build the runtime's secret masker and start priming the GitHub value.
+
+    Sets ``runtime.secret_registry`` (always: AD-1337 S4 registers per-run values in it) and ``runtime.secret_masker``,
+    and returns the masker for the runtime's ``ToolExecutor``; each dispatch executor reads it from the runtime.
+    ``ProbOSRuntime.__init__`` builds ``runtime.credential_store`` unconditionally, so a production runtime always has
+    a masker; a runtime without a real store (a test double) gets None and masks nothing.
+    """
+    from probos.config import SystemConfig
+    from probos.credential_store import CredentialStore
+    from probos.security.secret_masking import EnvSecretSource, SecretMasker, SecretRegistry, secret_registry_of
+
+    # AD-1337 S4: ProbOSRuntime builds the registry, because the boot loop registers stored MCP servers before this
+    # runs; a runtime double without one gets one here.
+    registry = secret_registry_of(runtime)
+    runtime.secret_registry = registry if registry is not None else SecretRegistry()
+    runtime.secret_masker = None
+    runtime.secret_masking_prime_task = None
+    store = getattr(runtime, "credential_store", None)
+    if not isinstance(store, CredentialStore):
+        logger.warning("AD-1337: no CredentialStore on the runtime; tool output is not masked")
+        return None
+    # #1820 R1: the tiers' API keys, read from runtime.config at each pass; a double without a SystemConfig gets none.
+    has_config = isinstance(getattr(runtime, "config", None), SystemConfig)
+    runtime.secret_masker = SecretMasker(
+        credential_store=store, registry=runtime.secret_registry, env_source=EnvSecretSource(),
+        config_values=(lambda: _configured_api_key_pairs(runtime.config.cognitive)) if has_config else None,
+    )
+    masker = runtime.secret_masker
+    # AD-1337 S2: every registry call waits for the priming (the masker bounds the wait), so the first one is masked
+    # with what the priming adds. Marked before the task exists, so no call can run between the two.
+    masker.begin_priming()
+    # AD-824: the runtime owns the task (one bounded task, which leaves the registry when it ends), so a stop's
+    # background sweep, which a failed start's rollback (BF-882) runs too, cancels a priming still in ``gh``. The
+    # window is not ended by that cancel: the worker thread cannot be cancelled, and the value is primed only when
+    # it returns. Only the worker's ``finally`` or the masker's bound ends it. The thread ends within the CLI's
+    # timeout and holds nothing a teardown closes.
+    runtime.secret_masking_prime_task = runtime._spawn_background(
+        _prime_secret_masking(store, masker), "secret_masking_prime",
+    )
+    return masker
+
+
+def _prime_secret_masking_worker(store: Any, masker: Any) -> str | None:
+    """AD-1337 S2: the priming's worker-thread body.
+
+    ``get`` keeps the GitHub value for the masker, whichever step resolves it. The empty ``mask_text`` pass then
+    loads the store file and builds the masker's pattern table here, so neither happens on the loop at the first
+    tool call, even when the environment answered ``get`` before the store file was read. ``end_priming`` runs last
+    whatever happened, so a failure releases the tool calls waiting on the priming.
+    """
+    try:
+        return store.get("github", requester="secret_masking")
+    finally:
+        masker.mask_text("")  # never raises for a str: a failed pass logs its type only (AD-1337 D7)
+        masker.end_priming()
+
+
+async def _prime_secret_masking(store: Any, masker: Any) -> None:
+    """AD-1337 S2: resolve the GitHub credential once, in a worker thread, so a token only ``gh auth token`` knows is
+    masked from the first tool call: ``_wire_secret_masker`` marks the masker priming, and every registry call waits
+    until the worker ends it (``ToolExecutor._invoke_once``), for at most the masker's ``DEFAULT_PRIMING_TIMEOUT_S``.
+
+    The read keeps ``get``'s department and tier gates. It writes no access row (``_log_access`` needs a running loop
+    in its own thread), and the value goes to the masker only, as the masker's own store read does. A failure, or no
+    ``gh``, only means a CLI-only token is masked after its first ``get``; startup never waits on this task.
+    """
+    try:
+        value = await asyncio.to_thread(_prime_secret_masking_worker, store, masker)
+    except Exception as exc:
+        logger.warning("AD-1337: priming the github credential for masking failed (%s)", type(exc).__name__)
+        return
+    logger.info("AD-1337: github credential primed for masking (found=%s)", value is not None)
+
+
 async def _start_recording_reaper(*, runtime: Any, config: "SystemConfig") -> None:
     """AD-706b: start the recording retention reaper if recording is enabled."""
     cfg = getattr(config, "browser_tool", None)
@@ -926,12 +1018,14 @@ async def _activate_boot_camp_on_cold_start(*, runtime: Any) -> bool:
     coordinator = getattr(runtime, "boot_camp", None)
     if coordinator is None or not await _is_new_crew_start(runtime):
         return False
+    from probos.cognitive.episodic import resolve_sovereign_id
     from probos.cognitive.standing_orders import get_department
 
     ontology = getattr(runtime, "ontology", None)
     crew_agents = [
         {
             "agent_id": agent.id,
+            "memory_id": resolve_sovereign_id(agent),  # BF-992: the id the agent's episodes carry
             "callsign": getattr(agent, "callsign", "") or agent.agent_type,
             "department": getattr(agent, "department", "") or get_department(agent.agent_type) or "unassigned",
         }
@@ -1022,89 +1116,6 @@ def _wire_emergence_collector(*, runtime: Any, config: "SystemConfig") -> bool:
         "threshold=%.2f, dedup_window=%.0fs, output=%s)",
         mode, collector_cfg.trial_id, collector_cfg.confidence_threshold,
         collector_cfg.dedup_window_seconds, collector_cfg.output_dir,
-    )
-    return True
-
-
-def _wire_birth_chamber(*, runtime: Any, config: "SystemConfig") -> bool:
-    """AD-486 v1: Wire Holodeck Birth Chamber + Department scheduler.
-
-    Default-False per AD-695 transitional-flag precedent. When disabled,
-    no chamber is constructed; production graduation gates short-circuit
-    to ``True`` via the ``runtime.birth_chamber is None`` check.
-    """
-    cfg = getattr(config, "holodeck_birth_chamber", None)
-    if not cfg or not cfg.enabled:
-        return False
-
-    import asyncio as _asyncio
-
-    from probos.holodeck import BirthChamber, DepartmentActivationScheduler
-
-    emit_fn = getattr(runtime, "emit_event", None)
-    chamber = BirthChamber(config=cfg, emit_event_fn=emit_fn)
-    chamber.set_personal_ontology_prober(
-        getattr(runtime, "personal_ontology_prober", None)
-    )
-    chamber.set_curriculum_registry(
-        getattr(runtime, "curriculum_registry", None)
-    )
-    # AD-488 circuit_breaker is a leading-underscore attr on
-    # ProactiveCognitiveLoop (predates Wave 5 convention #1). Demeter
-    # exception documented; promote to public in a later wave.
-    proactive = getattr(runtime, "proactive_loop", None)
-    if proactive is not None:
-        chamber.set_circuit_breaker(getattr(proactive, "_circuit_breaker", None))
-    chamber.set_callsign_registry(getattr(runtime, "callsign_registry", None))
-    chamber.set_episodic_memory(getattr(runtime, "episodic_memory", None))
-
-    runtime.birth_chamber = chamber  # public attribute (Wave 5 convention #1)
-
-    scheduler = DepartmentActivationScheduler(
-        department_order=list(cfg.department_order),
-        get_phase_fn=chamber.get_current_phase,
-    )
-    runtime.department_activation_scheduler = scheduler  # public attribute
-
-    # Late-bind onto onboarding service so wire_agent can admit agents
-    if getattr(runtime, "onboarding", None) is not None:
-        try:
-            runtime.onboarding.set_birth_chamber(chamber)
-        except AttributeError:
-            logger.warning(
-                "AD-486: onboarding.set_birth_chamber not available; chamber will not auto-admit"
-            )
-
-    # AD-486: Late-bind onto AssignmentService for Ward Room subscription gating
-    _assn = getattr(runtime, "assignment_service", None)
-    if _assn is not None:
-        try:
-            _assn.set_birth_chamber(chamber)
-        except AttributeError:
-            logger.warning(
-                "AD-486: assignment_service.set_birth_chamber not available; "
-                "Ward Room subscription will not be deferred"
-            )
-
-    if cfg.auto_advance_enabled:
-        try:
-            runtime.birth_chamber_advance_task = _asyncio.create_task(
-                chamber.run_advance_loop()
-            )
-        except RuntimeError:
-            # No running loop yet (cold-start before serve()) — finalize
-            # is invoked from an async context in normal boot, so this
-            # branch is defensive only.
-            logger.warning(
-                "AD-486: no running event loop; advance task not started"
-            )
-            runtime.birth_chamber_advance_task = None
-    else:
-        runtime.birth_chamber_advance_task = None
-
-    logger.info(
-        "AD-486: Birth Chamber initialized (auto_advance=%s, departments=%s)",
-        cfg.auto_advance_enabled, list(cfg.department_order),
     )
     return True
 
@@ -2642,11 +2653,22 @@ async def _wire_self_improvement(*, runtime: Any, config: "SystemConfig") -> boo
             ProposalGroundingVerifier,
             SymbolExistenceProvider,
         )
+        from probos.cognitive.self_improvement.versioning import resolve_promoted_agents_dir
     except Exception:
         logger.warning(
             "AD-482: self_improvement package import failed -- skipping wiring",
             exc_info=True,
         )
+        return False
+
+    # BF-937 (#1678): the persistence is built before any store opens, so a root inside the source checkout stops the
+    # wiring here, whole: nothing is opened, attached or half-wired, and the vessel boots without the pipeline.
+    try:
+        agent_persistence = LocalDiskPersistence(
+            root_dir=str(resolve_promoted_agents_dir(cfg.persistence_root_dir, runtime.data_dir)),
+        )
+    except ValueError as exc:
+        logger.error("BF-937: self_improvement is not wired: %s", exc)
         return False
 
     emit = getattr(runtime, "emit_event", None)
@@ -2738,7 +2760,6 @@ async def _wire_self_improvement(*, runtime: Any, config: "SystemConfig") -> boo
             qa_agent_pool = None
 
     agent_version_store = AgentVersionStore(event_emit_fn=emit)
-    agent_persistence = LocalDiskPersistence(root_dir=cfg.persistence_root_dir)
     shadow_deployment_policy = NoOpShadowDeploymentPolicy()
 
     runtime.proposal_store = proposal_store
@@ -4198,9 +4219,6 @@ async def finalize_startup(
 
     if _wire_curriculum_registry(runtime=runtime, config=config):
         logger.info("AD-507: Crew Development Framework v1 wired during finalization")
-
-    if _wire_birth_chamber(runtime=runtime, config=config):
-        logger.info("AD-486: Holodeck Birth Chamber v1 wired during finalization")
 
     if _wire_emergence_collector(runtime=runtime, config=config):
         logger.info("AD-454: EvidenceCollector wired during finalization")
@@ -5815,6 +5833,12 @@ async def finalize_startup(
 
     _sync_ontology_callsigns(runtime)
 
+    # AD-1337 S2: the secret masker, after the credential store's path is set (AD-456 above), so its first read loads
+    # the right store. Every tool executor masks with it: this one below, and each dispatch's from runtime.secret_masker.
+    secret_masker = _wire_secret_masker(runtime=runtime)
+    # AD-1337 S5: a decomposed DAG's reflect prompt is masked with it too; the runtime built the decomposer before it.
+    runtime.decomposer.secret_masker = secret_masker
+
     # AD-423c: Wire tool registry into onboarding service
     if runtime.tool_registry:
         runtime.onboarding.set_tool_registry(runtime.tool_registry)
@@ -5824,6 +5848,7 @@ async def finalize_startup(
         tool_executor = ToolExecutor(
             registry=runtime.tool_registry,
             effect_broker=getattr(runtime, "effect_broker", None),
+            secret_masker=secret_masker,
         )
         # AD-1224: safe live completion plus the optional durable lifecycle.
         # Terminal completions stay durable-only; AD-1168 remains a post-hook.
@@ -6266,15 +6291,24 @@ async def finalize_startup(
             if config.dreaming.reminiscence_enabled:
                 try:
                     from probos.cognitive.guided_reminiscence import GuidedReminiscenceEngine
+                    from probos.cognitive.qualification_tests import agent_recall_fn  # BF-989
 
+                    # BF-989 round 1: episodes carry the sovereign UUID; the registry, callsigns, profiles and DMs key by
+                    # slot id (BF-907). The identity registry is set at Phase 2 entry, before finalize.
+                    reminiscence_identities = getattr(runtime, "identity_registry", None)
+                    reminiscence_resolve_slot = (
+                        reminiscence_identities.resolve_slot_id if reminiscence_identities is not None else None
+                    )
                     reminiscence_engine = GuidedReminiscenceEngine(
                         episodic_memory=runtime.episodic_memory,
                         llm_client=getattr(runtime, 'llm_client', None),
                         config=config.dreaming,
                         max_episodes_per_session=config.dreaming.reminiscence_episodes_per_session,
                         confabulation_alert_threshold=config.dreaming.reminiscence_confabulation_alert,
+                        # BF-989 (#1838): the agent's own recall (AD-566's path); llm_client only judges and writes
+                        recall_fn=agent_recall_fn(runtime.registry, resolve_slot=reminiscence_resolve_slot),
                     )
-                    counselor_agent.set_reminiscence_engine(reminiscence_engine)
+                    counselor_agent.set_reminiscence_engine(reminiscence_engine, resolve_slot=reminiscence_resolve_slot)
                     counselor_agent.configure_reminiscence(
                         cooldown_hours=config.dreaming.reminiscence_cooldown_hours,
                         concern_threshold=config.dreaming.reminiscence_concern_threshold,

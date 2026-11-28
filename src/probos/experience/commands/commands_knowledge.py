@@ -151,6 +151,7 @@ async def cmd_scout(runtime: ProbOSRuntime, console: Console, args: str) -> None
             context=args or "scout for new projects",
         ))
         output = result.result if result else "No output"
-        console.print(output)
+        # BF-935 A2: what the Scout returns, and what fails, prints as text: a bracket in a summary is not a Rich tag
+        console.print(output, markup=False)
     except Exception as e:
-        console.print(f"[red]Scout error: {e}[/red]")
+        console.print(f"Scout error: {e}", style="red", markup=False)

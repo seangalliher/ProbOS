@@ -12,19 +12,23 @@ ProbOS runs with **zero configuration** — every field has a default. The
 shipped `config/system.yaml` deliberately does not list every knob; this page
 does.
 
+Each section is headed by its dotted path from the root: `security.memory` is
+the `memory` block inside `security`, nested the same way in YAML.
+
 A value marked **default-OFF** ships inert. Turning it on is an operator
 decision, and each one states what changes when you do.
 
 
 ## `system`
 
-Top-level system identity.
+Top-level system identity and process-wide diagnostics.
 
 | Field | Type | Default | Bounds | Description |
 |---|---|---|---|---|
 | `name` | `str` | `'ProbOS'` | — |  |
 | `version` | `str` | `'0.1.0'` | — |  |
 | `log_level` | `str` | `'INFO'` | — |  |
+| `loop_stall_warn_seconds` | `float` | `1.0` | ≥ 0.0, ≤ 60.0 | BF-932: seconds the event loop may go without a heartbeat before one WARNING names the code holding it (file:line function of the loop thread's innermost frames). 0 starts no sampler; otherwise at least 0.1. |
 
 ## `pools`
 
@@ -231,7 +235,7 @@ Episodic memory configuration.
 | `recall_quality_floor` | `float` | `0.4` | — |  |
 | `recall_tiers` | `dict[str, dict[str, Any]]` | `{'basic': {'k': 3, 'context_budget': 1500, 'anchor_confidence_gate': 0.0, 'composite_score_floor': 0.0, 'max_recall_episodes': 0, 'recall_quality_floor': 0.0, 'use_salience_weights': False, 'cross_department_anchors': False}, 'enhanced': {'k': 5, 'context_budget': 4000, 'anchor_confidence_gate': 0.3, 'composite_score_floor': 0.35, 'max_recall_episodes': 0, 'recall_quality_floor': 0.4, 'use_salience_weights': True, 'cross_department_anchors': False}, 'full': {'k': 8, 'context_budget': 6000, 'anchor_confidence_gate': 0.3, 'composite_score_floor': 0.35, 'max_recall_episodes': 0, 'recall_quality_floor': 0.4, 'use_salience_weights': True, 'cross_department_anchors': True}, 'oracle': {'k': 10, 'context_budget': 8000, 'anchor_confidence_gate': 0.2, 'composite_score_floor': 0.0, 'max_recall_episodes': 0, 'recall_quality_floor': 0.0, 'use_salience_weights': True, 'cross_department_anchors': True}}` | — |  |
 
-## `attention`
+## `memory.attention`
 
 AD-1028: ContextAssembler / global token-budget configuration.
 
@@ -369,7 +373,7 @@ Multi-node federation configuration.
 | `envelope_policy` | `Literal['sign', 'require']` | `'sign'` | — |  |
 | `peer_admission_enabled` | `bool` | `False` | — |  |
 
-## `mcp_server`
+## `federation.mcp_server`
 
 AD-480a: Inbound MCP server — exposes ProbOS capabilities as MCP tools.
 
@@ -382,7 +386,7 @@ AD-480a: Inbound MCP server — exposes ProbOS capabilities as MCP tools.
 | `path_prefix` | `str` | `'/mcp'` | — |  |
 | `exposed_intents` | `list[str]` | `[]` | — | BF-875: the only intents an authenticated MCP caller may run. An intent that no agent declares, or that requires consensus, is never dispatched even if listed. Empty (the default) exposes no intents. |
 
-## `a2a`
+## `federation.a2a`
 
 AD-480d / AD-480e: Inbound A2A server + outbound A2A clients.
 
@@ -396,7 +400,7 @@ AD-480d / AD-480e: Inbound A2A server + outbound A2A clients.
 | `exposed_intents` | `list[str]` | `[]` | — | BF-876: the only intents an authenticated A2A caller may run with tasks/send, and the only skills the agent card lists. An intent that no agent declares, or that requires consensus, is never dispatched even if listed. Empty (the default) exposes no intents. |
 | `outbound_peers` | `list[probos.config_models.integrations.A2APeerConfig]` | `[]` | — |  |
 
-## `ard`
+## `federation.ard`
 
 AD-1040: ARD (Agentic Resource Discovery) integration. Default-OFF.
 
@@ -411,7 +415,7 @@ AD-1040: ARD (Agentic Resource Discovery) integration. Default-OFF.
 | `federation_mode` | `Literal['none', 'referrals', 'auto']` | `'none'` | — |  |
 | `max_referral_peers` | `int` | `5` | ≥ 0, ≤ 50 |  |
 
-## `peer_trust`
+## `federation.peer_trust`
 
 AD-480g: Probationary trust prior for federated peers.
 
@@ -420,7 +424,7 @@ AD-480g: Probationary trust prior for federated peers.
 | `probationary_alpha` | `float` | `1.0` | > 0.0 |  |
 | `probationary_beta` | `float` | `3.0` | > 0.0 |  |
 
-## `tls`
+## `federation.tls`
 
 AD-479f: Federation TLS surface (NATS pass-through in v1).
 
@@ -432,7 +436,7 @@ AD-479f: Federation TLS surface (NATS pass-through in v1).
 | `ca_file` | `str | None` | `None` | — |  |
 | `verify_peer` | `bool` | `True` | — |  |
 
-## `discovery`
+## `federation.discovery`
 
 AD-479h: Multicast peer discovery (opt-in, default-False).
 
@@ -443,7 +447,7 @@ AD-479h: Multicast peer discovery (opt-in, default-False).
 | `multicast_port` | `int` | `5556` | — |  |
 | `announce_interval_seconds` | `float` | `5.0` | — |  |
 
-## `cluster_monitor`
+## `federation.cluster_monitor`
 
 AD-479g: Cluster health monitor.
 
@@ -537,7 +541,7 @@ AD-993/994: sandboxed code execution (tiered isolation).
 | `install_timeout_seconds` | `float` | `180.0` | — |  |
 | `command_env_passthrough` | `list[str]` | `[]` | — |  |
 
-## `command_policy`
+## `execution.command_policy`
 
 The command execution policy for ``run_command`` (AD-1328, #1530).
 
@@ -671,6 +675,9 @@ Ship's Records configuration (AD-434).
 | `notebook_quality_warn_threshold` | `float` | `0.5` | — |  |
 | `notebook_staleness_alert_rate` | `float` | `0.7` | — |  |
 | `semantic_index_enabled` | `bool` | `False` | — |  |
+| `git_lock_stale_minutes` | `float` | `10.0` | > 0 | BF-957: probos doctor reports the records repository's .git/index.lock as stale (FAIL) once it is this many minutes old. Ship's Records stops its own git commands after 30 seconds. |
+| `git_uncommitted_warn_paths` | `int` | `50` | ≥ 1 | BF-957: probos doctor warns when the records repository holds more than this many uncommitted paths, untracked or modified. |
+| `git_last_commit_warn_hours` | `float` | `24.0` | > 0 | BF-957: probos doctor warns when the records repository's last commit is at least this many hours old while uncommitted paths exist. |
 
 ## `archive`
 
@@ -759,21 +766,6 @@ AD-442: Onboarding ceremony configuration.
 | `enabled` | `bool` | `True` | — |  |
 | `activation_trust_threshold` | `float` | `0.65` | — |  |
 | `naming_ceremony` | `bool` | `True` | — |  |
-
-## `holodeck_birth_chamber`
-
-AD-486: Holodeck Birth Chamber — graduated cognitive onboarding.
-
-| Field | Type | Default | Bounds | Description |
-|---|---|---|---|---|
-| `enabled` | `bool` | `False` | — |  |
-| `bypass_for_existing_agents` | `bool` | `True` | — |  |
-| `department_order` | `list[str]` | `['security', 'operations', 'engineering', 'science', 'medical']` | — |  |
-| `calibration_min_episodes` | `int` | `5` | ≥ 1 |  |
-| `affective_baseline_check_enabled` | `bool` | `True` | — |  |
-| `auto_advance_enabled` | `bool` | `True` | — |  |
-| `auto_advance_poll_interval_seconds` | `float` | `2.0` | ≥ 0.1, ≤ 30.0 |  |
-| `max_self_discovery_probe_attempts` | `int` | `3` | ≥ 1 |  |
 
 ## `holodeck_scenarios`
 
@@ -1034,7 +1026,20 @@ Security Team configuration (AD-455). The RedTeamLead pool-health monitor runs; 
 | `permission_mode` | `Literal['manual', 'autopilot']` | `'manual'` | — | Inert: no production code reads this field to act on it (BF-926, BF-927; #1656, #1657). The AD-753 gate (vote_on_intent) has no caller, so no mode gates any intent; a candidate for #1659. |
 | `policy_engine_class` | `str` | `'NullPolicyEngine'` | — | Inert: no production code reads this field to act on it (BF-926, BF-927; #1656, #1657). No engine is loaded from it and the AD-753 gate has no caller; a candidate for #1659. |
 
-## `permissions`
+## `security.memory`
+
+AD-607: Memory security framework configuration.
+
+| Field | Type | Default | Bounds | Description |
+|---|---|---|---|---|
+| `enforce_recall` | `bool` | `False` | — |  |
+| `enforce_provenance` | `bool` | `False` | — |  |
+| `enforce_store` | `bool` | `False` | — |  |
+| `anchor_mismatch_threshold` | `float` | `0.7` | ≥ 0.0, ≤ 1.0 |  |
+| `dp_min_cohort_size` | `int` | `3` | ≥ 1 |  |
+| `correlation_cutoff` | `float` | `0.0` | ≥ 0.0 | AD-1360: AD-607b judges a direct episode's AD-492 correlation id only when the episode was stored strictly after this instant (epoch seconds, or an ISO-8601 time with a UTC offset). 0.0: never judged. |
+
+## `security.permissions`
 
 AD-711: declarative permission lists (enforcement deferred to AD-711-1).
 
@@ -1117,7 +1122,7 @@ Captain-configured work-hours/quiet-hours policy for proactive scans.
 | `daily_briefing_time` | `str` | `'08:00'` | — |  |
 | `briefing_reminder_throttle_sec` | `int` | `3600` | — |  |
 
-## `work_hours`
+## `duty_schedule.work_hours`
 
 Time window policy definition used for proactive scheduling.
 
@@ -1127,7 +1132,7 @@ Time window policy definition used for proactive scheduling.
 | `end_time` | `str` | `'18:00'` | — |  |
 | `days` | `list[int]` | `[0, 1, 2, 3, 4]` | — |  |
 
-## `quiet_hours`
+## `duty_schedule.quiet_hours`
 
 Time window policy definition used for proactive scheduling.
 
@@ -1158,11 +1163,21 @@ Proactive Cognitive Loop — periodic idle-think (Phase 28b).
 | `standing_interest_max_ttl_hours` | `int` | `168` | ≥ 1, ≤ 720 | AD-1228: ceiling on a standing interest's lifetime. A longer request is clamped, not rejected; expires_at is NOT NULL in the standing_interests schema. |
 | `standing_interest_min_fire_interval_seconds` | `int` | `3600` | ≥ 60, ≤ 86400 | AD-1228: the shortest time between two notices from one standing interest. |
 
+## `proactive_cognitive.duty_schedule`
+
+Duty schedule definitions per agent type (AD-419).
+
+| Field | Type | Default | Bounds | Description |
+|---|---|---|---|---|
+| `enabled` | `bool` | `True` | — |  |
+| `schedules` | `dict[str, list[probos.config_models.crew.DutyDefinition]]` | `{}` | — |  |
+| `use_work_items` | `bool` | `False` | — |  |
+
 ## `proactive_scan`
 
 AD-763: scoping config for proactive scans (folders, calendars, filters).
 
-## `inbox`
+## `proactive_scan.inbox`
 
 AD-763: per-operator scoping of the inbox proactive scan.
 
@@ -1175,7 +1190,7 @@ AD-763: per-operator scoping of the inbox proactive scan.
 | `sender_allowlist` | `list[str]` | `[]` | — | Email addresses or domains (e.g. '@acme.com'). Empty = no allow filter. |
 | `sender_denylist` | `list[str]` | `[]` | — | Email addresses or domains. Senders matching are dropped post-fetch. |
 
-## `calendar`
+## `proactive_scan.calendar`
 
 AD-763: per-operator scoping of the calendar proactive scan.
 
@@ -1200,7 +1215,7 @@ Persistent Task Engine — SQLite-backed scheduled tasks (Phase 25a).
 
 Channel adapter configurations.
 
-## `discord`
+## `channels.discord`
 
 Discord bot adapter configuration.
 
@@ -1215,7 +1230,7 @@ Discord bot adapter configuration.
 | `mention_required` | `bool` | `False` | — |  |
 | `scout_channel_id` | `int` | `0` | — |  |
 
-## `slack`
+## `channels.slack`
 
 Slack adapter configuration (AD-472 + AD-804).
 
@@ -1233,7 +1248,7 @@ Slack adapter configuration (AD-472 + AD-804).
 | `poll_inbound` | `bool` | `True` | — |  |
 | `api_base` | `str` | `'https://slack.com/api'` | — |  |
 
-## `webhook`
+## `channels.webhook`
 
 Webhook adapter configuration (AD-472).
 
@@ -1622,7 +1637,7 @@ AD-706: BrowserTool (Computer Use via Playwright).
 | `action_dispatch_ack_timeout_seconds` | `int` | `60` | ≥ 5, ≤ 600 | AD-745: tier-2 ACK timeout. Honest-degrade to TIMED_OUT after this many seconds without Captain ack. Tier-3 confirms NEVER time out (Captain decision required). |
 | `destructive_url_patterns` | `list[str]` | `['*/checkout*', '*/payment*', '*/billing*', '*/auth/*', '*/login*', '*/oauth*', '*/admin/*', '*/settings/account*', '*/delete*', '*/destroy*']` | — | AD-745: fnmatch patterns. URLs matching any pattern force ALL action verbs to tier-3 (Captain ACK every call). |
 
-## `credential_vault`
+## `browser_tool.credential_vault`
 
 AD-706f: Browser Tool credential vault.
 
@@ -1688,7 +1703,7 @@ AD-721: 3D crew avatars (VRM popout).
 | `pacing_min_delay_seconds` | `int` | `1` | ≥ 1, ≤ 60 | AD-743: minimum allowed delay for a [FOLLOW_UP] marker. Markers below this floor are stripped and discarded. |
 | `pacing_max_delay_seconds` | `int` | `300` | ≥ 1, ≤ 900 | AD-743: maximum allowed delay for a [FOLLOW_UP] marker. Markers above this ceiling are stripped and discarded. |
 
-## `baseline_vrms`
+## `avatars.baseline_vrms`
 
 AD-721g: per-rank baseline VRM filenames.
 
@@ -1734,7 +1749,7 @@ AD-722: agent-observable avatar telemetry channel.
 | `ws_full_snapshot_every_n` | `int` | `10` | — |  |
 | `fleet_stream_enabled` | `bool` | `True` | — |  |
 
-## `sampling_rates`
+## `avatar_telemetry.sampling_rates`
 
 AD-722f: per-agent avatar-telemetry sampling rates (3 tiers).
 
@@ -1808,7 +1823,7 @@ AD-1065: flag-gated conversational agentic turn. When enabled, a 1:1     ``direc
 | `budget_awareness_enabled` | `bool` | `False` | — | AD-1320: enables threshold-triggered live AD-1208 spend notes for conversational turns. No note appears before the first threshold in budget_awareness_thresholds is crossed; the note then rides the system prompt of the turn's existing model requests. Adds no model call, and is inert without an armed token_budget. |
 | `budget_awareness_thresholds` | `list[float]` | `[0.5, 0.8]` | — | AD-1320: fractions of the turn's effective token budget at which the spend note is raised, strictly ascending and inside (0, 1). Only consulted when budget_awareness_enabled is true. One response crossing several of them raises only the most severe note. |
 
-## `economic_judgment`
+## `dm_agentic.economic_judgment`
 
 AD-1322: opt-in economic judgment organ for agentic turns.
 
@@ -1823,7 +1838,7 @@ AD-1322: opt-in economic judgment organ for agentic turns.
 | `repeat_attempt_threshold` | `int` | `3` | ≥ 2 | AD-1322: consecutive failed calls of one tool with identical arguments that raise the overspend signal. |
 | `rising_spend_steps` | `int` | `2` | ≥ 2 | AD-1322: consecutive model calls whose per-step token spend strictly grows that count as rising spend on a minor or moderate value item. |
 
-## `completion_calibration`
+## `dm_agentic.economic_judgment.completion_calibration`
 
 Default-off completion cost and value calibration.
 
@@ -1834,7 +1849,7 @@ Default-off completion cost and value calibration.
 | `minimum_samples` | `int` | `8` | ≥ 1, ≤ 1000 | AD-1325: eligible completions required for an agent/work-type calibration summary. Must be between 1 and 1000. |
 | `feed_cost_estimates_to_organ` | `bool` | `False` | — | AD-1325: include an in-memory calibrated token estimate in descriptive economic context when mature evidence exists. Default OFF. |
 
-## `continue_extension`
+## `dm_agentic.economic_judgment.continue_extension`
 
 AD-1323: ask for a costed one-time token extension instead of stopping.
 
@@ -1847,7 +1862,7 @@ AD-1323: ask for a costed one-time token extension instead of stopping.
 | `ask_when_value_unrecorded` | `bool` | `False` | — | AD-1323: ask even when the linked item records no value band. Default False: an unrecorded value never justifies spending. |
 | `assumed_remaining_steps` | `int` | `5` | — | AD-1323: steps assumed left when estimating the extra tokens; the estimate is the recent mean step spend times this. Clamped to 1..50. |
 
-## `tier_choice`
+## `dm_agentic.economic_judgment.tier_choice`
 
 AD-1324: the agent names its next step's model tier under a stakes floor.
 
@@ -1863,7 +1878,7 @@ Whether a reply is checked against the turn's write ledger.
 
 | Field | Type | Default | Bounds | Description |
 |---|---|---|---|---|
-| `enabled` | `bool` | `True` | — | AD-1285 (#1087): check a 1:1 reply against the turn's write ledger and append one honest sentence when a durable-write channel ran and wrote nothing. Reads no reply text. Default ON because this is a safety control rather than a capability, and a default-OFF control defends nothing (#13(a)) -- which is the AD-1157 failure mode #1087 names. Safe on: the verdict abstains unless a channel actually ran, so a turn with no write marker is byte-identical. |
+| `enabled` | `bool` | `True` | — | AD-1285 (#1087): check a 1:1 reply against the turn's write ledger and append one honest sentence when a durable-write channel ran and wrote nothing; that verdict reads no reply text. AD-1358 S2 (#1750): the same switch appends one sentence when the reply's wording claims a search or lookup and the turn's tool record holds no call. Default ON because this is a safety control rather than a capability, and a default-OFF control defends nothing (#13(a)) -- which is the AD-1157 failure mode #1087 names. Safe on: each check abstains unless its record shows the case (a channel that ran; a tool record with no call). |
 
 ## `self_contradiction_recall`
 
@@ -1937,6 +1952,9 @@ AD-1154: park an unattended consequential action instead of performing it.
 | `decision_pre_clearance_enabled` | `bool` | `False` | — | AD-1214: let the Captain pre-clear one exact class of delegated decision from its notification. Requires delegated_approvals_enabled. A pre-clearance only stops the Captain's notification for one exact class; every AD-1213 rule still decides who may decide, and every decision is still audited. Off means delegated decisions notify exactly as under AD-1213 and no pre-clearance store exists. |
 | `decision_pre_clearance_default_ttl_hours` | `int` | `24` | ≥ 1, ≤ 720 | AD-1214: how long a pre-clearance accepted from a notification lasts. Clamped to decision_pre_clearance_max_ttl_hours. |
 | `decision_pre_clearance_max_ttl_hours` | `int` | `168` | ≥ 1, ≤ 720 | AD-1214: ceiling on a decision pre-clearance's lifetime. A longer request is clamped, not rejected; expires_at is NOT NULL in the decision_pre_clearances schema. |
+| `agent_work_routine_decider` | `Literal['auto', 'chief', 'captain']` | `'auto'` | — | AD-1356 S4: who decides an agent-work call to a routine tool (tools.effect_tiers). auto: the run calls the tier's tools with no approval. chief: AD-1213's route decides a filed call (a department chief at the first hop in the requester's department, the First Officer under a live delegation after approval_grace_seconds, else the Captain; with delegated_approvals_enabled off, the Captain). captain: the Captain alone decides a filed call. Read at each agent-work run's start and at each decision; a POST /api/config change applies at restart. |
+| `agent_work_elevated_decider` | `Literal['auto', 'chief', 'captain']` | `'chief'` | — | AD-1356 S4: who decides an agent-work call to an elevated tool (find_mcp_tool, list_files, web_search, read_page, http_fetch, an OPEN MCP tool). auto, chief and captain mean what they mean for agent_work_routine_decider, except that a run never calls an MCP tool directly, so under auto a filed call to one is decided as under chief. |
+| `agent_work_critical_decider` | `Literal['captain']` | `'captain'` | — | AD-1356 S4: fixed at captain. A filed critical agent-work call (to a tool the table does not list, run_python, write and shell tools among them; to an MCP tool not registered and enabled under its id, or whose AD-1019b risk when the call is decided is not OPEN or cannot be read; to read_file or codebase_read_source) is the Captain's alone. Any other value fails validation, and no decision reads this field. |
 
 ## `dm_mesh_synthesis`
 
@@ -1982,7 +2000,7 @@ AD-720c: cloud file picker config (OAuth-bound). Default OFF.
 | `max_file_size_bytes` | `int` | `50000000` | ≥ 1 |  |
 | `state_ttl_seconds` | `int` | `300` | ≥ 30 | AD-720c: CSRF state-token TTL (seconds). |
 
-## `google_drive`
+## `cloud_pickers.google_drive`
 
 AD-720c: per-provider OAuth client credentials. Operator-supplied (BYOC).
 
@@ -1993,7 +2011,7 @@ AD-720c: per-provider OAuth client credentials. Operator-supplied (BYOC).
 | `client_secret` | `str` | `''` | — | Operator-supplied OAuth client secret. |
 | `redirect_uri` | `str` | `'http://127.0.0.1:8081/api/cloud-pickers/{provider}/callback'` | — | AD-720c: OAuth redirect URI; must match the registration at the provider. {provider} is substituted with the provider id. |
 
-## `onedrive`
+## `cloud_pickers.onedrive`
 
 AD-720c: per-provider OAuth client credentials. Operator-supplied (BYOC).
 
@@ -2004,7 +2022,7 @@ AD-720c: per-provider OAuth client credentials. Operator-supplied (BYOC).
 | `client_secret` | `str` | `''` | — | Operator-supplied OAuth client secret. |
 | `redirect_uri` | `str` | `'http://127.0.0.1:8081/api/cloud-pickers/{provider}/callback'` | — | AD-720c: OAuth redirect URI; must match the registration at the provider. {provider} is substituted with the provider id. |
 
-## `dropbox`
+## `cloud_pickers.dropbox`
 
 AD-720c: per-provider OAuth client credentials. Operator-supplied (BYOC).
 
@@ -2154,7 +2172,7 @@ AD-733: visual sensor input from operator-side capture devices.
 | `source_fusion_enabled` | `bool` | `True` | — | AD-746 Layer 1: when ON, ambient camera + screen frames are buffered within ``fusion_window_ms`` and forwarded as a single fused vision_observation. Reduces AD-733c-6 budget burn + AD-541b anchor noise when both sources stream. Hot-reload. |
 | `fusion_window_ms` | `int` | `800` | ≥ 100, ≤ 5000 | AD-746 Layer 1: debounce window for cross-source fusion. Pipecat default. Hot-reload. |
 
-## `camera`
+## `perception.camera`
 
 AD-733: client-side camera streaming controls.
 
@@ -2165,7 +2183,7 @@ AD-733: client-side camera streaming controls.
 | `frame_jpeg_quality` | `float` | `0.6` | ≥ 0.2, ≤ 0.95 |  |
 | `frame_max_dimension` | `int` | `512` | ≥ 128, ≤ 1024 | Longest-edge downsample target for capture. |
 
-## `screen`
+## `perception.screen`
 
 AD-733-2: client-side screen-share streaming controls.
 
@@ -2411,7 +2429,7 @@ Configuration for the Crew Qualification Battery (AD-566).
 | `peer_observation_module_path` | `str` | `'config/manuals/peer_observation_conduct.yaml'` | — | AD-729b: training module YAML path. Loaded at Boot Camp graduation gate when peer_observation_certification_required is True. |
 | `peer_observation_certification_required` | `bool` | `False` | — | AD-729b: when True, Boot Camp / Qualification gates block advancement unless the peer-observation conduct module is passed. Default False — flips to True after AD-729a Standing Orders ship. |
 
-## `communication_benchmarks`
+## `qualification.communication_benchmarks`
 
 AD-642: Communication Quality Benchmarks configuration.
 
@@ -2433,7 +2451,6 @@ AD-567g: Cognitive re-localization configuration.
 | `warm_boot_orientation` | `bool` | `True` | — |  |
 | `proactive_supplement` | `bool` | `True` | — |  |
 | `populate_watch_section` | `bool` | `True` | — |  |
-| `populate_ward_room_department` | `bool` | `True` | — |  |
 | `populate_event_log_window` | `bool` | `True` | — |  |
 
 ## `social_verification`
@@ -2514,7 +2531,7 @@ AD-482 v1: Self-improvement pipeline (proposal -> approval -> QA -> evolution ->
 | `iteration_cap` | `int` | `5` | ≥ 1, ≤ 20 |  |
 | `evolution_half_life_seconds` | `float` | `2592000.0` | ≥ 1.0 |  |
 | `evolution_collection_name` | `str` | `'self_improvement_lessons'` | — |  |
-| `persistence_root_dir` | `str` | `'src/probos/agents/designed'` | — |  |
+| `persistence_root_dir` | `str` | `''` | — | Where promoted agent source is written. Empty means {data_dir}/promoted-agents. A directory inside the source checkout ProbOS runs from is refused (BF-937, #1678): repository changes go through GitHub. |
 
 ## `memory_budget`
 
@@ -3165,7 +3182,7 @@ AD-574: Episodic decay reconsolidation scheduling.
 
 Naval Organization Protocols (AD-477) — v1 ships Captain's Log + Plan of the Day.
 
-## `captains_log`
+## `naval_organization.captains_log`
 
 Captain's Log daily-narrative configuration (AD-477).
 
@@ -3177,7 +3194,7 @@ Captain's Log daily-narrative configuration (AD-477).
 | `top_episodes_count` | `int` | `5` | — |  |
 | `importance_threshold` | `int` | `5` | — |  |
 
-## `plan_of_day`
+## `naval_organization.plan_of_day`
 
 Plan of the Day morning-summary configuration (AD-477).
 
@@ -3223,3 +3240,15 @@ AD-751: Desktop UX Surface — tray, hotkey, notifications, autostart.
 | `quiet_hours_end` | `str` | `'08:00'` | — | End of quiet hours (HH:MM format, local time). |
 | `lock_file` | `str` | `'~/.probos/yeo.lock'` | — | Single-instance lock file path. |
 | `autostart_enabled` | `bool` | `False` | — | Register for OS autostart on boot. |
+
+## `discovery`
+
+AD-708e: LAN mDNS service advertisement for PADD discovery (#484).
+
+| Field | Type | Default | Bounds | Description |
+|---|---|---|---|---|
+| `enabled` | `bool` | `False` | — | Master switch for LAN mDNS advertisement. Default OFF. |
+| `service_type` | `str` | `'_probos._tcp.local.'` | — | DNS-SD service type (must end in '.local.'). |
+| `hostname` | `str` | `'probos'` | — | mDNS host label; advertises '<hostname>.local'. Bare label, no dots. |
+| `instance_name` | `str` | `'ProbOS'` | — | Human-readable DNS-SD instance name. NON-sensitive — never a secret. |
+| `txt_path` | `str` | `'/'` | — | TXT 'path' hint for the HXI entry point. |

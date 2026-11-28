@@ -125,10 +125,13 @@ def consult_transcript(
     *,
     max_threads: int = 8,
     max_chars: int = 1200,
+    sources_out: list[str] | None = None,
 ) -> str | None:
     """Return a bounded excerpt of the canonical transcript (the recording) for
     the room — among those the agent participated in — that best matches
-    ``query``; or ``None`` when nothing meaningfully matches.
+    ``query``; or ``None`` when nothing meaningfully matches. AD-1357: when
+    ``sources_out`` is a list and an excerpt is returned, the id of the room it
+    came from is appended to it; the excerpt is the same either way.
 
     ``agent_ids`` is the set of the agent's OWN identifiers (id / sovereign_id);
     only rooms containing one of them are ever consulted (sovereign scope). The
@@ -234,6 +237,8 @@ def consult_transcript(
         excerpt = _format_excerpt(
             best_thread, best_msgs, qtokens, max_chars=max_chars
         )
+    if excerpt is not None and sources_out is not None:
+        sources_out.append(str(getattr(best_thread, "id", "") or ""))
     return excerpt
 
 

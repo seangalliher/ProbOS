@@ -1778,6 +1778,7 @@ async def shutdown(
     from probos.agents.http_fetch import HttpFetchAgent
     from probos.cognitive.standing_orders import set_directive_store
 
+    HttpFetchAgent.set_admission(None)  # AD-1346 M3e3b (D203): the egress sink's class-level service, released with the runtime's
     HttpFetchAgent.set_profile_store(None)
     # BF-881 (#1452): HttpFetchAgent was disconnected above and reads the store only in
     # synchronous code, so nothing can reach the store once it is closed.

@@ -14,6 +14,7 @@ import json
 import logging
 import os
 import subprocess
+import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -83,12 +84,24 @@ class CredentialStore:
         self._event_log = event_log
         self._specs: dict[str, CredentialSpec] = {}
         self._cache: dict[str, tuple[str, float]] = {}  # name -> (value, expiry_time)
+        # AD-1337: the last value get() resolved for each name, kept past the cache's TTL so a value only the CLI
+        # gives stays maskable (masked_credential_values below). rotate() drops the name's entry.
+        self._last_resolved: dict[str, str] = {}
         self._cache_ttl = cache_ttl
         # AD-456: optional persistent JSON store (atomic write + rotation events)
         self._store_path = store_path
         self._emit_event = emit_event
         self._store: dict[str, str] = {}
         self._store_loaded = False
+        # AD-1337: the first load can run in a worker thread (S2's priming get) while rotate() runs on the loop.
+        self._store_lock = threading.Lock()
+        # AD-1337: rotate() bumps a name's generation, and a get() that began before it (S2's priming get runs in a
+        # worker thread) publishes to _cache and _last_resolved only if the generation is unchanged. A lock of its
+        # own: nothing holds it while taking _store_lock, so the two never nest.
+        self._generations: dict[str, int] = {}
+        self._publish_lock = threading.Lock()
+        # AD-1337: True after a load that failed; get() keeps AD-456's empty store, the secret masker reads the file.
+        self._store_load_failed = False
         # AD-456c: per-tier credential lookup gate. Default False preserves
         # AD-456 v1 ungated-lookup behavior; finalize flips to True when
         # ``config.security_infra.credential_tier_enforcement`` is set.
@@ -142,23 +155,26 @@ class CredentialStore:
     # ---------- AD-456: persistent rotation ----------
 
     def _load_store(self) -> None:
-        """Lazy-load the JSON-backed store. Idempotent."""
-        if self._store_loaded or self._store_path is None:
-            return
-        if self._store_path.exists():
-            try:
-                raw = json.loads(self._store_path.read_text(encoding="utf-8"))
-                if isinstance(raw, dict):
-                    for key, value in raw.items():
-                        if isinstance(key, str) and isinstance(value, str):
-                            self._store[key] = value
-            except (json.JSONDecodeError, OSError):
-                logger.warning(
-                    "AD-456: secrets store read failed (path=%s); "
-                    "starting with empty store",
-                    self._store_path, exc_info=True,
-                )
-        self._store_loaded = True
+        """Lazy-load the JSON-backed store. Idempotent.
+
+        AD-1337: the body runs under ``_store_lock``, so the store loads once and a first load in a worker thread
+        cannot store a value it read before a ``rotate`` replaced it. A read that fails leaves ``get`` AD-456's empty
+        store, as before, and sets ``_store_load_failed`` so ``masked_credential_values`` reads the file itself.
+        """
+        with self._store_lock:
+            if self._store_loaded or self._store_path is None:
+                return
+            if self._store_path.exists():
+                try:
+                    self._store.update(_read_store_file(self._store_path))
+                except (json.JSONDecodeError, OSError):
+                    self._store_load_failed = True
+                    logger.warning(
+                        "AD-456: secrets store read failed (path=%s); "
+                        "starting with empty store",
+                        self._store_path, exc_info=True,
+                    )
+            self._store_loaded = True
 
     def _resolve_from_store(self, name: str) -> str | None:
         """Resolution-chain step: read from JSON store. Returns None if absent."""
@@ -192,9 +208,12 @@ class CredentialStore:
                 self._emit_rotated(name, source="env", persisted=False)
                 return False
 
-        self._store[name] = value
-        # Invalidate cache so next get(...) resolves fresh.
-        self._cache.pop(name, None)
+        with self._publish_lock:  # AD-1337: one step, so a get() in flight cannot republish the old value after it
+            self._store[name] = value
+            self._generations[name] = self._generations.get(name, 0) + 1
+            # Invalidate cache so next get(...) resolves fresh.
+            self._cache.pop(name, None)
+            self._last_resolved.pop(name, None)  # AD-1337: the old value is no longer masked
 
         try:
             tmp = self._store_path.with_suffix(".json.tmp")
@@ -328,7 +347,10 @@ class CredentialStore:
                 return value
             del self._cache[name]
 
-        # Resolution chain
+        # Resolution chain. AD-1337: the name's generation is read first, so a rotate() during _resolve is seen
+        # below and the value it replaced is not published.
+        with self._publish_lock:
+            generation = self._generations.get(name, 0)
         value = self._resolve(spec)
 
         # Log access
@@ -337,7 +359,12 @@ class CredentialStore:
 
         # Cache if found
         if value:
-            self._cache[name] = (value, time.monotonic() + self._cache_ttl)
+            with self._publish_lock:
+                # AD-1337: a rotate() since the generation was read replaced this value. It is still returned (it
+                # was current when this call began) but neither cached nor kept for the secret masker.
+                if self._generations.get(name, 0) == generation:
+                    self._cache[name] = (value, time.monotonic() + self._cache_ttl)
+                    self._last_resolved[name] = value  # AD-1337: kept past the TTL for the secret masker
 
         return value
 
@@ -423,6 +450,52 @@ class CredentialStore:
                 "description": spec.description,
             })
         return results
+
+
+def _read_store_file(path: Path) -> dict[str, str]:
+    """AD-456's reading of the JSON store at ``path``: its ``str``-to-``str`` entries, ``{}`` for JSON that is not
+    an object. Raises what reading or parsing raises. AD-1337: ``_load_store`` and ``masked_credential_values``
+    share it, so the two cannot disagree on what the file holds."""
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(raw, dict):
+        return {}
+    return {key: value for key, value in raw.items() if isinstance(key, str) and isinstance(value, str)}
+
+
+def masked_credential_values(store: CredentialStore) -> tuple[tuple[str, str], ...]:
+    """AD-1337 (#1560): every credential value ``store`` can name, as ``(name, value)`` pairs, for the secret masker.
+
+    Each spec's configured value, its environment variable and aliases, every JSON-store entry, the last value
+    ``get`` resolved for each name, and the crew-scope token. No CLI command runs, no access row is written and no
+    department or tier gate applies, because nothing here is handed to a requester:
+    ``probos.security.secret_masking.SecretMasker`` turns the values into patterns and never returns them. It is
+    this function's only caller in ``src`` (pinned by ``tests/test_ad1337_secret_masking.py``). A module function,
+    not a method: ``CredentialStore`` is at the 15-method SRP review trigger. Safe from a worker thread: the first
+    load runs under the store's ``_store_lock``, so it cannot undo a concurrent ``rotate``, and each dict is copied
+    in one step before it is read. After a load that failed (``_store_load_failed``), ``get`` keeps AD-456's empty
+    store, but the file can still hold values a tool could print: it is read on every call while it exists, and a
+    read that fails raises, so the masker withholds the output (AD-1337 D7) until the file reads again.
+    """
+    pairs: list[tuple[str, str]] = []
+    for spec in list(store._specs.values()):
+        if spec.config_key and store._config:
+            configured = store._resolve_config_key(spec.config_key)
+            if configured:
+                pairs.append((spec.name, configured))
+        for env_name in (spec.env_var, *spec.env_var_aliases):
+            if env_name:
+                env_value = os.environ.get(env_name, "").strip()
+                if env_value:
+                    pairs.append((spec.name, env_value))
+    store._load_store()
+    pairs.extend((name, value) for name, value in dict(store._store).items() if value.strip())
+    if store._store_load_failed and store._store_path is not None and store._store_path.exists():
+        pairs.extend((name, value) for name, value in _read_store_file(store._store_path).items() if value.strip())
+    pairs.extend(dict(store._last_resolved).items())
+    crew_scope = store.crew_scope.token(store._config)
+    if isinstance(crew_scope, str) and crew_scope.strip():
+        pairs.append(("crew_scope", crew_scope.strip()))
+    return tuple(pairs)
 
 
 def crew_scope_token(runtime: Any) -> str:

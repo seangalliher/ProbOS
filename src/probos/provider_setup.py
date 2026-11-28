@@ -8,13 +8,15 @@ only the CLI imports it: ``probos.__main__`` and the ``probos doctor`` checks
 
 Setup never prints the API key. Probe messages never include a 401 or 403 body,
 any part of a redirect's Location, or a chat reply's text. The key's literal,
-percent-encoded (``quote``, ``quote_plus``) and base64 (bare and
-``Bearer``-prefixed) forms are what ``carries_key`` detects and ``redact``
-replaces with ``<redacted>``. A listed model ID holding one is withheld from
-``model_ids``, so setup never shows, suggests or writes it (B8); other provider
-excerpts are shown redacted. A provider can still echo another transformation,
-such as its own masked form ``sk-abcd****wxyz``. Tests measure each of these
-properties.
+Python-quoted (``repr`` without its quotes), percent-encoded (``quote``,
+``quote_plus``) and base64 (bare and ``Bearer``-prefixed) forms are what
+``carries_key`` detects and ``redact`` replaces with ``<redacted>``. A listed
+model ID holding one is withheld from ``model_ids``, so setup never shows,
+suggests or writes it (B8); other provider excerpts are shown redacted. A
+provider can still echo another transformation, such as its own masked form
+``sk-abcd****wxyz``, and text that holds only part of a key is shown even where
+the words printed around it complete the key (#1820). Tests measure each of
+these properties.
 """
 
 from __future__ import annotations
@@ -275,18 +277,31 @@ class ProbeResult:
 
 # Caps provider text shown to the operator at one readable line; costs the rest of a long error body.
 _EXCERPT_MAX_CHARS = 200
+# #1414 item 6: U+2026 marks a cut excerpt. No form of a key setup accepts can hold it: such keys are printable
+# ASCII (validate_key_transport) and every form of an ASCII key is ASCII.
+_CUT_MARKER = "\u2026"
 _REDACTED = "<redacted>"
 
 
 def _key_forms(api_key: str) -> list[str]:
-    raw = api_key.encode("utf-8")
-    forms = {
-        api_key,
-        quote(api_key, safe=""),
-        quote_plus(api_key),
-        base64.b64encode(raw).decode("ascii"),
-        base64.b64encode(b"Bearer " + raw).decode("ascii"),
-    }
+    # #1414 review round 2: a validator's {v!r}, str() of an OSError naming a path and the B7 note print a key as
+    # repr spells it, which differs from the key when it holds a backslash, a quote repr escapes or a character repr
+    # writes as an escape. A longer string that holds both quotes escapes a ' the key's own repr leaves bare, so both
+    # spellings are forms.
+    forms = {api_key, repr(api_key)[1:-1], repr(api_key + "'\"")[1:-4]}
+    try:
+        raw = api_key.encode("utf-8")
+    except UnicodeEncodeError:
+        # #1414 review: a key read from the existing file is not validated (config_text_api_keys). One that holds
+        # a lone surrogate has no encoded form, so only its literal and quoted text can appear in what setup prints.
+        pass
+    else:
+        forms |= {
+            quote(api_key, safe=""),
+            quote_plus(api_key),
+            base64.b64encode(raw).decode("ascii"),
+            base64.b64encode(b"Bearer " + raw).decode("ascii"),
+        }
     return sorted(forms, key=lambda form: (-len(form), form))
 
 
@@ -300,18 +315,20 @@ def carries_key(text: str, api_key: str) -> bool:
 
 
 def redact(text: str, api_key: str) -> str:
-    """Replace each literal, percent-encoded and base64 form of ``api_key`` in ``text`` with ``<redacted>``.
+    """Replace each literal, Python-quoted, percent-encoded and base64 form of ``api_key`` with ``<redacted>``.
 
     One left-to-right pass over the whole text, longest form first; an empty key changes nothing.
     For any other key that validate_key_transport accepts, the output holds no form of the key,
     so ``carries_key`` is False on it and a second pass changes nothing. Proof:
 
-    1. No form holds ``<`` or ``>``: the key holds neither, percent-encoding writes only
-       ``A-Za-z0-9_.-~%+``, and base64 only ``A-Za-z0-9+/=``.
-    2. No form lies inside ``redacted``: the key is not part of ``<redacted>``, a percent-encoded
-       form made only of letters is the key itself, a base64 form is a multiple of 4 characters
-       long and no 4- or 8-character window of ``redacted`` base64-decodes to printable ASCII,
-       and a ``Bearer`` form has at least 12 characters.
+    1. No form holds ``<`` or ``>``: the key holds neither, its Python-quoted forms add only
+       backslashes before a backslash or quote, percent-encoding writes only ``A-Za-z0-9_.-~%+``,
+       and base64 only ``A-Za-z0-9+/=``.
+    2. No form lies inside ``redacted``: the key is not part of ``<redacted>``, a Python-quoted
+       form is the key itself or holds a backslash, a percent-encoded form made only of letters is
+       the key itself, a base64 form is a multiple of 4 characters long and no 4- or 8-character
+       window of ``redacted`` base64-decodes to printable ASCII, and a ``Bearer`` form has at
+       least 12 characters.
     3. By 1, a form touching a marker, the text's own or one the pass wrote, would lie inside its
        ``redacted``, which 2 rules out; so no marker is matched, split or completed by a form, and
        none is left in the text the pass did not replace, where it would have been matched.
@@ -332,6 +349,26 @@ def configured_api_keys(cognitive: CognitiveConfig) -> list[str]:
     """Every API key some tier would send (a tier without its own sends the shared one), longest first."""
     keys = {cognitive.tier_config(tier)["api_key"] for tier in (*TEXT_TIERS, *OPTIONAL_TIERS)}
     return sorted((key for key in keys if key), key=lambda key: (-len(key), key))
+
+
+def config_text_api_keys(text: str | None) -> list[str]:
+    """Every non-empty ``cognitive.llm_api_key*`` string in config ``text``, longest first; ``[]`` for None.
+
+    #1414 item 7: setup redacts these, as well as the key it is configuring, wherever it prints text read
+    from the existing file. They are read without validation, so a file that does not load still names
+    its keys. Raises ConfigEditRefused, as parse_config_text does, when ``text`` is not a YAML mapping.
+    """
+    if text is None:
+        return []
+    section = parse_config_text(text).get("cognitive")
+    if not isinstance(section, dict):
+        return []
+    keys = {
+        value
+        for name, value in section.items()
+        if str(name).startswith("llm_api_key") and isinstance(value, str) and value
+    }
+    return sorted(keys, key=lambda key: (-len(key), key))
 
 
 # Path words of OpenAI-compatible base URLs: /api/v1, /openai/v1, /inference/v1, /compatible-mode/v1.
@@ -375,7 +412,9 @@ def _excerpt(text: str, api_key: str) -> str:
     # capping, so the cap cannot cut a key form in half.
     printable = "".join(ch if ch.isprintable() else " " for ch in redact(text, api_key))
     line = redact(" ".join(printable.split()), api_key)
-    return line if len(line) <= _EXCERPT_MAX_CHARS else line[: _EXCERPT_MAX_CHARS - 3] + "..."
+    # #1414 item 6: _result redacts the message again. With an ASCII "..." marker a key of "." made the excerpt
+    # 227 characters, and a key such as "ab." was completed across the cut; _CUT_MARKER can do neither.
+    return line if len(line) <= _EXCERPT_MAX_CHARS else line[: _EXCERPT_MAX_CHARS - 1] + _CUT_MARKER
 
 
 def _result(

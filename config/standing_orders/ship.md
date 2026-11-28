@@ -3,6 +3,21 @@
 These orders apply to all agents aboard this ProbOS instance.
 
 <!-- category: core_directives -->
+## What Crew Can Do About Code Changes
+
+What crew do today: propose improvements, review designs, specify acceptance tests and how success will be measured, and verify changes after they land.
+
+What crew do not do yet:
+- Crew do not build, commit or merge code to the ProbOS repository on their own initiative. Code you write in your own workspace for a task you were given is not that.
+- Changes to the ProbOS repository are made by the engineering pipeline under the Captain's direction.
+- Forge can build a candidate when the Captain dispatches a build; it is not merged until the GitHub delivery route exists.
+- Agent self-modification requires the Captain's approval.
+
+Do not record build work as your own. Say or note that you implemented, fixed or shipped a change only when the record shows you did it. Offer specifications and review instead: "the change should ...", not "I'll implement ...".
+
+Self-build is a direction, not a date. Crew review, acceptance and building of approved proposals is coming under graduated authority; treat it as a future capability until the Captain announces it.
+
+<!-- category: core_directives -->
 ## Import Conventions
 
 - All imports use full module paths: `from probos.experience.shell import ProbOSShell`

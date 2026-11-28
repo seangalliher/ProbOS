@@ -264,6 +264,12 @@ class ChatThreadStore:
         conn.execute("PRAGMA foreign_keys = ON")
         return conn
 
+    _admission: object = None  # AD-1346 M3e4d3 (D300, set_admission): None checks nothing
+
+    def set_admission(self, service: object) -> None:
+        """AD-1346 M3e4d3 (D300): the service ``create_thread`` and ``append_message_once`` hand ``check_at``; None checks nothing."""
+        self._admission = service
+
     # ---------- threads ----------
 
     def create_thread(
@@ -284,6 +290,10 @@ class ChatThreadStore:
         # None preserves the pre-AD-918 read shape — NULL and "{}" both
         # decode to {} via _row_to_thread, so existing callers are unaffected.
         meta = dict(metadata or {})
+        from probos.admission.seam import check_at  # AD-1346 M3e4d3 (D299): imported here, as compose_bypass_reply is in append_message_once
+        from probos.admission.taxonomy import EFFECT_STORE_WRITE
+
+        check_at(self._admission, effect=EFFECT_STORE_WRITE, presented_id=meta.get("created_by_agent"))  # AD-1346 M3e4d3 (D299): the thread's store-write check, in shadow, before the write; it blocks nothing
         with self._connect() as conn:
             conn.execute(
                 "INSERT INTO chat_threads (id, title, participants, project_id, task_id, "
@@ -1471,7 +1481,11 @@ class ChatThreadStore:
         except (TypeError, ValueError, OverflowError, RecursionError) as exc:
             raise ValueError("chat_thread_message_invalid") from exc
 
+        from probos.admission.seam import check_at  # AD-1346 M3e4d3 (D299): imported here, as compose_bypass_reply is above
+        from probos.admission.taxonomy import EFFECT_STORE_WRITE
+
         inserted = False
+        check_at(self._admission, effect=EFFECT_STORE_WRITE, presented_id=author_id)  # AD-1346 M3e4d3 (D299): the message's store-write check, in shadow, before the transaction; it blocks nothing
         with self._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
             try:

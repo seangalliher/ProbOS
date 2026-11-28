@@ -6,9 +6,9 @@ reach from other ``src`` code. These tests check the census against the code, an
 sinks over a real ``IdentityService`` and ``AgentStopService`` under ``tmp_path`` and a ``TicketRegistry`` on a fixed
 clock.
 
-- EC1  the effects ``subprocess`` and, from AD-1346 M3e3a, ``egress`` are the last two ``TICKET_EFFECTS`` members and
-       not seams, and ``ticket_findings``' per-day bound is 1,560 rows, 54,600 over 35 days, below
-       ``AGGREGATE_ROW_LIMIT``.
+- EC1  the effects ``subprocess``, from AD-1346 M3e3a ``egress`` and from AD-1346 M3e4a ``store_write`` are the last
+       three ``TICKET_EFFECTS`` members and not seams, and ``ticket_findings``' per-day bound is 1,872 rows, 65,520
+       over 35 days, below ``AGGREGATE_ROW_LIMIT``.
 - EC2  every (file, function) of BF-892's scan is a row with its launch count, and every row is one; the census holds
        12 sink launches in 8 rows, 19 system, 5 command-line and 3 unreached launches, and no pending one (AD-1346
        M3e2b).
@@ -53,6 +53,7 @@ from probos.admission.checks import Principal, check_principal
 from probos.admission.store import AGGREGATE_RETENTION_DAYS, AGGREGATE_ROW_LIMIT
 from probos.admission.taxonomy import (
     EFFECT_EGRESS,
+    EFFECT_STORE_WRITE,
     EFFECT_SUBPROCESS,
     PRINCIPAL_SYSTEM,
     SEAM_MODEL_CALL,
@@ -193,17 +194,18 @@ def _tools(stops: AgentStopService, service: AdmissionService) -> ToolRegistry:
     return registry
 
 
-def test_the_effect_vocabulary_holds_subprocess_and_egress_and_the_finding_bound() -> None:
-    """EC1 (D161; AD-1346 M3e3a: D196; kills EX-1, EX-2, EG-1, EG-2)."""
+def test_the_effect_vocabulary_holds_subprocess_egress_and_store_write_and_the_finding_bound() -> None:
+    """EC1 (D161; AD-1346 M3e3a: D196; AD-1346 M3e4a: D219; kills EX-1, EX-2, EG-1, EG-2, EW-1, EW-2)."""
     assert EFFECT_SUBPROCESS == "subprocess" and EFFECT_SUBPROCESS not in SEAMS
     assert EFFECT_EGRESS == "egress" and EFFECT_EGRESS not in SEAMS  # AD-1346 M3e3a
+    assert EFFECT_STORE_WRITE == "store_write" and EFFECT_STORE_WRITE not in SEAMS  # AD-1346 M3e4a
     assert SEAMS == STOP_SEAMS | {SEAM_MODEL_CALL}, "no seam is added, so the verdicts' per-day bounds do not move"
-    assert TICKET_EFFECTS == (SEAM_TOOL, SEAM_MODEL_CALL, EFFECT_SUBPROCESS, EFFECT_EGRESS) == (
-        "tool", "model_call", "subprocess", "egress",
+    assert TICKET_EFFECTS == (SEAM_TOOL, SEAM_MODEL_CALL, EFFECT_SUBPROCESS, EFFECT_EGRESS, EFFECT_STORE_WRITE) == (
+        "tool", "model_call", "subprocess", "egress", "store_write",
     )
-    assert TICKET_OPERATIONS == ("issue", "tool", "model_call", "subprocess", "egress")
+    assert TICKET_OPERATIONS == ("issue", "tool", "model_call", "subprocess", "egress", "store_write")
     one_day = len(TICKET_OPERATIONS) * len(TICKET_REASON_CODES) * (len(WORK_KINDS) + 1) * 2
-    assert (one_day, one_day * AGGREGATE_RETENTION_DAYS) == (1_560, 54_600)  # AD-1346 M3e3a: 5 x 12 x 13 x 2
+    assert (one_day, one_day * AGGREGATE_RETENTION_DAYS) == (1_872, 65_520)  # AD-1346 M3e4a: 6 x 12 x 13 x 2
     assert one_day * AGGREGATE_RETENTION_DAYS < AGGREGATE_ROW_LIMIT
 
 
@@ -215,10 +217,10 @@ def test_every_launch_bf892_scans_is_a_row_and_every_row_a_launch() -> None:
         kind: sum(count for count, cover in SUBPROCESS_SITES.values() if type(cover) is kind)
         for kind in (Sink, System, OutsideRuntime, Pending, Unreached)
     }
-    assert by_kind == {Sink: 12, System: 19, OutsideRuntime: 5, Pending: 0, Unreached: 3}, by_kind  # AD-1346 M3e2b
+    assert by_kind == {Sink: 12, System: 19, OutsideRuntime: 6, Pending: 0, Unreached: 3}, by_kind  # AD-1346 M3e2b; BF-957: records_git +1
     assert sum(type(cover) is Sink for _count, cover in SUBPROCESS_SITES.values()) == 8
     assert [site for site, (_count, cover) in SUBPROCESS_SITES.items() if type(cover) is Pending] == []  # AD-1346 M3e2b: D160's zero
-    assert sum(found.values()) == 39
+    assert sum(found.values()) == 40  # BF-957: + doctor records_git_check._git_read_sync
 
 
 def test_each_subprocess_sink_holds_one_check_before_its_launch() -> None:
@@ -289,14 +291,15 @@ def test_outside_runtime_rows_are_in_modules_no_runtime_module_imports() -> None
 
 
 def test_the_sink_set_names_five_classes_and_the_delivered_ones_are_the_ticket_effects() -> None:
-    """EC7 (D168)."""
+    """EC7 (D168; AD-1346 M3e4a: D219; kills EW-3)."""
     assert list(EFFECT_CLASSES) == ["model_call", "tool", "subprocess", "egress", "store_write"]
-    assert DELIVERED == frozenset(TICKET_EFFECTS) == {SEAM_MODEL_CALL, SEAM_TOOL, EFFECT_SUBPROCESS, EFFECT_EGRESS}  # AD-1346 M3e3a
-    assert DELIVERED < frozenset(EFFECT_CLASSES)
+    assert DELIVERED == frozenset(TICKET_EFFECTS) == {SEAM_MODEL_CALL, SEAM_TOOL, EFFECT_SUBPROCESS, EFFECT_EGRESS, EFFECT_STORE_WRITE}  # AD-1346 M3e4a
+    assert DELIVERED == frozenset(EFFECT_CLASSES)  # AD-1346 M3e4a
 
 
 def test_the_census_helpers_report_a_new_site_a_stale_row_a_count_a_reference_an_import_and_a_literal() -> None:
-    """EC8: the helpers on synthetic input, so a helper that reports nothing cannot pass EC2, EC4, EC5 or EC6 silently."""
+    """EC8: the helpers on synthetic input, so a helper that reports nothing cannot pass EC2, EC4, EC5 or EC6 silently;
+    from AD-1346 M3e4d6 (A1), its string case is what lets WM1's third branch see a quoted name."""
     listed: dict[tuple[str, str], tuple[int, object]] = {
         ("src/probos/a.py", "f"): (1, System(SHIP, "r")),
         ("src/probos/b.py", "g"): (2, System(SHIP, "r")),
@@ -310,6 +313,9 @@ def test_the_census_helpers_report_a_new_site_a_stale_row_a_count_a_reference_an
     ]
     source = "class A:\n    def run(self):\n        self._go()\n    def other(self):\n        return self._go\n    def _go(self):\n        pass\n\n\n_go = None\n"
     assert references_outside(ast.parse(source), "_go", ("A.run", "A._go")) == [("A.other", 5), ("<module>", 10)]
+    quoted = 'def run():\n    return _go()\n\n\ndef other():\n    return globals()["_go"]\n\n\nNAMES = ["_go"]\n'
+    assert references_outside(ast.parse(quoted), "_go", ("run",)) == []
+    assert references_outside(ast.parse(quoted), "_go", ("run",), strings=True) == [("other", 6), ("<module>", 9)]
     sources = {
         "src/probos/runtime.py": "from probos.doctor import run_doctor\n",
         "src/probos/doctor/x.py": "from probos.doctor.protocol import A\n",

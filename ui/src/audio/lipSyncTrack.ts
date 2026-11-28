@@ -258,6 +258,21 @@ export function buildHeuristicTrack(
   }
 }
 
+/** BF-931 (#1669): the time to sample a heuristic track at, on the clock the voice runs on.
+ *
+ *  ``audioMs`` is the playing <audio> element's clock (``getActiveAudioTimeMs()`` in voice.ts): ``null`` when no
+ *  server audio is active (browser speech, whose own 'start' is the sound), otherwise ``currentTime`` in ms, which
+ *  is 0 until the element actually plays, advances with the sound and stands still when it stalls. ``wallMs`` is
+ *  the time since the speech 'start' event. That event fires when play() is requested, not when sound begins, so
+ *  a track sampled on the wall clock moves the mouth for as long as the audio takes to start (the BF-931 defect).
+ *  Sampled on the audio clock the track is closed until the voice plays (``sample(0)`` is all zeros) and keeps
+ *  the voice's time, as the rhubarb schedule already does (BF-283). A non-finite or negative audio time counts
+ *  as not started. Pure. */
+export function mouthClockMs(audioMs: number | null, wallMs: number): number {
+  if (audioMs === null) return wallMs;
+  return Number.isFinite(audioMs) && audioMs > 0 ? audioMs : 0;
+}
+
 /** Compile-time constants exposed for testing only. */
 export const _CONSTANTS = Object.freeze({
   ATTACK_TIME_MS,

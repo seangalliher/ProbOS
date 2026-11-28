@@ -254,12 +254,21 @@ class TestActivationTracker:
 
     @pytest.mark.asyncio
     async def test_compute_activation_multiple_accesses(self, tracker) -> None:
-        """Higher than single (reinforcement)."""
-        await tracker.record_access("ep-1")
-        single = await tracker.get_activation("ep-1")
-        await tracker.record_access("ep-1")
-        await tracker.record_access("ep-1")
-        multi = await tracker.get_activation("ep-1")
+        """Higher than single (reinforcement). The tracker's clock is held, so a stall
+        between the two reads (a slow commit on a busy host) cannot decide it."""
+        from probos.cognitive import activation_tracker
+
+        clock = {"now": 1_000_000.0}
+        with patch.object(activation_tracker, "time", MagicMock(time=lambda: clock["now"])):
+            await tracker.record_access("ep-1")          # t = 0
+            clock["now"] += 0.01
+            single = await tracker.get_activation("ep-1")  # ages .01 -> ln(10) = 2.303
+            clock["now"] += 0.01
+            await tracker.record_access("ep-1")          # t = .02
+            clock["now"] += 0.01
+            await tracker.record_access("ep-1")          # t = .03
+            clock["now"] += 0.01
+            multi = await tracker.get_activation("ep-1")   # ages .04,.02,.01 -> ln(22.07) = 3.094
         assert multi > single
 
     @pytest.mark.asyncio

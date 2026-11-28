@@ -134,6 +134,29 @@ def make_reader_identity_resolver(
     return _resolve
 
 
+def records_reader_for(runtime: Any, agent_id: str) -> tuple[str, str]:
+    """BF-949, AD-1358: the Ship's Records reader an agent reads as.
+
+    The agent resolved as the Oracle resolves its callers (``make_reader_identity_resolver``):
+    its callsign and its ontology department. A runtime without a registry or an ontology, an
+    agent id that is empty or not a string, an agent the resolver does not find, and a resolver
+    that raises all give ``("", "")``, BF-679's anonymous reader (``record_is_readable``).
+    """
+    registry = getattr(runtime, "registry", None)
+    ontology = getattr(runtime, "ontology", None)
+    if registry is None or ontology is None or type(agent_id) is not str or not agent_id:
+        return "", ""
+    try:
+        return make_reader_identity_resolver(registry=registry, ontology=ontology)(agent_id)
+    except Exception:
+        logger.warning(
+            "BF-949: records reader resolution failed for agent=%s; Ship's Records "
+            "are read as the anonymous reader",
+            agent_id, exc_info=True,
+        )
+        return "", ""
+
+
 def _decode_record_frontmatter(raw: Any) -> dict[str, Any]:
     """AD-1138: rehydrate the frontmatter sidecar stored in ChromaDB metadata.
 
@@ -727,10 +750,15 @@ class OracleService:
         k_per_tier: int = 3,
         tiers: list[str] | None = None,
         max_chars: int = 4000,
+        sources_out: list[tuple[str, str]] | None = None,
     ) -> str:
         """Query and return formatted string with provenance tags.
 
         Budget enforcement: accumulates content lengths, stops at max_chars.
+
+        AD-1357: when ``sources_out`` is a list, the ``(source_tier, path)`` of each
+        rendered result is appended to it in rendered order (``path`` is ``""`` for
+        a result whose metadata has none). The returned text is the same either way.
         """
         results = await self.query(
             query_text, agent_id=agent_id, intent_type=intent_type,
@@ -775,6 +803,8 @@ class OracleService:
                 break
             lines.append(line)
             char_count += len(line) + 1
+            if sources_out is not None:
+                sources_out.append((r.source_tier, str(r.metadata.get("path") or "")))
 
         lines.append("=== END ORACLE RESULTS ===")
         return "\n".join(lines)

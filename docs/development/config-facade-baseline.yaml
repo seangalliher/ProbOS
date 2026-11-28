@@ -47,13 +47,13 @@ handoff_to_e2:
 pydantic_version: 2.12.5
 surface_counts:
   aliased_fields: 1
-  canonical_dump_leaves: 1890
-  field_definitions: 1880
+  canonical_dump_leaves: 1885
+  field_definitions: 1878
   incidental: 13
-  own_models: 229
+  own_models: 228
   owned: 297
   public_names: 310
-canonical_dump_sha256: eaaefa0fc4e1f5fc1e077a706dfa4e5b1e79c58bedfa4bf834417919a044c596
+canonical_dump_sha256: e9100cc14b34e76c7b69dbf1d479bcda74fe63f430878b625ac7716e7379fb5e
 non_instantiable:
 - A2APeerConfig
 - BaseModel
@@ -269,7 +269,6 @@ names:
   GroundTruthConfig: {kind: model, tier: owned}
   GroundingConfig: {kind: model, tier: owned}
   GroupChatConfig: {kind: model, tier: owned}
-  HolodeckBirthChamberConfig: {kind: model, tier: owned}
   HolodeckScenarioConfig: {kind: model, tier: owned}
   HolodeckTeamSimulationConfig: {kind: model, tier: owned}
   HooksConfig: {kind: model, tier: owned}
@@ -440,6 +439,7 @@ names:
   WorkstationsConfig: {kind: model, tier: owned}
   WriteClaimGuardConfig: {kind: model, tier: owned}
   annotations: {kind: other, removable_in: e3, tier: incidental}
+  drop_null_sections: {kind: function, tier: owned}
   field_validator: {kind: function, removable_in: e3, tier: incidental}
   format_trust: {kind: function, tier: owned}
   load_config: {kind: function, tier: owned}
@@ -579,7 +579,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: 194ecb6d4587392d8350ce918819524e8183b189579d8deeb02a2de3caceff0f
+    schema_sha256: c1b68ee0d7447c4a06cdd1e5db749ac23765acfc22e0b822d82f21fca3ca91eb
     fields:
     - {default: 'False', name: enabled}
     - {default: 'False', name: standing_rules_enabled}
@@ -597,6 +597,9 @@ models:
     - {default: 'False', name: decision_pre_clearance_enabled}
     - {default: '24', name: decision_pre_clearance_default_ttl_hours}
     - {default: '168', name: decision_pre_clearance_max_ttl_hours}
+    - {default: '''auto''', name: agent_work_routine_decider}
+    - {default: '''chief''', name: agent_work_elevated_decider}
+    - {default: '''captain''', name: agent_work_critical_decider}
   ArchiveConfig:
     qualname: ArchiveConfig
     bases:
@@ -2087,21 +2090,6 @@ models:
     - {default: 'False', name: scale_aware_facilitation_enabled}
     - {default: '5', name: facilitation_gate_threshold}
     - {default: '0', name: force_facilitation_min}
-  HolodeckBirthChamberConfig:
-    qualname: HolodeckBirthChamberConfig
-    bases:
-    - BaseModel
-    - object
-    schema_sha256: 8169314c573b9b8b3bd5cf7eb0c59cad38a8e5c2b94416b2984a35ba149ac7d8
-    fields:
-    - {default: 'False', name: enabled}
-    - {default: 'True', name: bypass_for_existing_agents}
-    - {default: <required>, has_default_factory: true, name: department_order}
-    - {default: '5', name: calibration_min_episodes}
-    - {default: 'True', name: affective_baseline_check_enabled}
-    - {default: 'True', name: auto_advance_enabled}
-    - {default: '2.0', name: auto_advance_poll_interval_seconds}
-    - {default: '3', name: max_self_discovery_probe_attempts}
   HolodeckScenarioConfig:
     qualname: HolodeckScenarioConfig
     bases:
@@ -2445,13 +2433,14 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: b1a049076915eca40b6a21b2e29db5c710ad921cf1911e2ff2856601c2e704f2
+    schema_sha256: 1b476f7be575004007890fb10eb38c4db4156bafbc3867aefb135a7320adca5f
     fields:
     - {default: 'False', name: enforce_recall}
     - {default: 'False', name: enforce_provenance}
     - {default: 'False', name: enforce_store}
     - {default: '0.7', name: anchor_mismatch_threshold}
     - {default: '3', name: dp_min_cohort_size}
+    - {default: '0.0', name: correlation_cutoff}
   MeshConfig:
     qualname: MeshConfig
     bases:
@@ -2655,7 +2644,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: 25d606acaf314c60af02bf54b68530f2176a4d54797ad499d872ff94c06a78ae
+    schema_sha256: fa60253c54b0997339cec5744a0b69880d0596a98a69610672304910312307b3
     fields:
     - {default: 'True', name: enabled}
     - {default: '600.0', name: orientation_window_seconds}
@@ -2663,7 +2652,6 @@ models:
     - {default: 'True', name: warm_boot_orientation}
     - {default: 'True', name: proactive_supplement}
     - {default: 'True', name: populate_watch_section}
-    - {default: 'True', name: populate_ward_room_department}
     - {default: 'True', name: populate_event_log_window}
   PacksConfig:
     qualname: PacksConfig
@@ -3022,7 +3010,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: 659282bea3c479223d34bac5429cf8aaee0546cf1f61fc35b7a528cdcba90a8b
+    schema_sha256: f1431e587b7de985666dafeb1203844a1e067573c7f26cb0d004de5e43522d26
     fields:
     - {default: 'True', name: enabled}
     - {default: '''''', name: repo_path}
@@ -3052,6 +3040,9 @@ models:
     - {default: '0.5', name: notebook_quality_warn_threshold}
     - {default: '0.7', name: notebook_staleness_alert_rate}
     - {default: 'False', name: semantic_index_enabled}
+    - {default: '10.0', name: git_lock_stale_minutes}
+    - {default: '50', name: git_uncommitted_warn_paths}
+    - {default: '24.0', name: git_last_commit_warn_hours}
   RepairConfig:
     qualname: RepairConfig
     bases:
@@ -3162,7 +3153,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: 18e16a784ae309fb2e60b55c75e4b50ba7eb380820e14211e45653847f235438
+    schema_sha256: 4eb3286f547df4abd49b1b8d380246ee166e7a090b45a0401c151a5a14b6391f
     fields:
     - {default: 'True', name: enabled}
     - {default: '65536', name: max_payload_bytes}
@@ -3229,14 +3220,14 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: bd5e994169a634451e4928a6010863024e13ec969a3b571ce7dae1003f8c482b
+    schema_sha256: 874991ac8416b1cc90e16e07fe0463e01bf6a7fa5ee595dda898e8dfd5726ea3
     fields:
     - {default: 'False', name: enabled}
     - {default: '3', name: qa_pool_size}
     - {default: '5', name: iteration_cap}
     - {default: '2592000.0', name: evolution_half_life_seconds}
     - {default: '''self_improvement_lessons''', name: evolution_collection_name}
-    - {default: '''src/probos/agents/designed''', name: persistence_root_dir}
+    - {default: '''''', name: persistence_root_dir}
   SelfModConfig:
     qualname: SelfModConfig
     bases:
@@ -3421,7 +3412,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: 6c998c8d6f09bb89ba42256fdbec3350205a7312e45c450ed548d1d606a5eea1
+    schema_sha256: 62becd85f6480a7652c0199709ffff19649b4523504d809e050aaaf0bc7a4150
     fields:
     - {default: SystemInfo(...), name: system}
     - {default: PoolConfig(...), name: pools}
@@ -3456,7 +3447,6 @@ models:
     - {default: QualityTriggerConfig(...), name: quality_trigger}
     - {default: QualityRouterConfig(...), name: quality_router}
     - {default: OnboardingConfig(...), name: onboarding}
-    - {default: HolodeckBirthChamberConfig(...), name: holodeck_birth_chamber}
     - {default: HolodeckScenarioConfig(...), name: holodeck_scenarios}
     - {default: HolodeckTeamSimulationConfig(...), name: team_simulations}
     - {default: SkillRequestConfig(...), name: skill_requests}
@@ -3623,11 +3613,12 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: ea745c2758ece4a25b87e9020b7be3b7a6f5ab90d8bc09cc859896376b710b0a
+    schema_sha256: 6a89fd5663afdb96b550325d2fd45f13a09fd7b850d8f9c7fd9682e99de4d3bc
     fields:
     - {default: '''ProbOS''', name: name}
     - {default: '''0.1.0''', name: version}
     - {default: '''INFO''', name: log_level}
+    - {default: '1.0', name: loop_stall_warn_seconds}
   TTSConfig:
     qualname: TTSConfig
     bases:
@@ -3937,6 +3928,6 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: f52a9886550b551b13497f79179c9135be1b9f16bf00c682f44de468ac229b51
+    schema_sha256: ecb38aa280253b905dcd571501141521cc287120c5becb39090f10513edfd561
     fields:
     - {default: 'True', name: enabled}

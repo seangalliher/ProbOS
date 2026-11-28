@@ -29,6 +29,7 @@ from probos.substrate.spawner import AgentSpawner
 from probos.config import PoolConfig
 from tests.fixtures.abortive_self_pipe import install_abortive_self_pipe
 from tests.fixtures.timeout_timer_release import pytest_runtest_protocol  # noqa: F401  (pytest hook)
+from tests.fixtures.recursion_limit_gc import gc_quiet_at_recursion_limit  # noqa: F401  (fixture; BF-986, #1754)
 
 # AD-721i: defense-in-depth pytest collection ignore for the bundled in-Blender
 # render script. ``pyproject.toml`` already pins ``testpaths = ["tests"]`` so
@@ -176,6 +177,57 @@ def isolated_archive_path(_bf919_isolated_archive):
     refused = isolation.unreported()
     if refused:
         pytest.fail(f"BF-919: this test opened a Ship's Archive outside the temporary roots: {refused}", pytrace=False)
+
+
+@pytest.fixture(autouse=True)
+def _ad1337_r23_credential_cli(monkeypatch):
+    """AD-1337 follow-up (#1820 R23): in-process, the credential store's CLI step meets a stand-in, not ``gh``.
+
+    A real boot primes the GitHub credential; with no token in the environment or the store, the credential store
+    runs ``gh auth token``. For each test, ``probos.credential_store.subprocess`` is replaced by a stand-in whose
+    ``run`` records the command in ``calls`` and fails it as if ``gh`` were not installed; ``TimeoutExpired`` is the
+    real class. The ``subprocess`` module is unchanged. A test that sets its own stand-in, or patches the stand-in's
+    ``run``, takes precedence for that test. Not covered: a ProbOS started in a child process, and a ``gh`` run that
+    does not go through the credential store (``cognitive/scout.py`` runs ``gh api`` through ``subprocess.run``).
+    """
+    import subprocess
+    from types import SimpleNamespace
+
+    import probos.credential_store as credential_store
+
+    calls: list[list[str]] = []
+
+    def _run(argv, **_kwargs):
+        calls.append(list(argv))
+        raise FileNotFoundError(argv[0])
+
+    stand_in = SimpleNamespace(run=_run, TimeoutExpired=subprocess.TimeoutExpired, calls=calls)
+    monkeypatch.setattr(credential_store, "subprocess", stand_in)
+    yield calls
+
+
+@pytest.fixture(autouse=True)
+def _bf932_quiet_loop_stall_sampler(request, monkeypatch):
+    """BF-932 (#1670): a booted runtime starts no loop-stall sampler in a test unless the test asks for it.
+
+    The sampler is on by default (system.loop_stall_warn_seconds 1.0) and writes a WARNING when the event loop is held
+    that long. A loaded test host pauses a process that long now and then, and many booted tests assert that no
+    WARNING was written. So ``LoopStallSampler.run`` returns at once here; a test that requests the
+    ``bf932_live_loop_stall_sampler`` fixture (tests/test_bf932_d2_loop_stall_sampler.py) gets the real one. This
+    patches the pytest process only: a runtime a test boots in a child process
+    (tests/fixtures/federation_cluster_node.py, ``python -m probos``) runs the real sampler, and its parent reads
+    that child's output only for named markers.
+    """
+    if "bf932_live_loop_stall_sampler" in request.fixturenames:
+        yield
+        return
+    from probos.utils import loop_stall
+
+    async def _quiet(self) -> None:
+        return None
+
+    monkeypatch.setattr(loop_stall.LoopStallSampler, "run", _quiet)
+    yield
 
 
 @pytest.fixture(scope="session", autouse=True)

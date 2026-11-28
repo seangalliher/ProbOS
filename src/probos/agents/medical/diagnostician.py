@@ -63,8 +63,11 @@ class DiagnosticianAgent(CognitiveAgent):
         super().__init__(**kwargs)
         self._runtime = kwargs.get("runtime")
 
-    async def perceive(self, intent: dict[str, Any]) -> dict[str, Any]:
+    async def perceive(self, intent: Any) -> dict[str, Any]:
         """Enrich diagnose_system intents with live metrics from VitalsMonitor (AD-350).
+
+        ``intent`` is an ``IntentMessage`` (from ``handle_intent``) or a dict, as on
+        the base ``CognitiveAgent.perceive`` (BF-991).
 
         AD-700: Honor the ``level`` parameter (L5..L1). Shallower levels skip
         the VitalsMonitor scan entirely; deeper levels add an instruction
@@ -80,7 +83,16 @@ class DiagnosticianAgent(CognitiveAgent):
         result = await super().perceive(intent)
 
         if result.get("intent") == "diagnose_system":
-            level = parse_level(intent.get("level"))
+            # BF-991 (#1840): read the level from the observation super().perceive
+            # built. For an IntentMessage (what /diagnostic sends) it is under
+            # ``params``, and the message has no ``.get``. The base's dict branch
+            # keeps only intent/params/context, so a flat dict's top-level
+            # ``level`` is read from the argument; ``params`` wins when both have one.
+            params = result.get("params")
+            raw_level = params.get("level") if isinstance(params, dict) else None
+            if raw_level is None and isinstance(intent, dict):
+                raw_level = intent.get("level")
+            level = parse_level(raw_level)
             result["level"] = level.value
             result["level_rank"] = level.depth_rank
             result["level_llm_tier"] = level.llm_tier

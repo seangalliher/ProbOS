@@ -30,11 +30,11 @@ Projects appear here only as technical design references. Positioning against th
 | Claude Code | 2026-10-16 | checked | Bash permission rules (compound splitting, wrappers, assignments, documented limits) for AD-1328 (#1530), `prompts/ad-1328-s1-command-policy-core.md`; sandbox and permission model studied for AD-1335 (#1557); lexical search in the AD-989 ripgrep absorption (2026-06-13, `DECISIONS.md`); context forking in `cognitive-sub-task-protocol.md` (2026-04-15) |
 | GitHub Copilot coding agent | 2026-10-15 | checked | AD-1336 (#1558) Prior art |
 | GitHub Agentic Workflows (gh-aw; runs Copilot, Claude Code, Codex, Gemini or Pi in Actions) | 2026-10-30 | absorption | `gh-aw-absorption.md` (job architecture, safe outputs, threat detection, protected files, `min-integrity`, MCP gateway, audit and cost docs; `sandbox.md`, `permissions.md`; not `engines.md` or the ADRs); drove BF-943 (#1707), the protected-paths floor for the runtime writers |
-| OpenCode (magic context) | 2026-05-08 | absorption | `opencode-magic-context-absorption.md` |
-| SWE-agent | 2026-03-20 | passing | AD-360 builder guardrails (container-scoped isolation) |
+| OpenCode (magic context) | 2026-11-02 | absorption | `opencode-magic-context-absorption.md`; BF-946 (#1723) Prior Art, `prompts/bf-946-read-only-delivery-failure-continues.md` (checked: tool output over the configurable 2,000-line / 50 KB limits is truncated and saved to a file; the shell tool shows a truncated part and the saved file's path) |
+| SWE-agent | 2026-11-18 | checked | AD-1361 (#1743) Prior Art, `prompts/ad-1361-tool-results-state-the-whole-and-refusals-name-the-next-action.md` (the ACI page states the 100-line window, not whether the viewer gives a total); BF-946 (#1723) Prior Art, `prompts/bf-946-read-only-delivery-failure-continues.md` (the ACI file viewer works best showing 100 lines per turn; the editor has scroll and search commands); AD-360 builder guardrails (container-scoped isolation) |
 | Aider | 2026-10-18 | checked | AD-360 (pre-edit dirty commit, edit-lint-test-reflect); AD-989 (lexical search); BF-904a (#1585) Prior Art, `prompts/bf-904a-native-build-git-hardening.md` (`--git-commit-verify` default False) |
 | Cline | 2026-10-16 | checked | command auto-approval for AD-1328 (#1530), `prompts/ad-1328-s1-command-policy-core.md` (model-flagged `requires_approval`, no fixed allowlist); AD-360 (shadow git checkpoints, workspace access tiers) |
-| Cursor | 2026-06-13 | passing | AD-989 (lexical search); also named as an AgentSkills.io adopter |
+| Cursor | 2026-11-02 | checked | AD-1356 S2 (#1722) Prior Art, `prompts/ad-1356-s2-tool-effect-table.md` (Auto-review: allowlisted calls run, calls that can be sandboxed run in a sandbox, all other calls go to a classifier subagent; its docs say Auto-review is not a security boundary); AD-989 (lexical search); also named as an AgentSkills.io adopter |
 | Goose | 2026-10-16 | checked | AD-1328 S2c (#1530) Prior Art, `prompts/ad-1328-s2c-command-escalation-resume.md` (interactive permission modes only, nothing new); `universal-agent-activation-research.md` (as an MCP Apps host) |
 | Darwin Gödel Machine (Sakana) | 2026-10-15 | absorption | `darwin-godel-machine-absorption.md`; drove BF-898 (#1563) and the AD-1336 (#1558) evidence amendment. Its follow-up is the HyperAgents row |
 
@@ -43,8 +43,8 @@ Projects appear here only as technical design references. Positioning against th
 | Project | Last reviewed | Depth | Where recorded |
 |---|---|---|---|
 | LangGraph | 2026-10-16 | checked | AD-1328 S2c (#1530) Prior Art, `prompts/ad-1328-s2c-command-escalation-resume.md` (an interrupt's resume re-runs the node from its start, as an AD-855 re-dispatch is a fresh run of the task); `cognitive-jit-procedural-learning-research.md` (orchestration survey) |
-| AutoGen | 2026-09-03 | passing | `cognitive-jit-procedural-learning-research.md`; `dynamic-communication-register-research.md` |
-| CrewAI | 2026-09-03 | passing | the same two notes; `emergence-taxonomy.md` |
+| AutoGen | 2026-11-02 | checked | `cognitive-jit-procedural-learning-research.md`; `dynamic-communication-register-research.md`; AD-1356 S3 and S4 (#1722) Prior Art, `prompts/ad-1356-s3-s4-chain-of-command-and-who-decides.md` (0.2's `human_input_mode` on `ConversableAgent`: NEVER, TERMINATE (the default: input is asked for only when a termination condition is met) or ALWAYS; nothing new) |
+| CrewAI | 2026-11-02 | checked | the same two notes; `emergence-taxonomy.md`; AD-1356 S3 and S4 (#1722) Prior Art, `prompts/ad-1356-s3-s4-chain-of-command-and-who-decides.md` (the task's `human_input` flag: the agent asks before its final answer; confirm.dev's guide gates a tool with a `BaseTool` subclass that calls an approval service; nothing new) |
 | Letta (MemGPT) | 2026-10-17 | passing | `cognitive-jit-procedural-learning-research.md` (self-editing memory blocks); AD-1339 (#1566) Prior art (sleep-time agents, from a search summary); AD-1340 S1 (#1568), `prompts/ad-1340-s1-archive-and-erase.md` (an out-of-context archival tier, the same shape as the episode archive; nothing new) |
 | Voyager (skill library) | 2026-10-15 | passing | `cognitive-jit-procedural-learning-research.md`; AD-1338 (#1565) Prior art (from a search summary) |
 | Hermes Agent | 2026-06-06 | passing | `crew-capability-architecture.md` (self-improving skills, AD-596) |
@@ -55,10 +55,11 @@ Projects appear here only as technical design references. Positioning against th
 
 | Project | Last reviewed | Depth | Where recorded |
 |---|---|---|---|
-| RAGFlow | 2026-05-08 | absorption | `ragflow-absorption.md` |
-| LoCoMo benchmark | 2026-05-08 | absorption | `locomo-benchmark-absorption.md` |
+| RAGFlow | 2026-11-20 | checked | `ragflow-absorption.md`; BF-984 (#1830) Prior Art, `prompts/bf-984-recall-gate-every-read.md` (a search found nothing on RAGFlow retrieval-time filtering; nothing new) |
+| LoCoMo benchmark | 2026-11-26 | passing | `memo-memory-as-a-model-absorption.md` Prior art (from search summaries, not verified against the paper: the adversarial category tests abstention on false premises, already covered by `MemoryAbstentionProbe`; it has no hard-negative distractor arm, so nothing new for AD-1362); first absorbed in `locomo-benchmark-absorption.md` (2026-05-08) |
 | Memvid | 2026-10-22 | absorption | `memvid-evaluation.md`; AD-1341 S1 (#1569) Prior Art (append-only frames match the content-hash key; nothing new) |
 | AI Meets Brain memory survey (arXiv 2512.23343) | 2026-10-24 | absorption | `agent-memory-survey-absorption.md`; AD-1341 S2 (#1569) Prior Art, `prompts/ad-1341-s2-inherited-label.md` (abstract only; nothing on inheritance labelling) |
+| MeMo, Memory as a Model (Quek et al., arXiv 2605.15156; arunv3rma/MeMo, MIT) | 2026-11-26 | absorption | `memo-memory-as-a-model-absorption.md` (the paper HTML, the README, the structured multi-turn loop and its prompts, the synthesis prompts and the negative-sampling scripts, at `a679d322cf77`); drafts for AD-1362 (hard-negative recall trial) and AD-1363 (structured recall protocol). Memory in weights rejected for crew memory (the Captain, 2026-11-26) |
 | Governed Collaborative Memory (Cuadros et al., arXiv 2605.04264; selection regimes for shared memory) | 2026-10-25 | absorption | `coral-governed-memory-absorption.md` (read in full); draft amendments for the AD-1336 (#1558) child 8 graduation rule and for keeping declined proposals at intake |
 
 ## Protocols and standards (interval: 180 days)

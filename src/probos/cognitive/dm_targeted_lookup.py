@@ -17,6 +17,8 @@ import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, Protocol
 
+from probos.cognitive.oracle_service import records_reader_for
+
 if TYPE_CHECKING:
     from probos.config import DmTargetedLookupConfig
 
@@ -96,6 +98,15 @@ class RegexSubintentClassifier:
                 if pat.search(message):
                     return name, message  # type: ignore[return-value]
         return "none", ""
+
+
+def _knowledge_lookup_reader(runtime: Any, agent_id: str) -> tuple[str, str]:
+    """BF-949: the Ship's Records reader the knowledge lookup reads as.
+
+    The agent the DM is addressed to: :func:`probos.cognitive.oracle_service.records_reader_for`,
+    which AD-1358 S1 made public so the DM head-to-head tally reads by the same rule.
+    """
+    return records_reader_for(runtime, agent_id)
 
 
 class LookupDispatcher:
@@ -233,7 +244,12 @@ class LookupDispatcher:
                     "AD-725: knowledge lookup unavailable (no runtime.records_store.search)",
                 )
                 return ""
-            res = rs.search(query)
+            # BF-949: the lookup's text reaches the addressed agent's prompt, so the
+            # records are read as that agent.
+            reader_id, reader_department = _knowledge_lookup_reader(self._runtime, agent_id)
+            res = rs.search(
+                query, reader_id=reader_id, reader_department=reader_department,
+            )
             if asyncio.iscoroutine(res):
                 res = await res
             return self._stringify(res)

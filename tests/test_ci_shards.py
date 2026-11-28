@@ -6,6 +6,7 @@ evidence is not release authority: these tests pin the CI proof, not the canonic
 
 from __future__ import annotations
 
+import fnmatch
 import hashlib
 import importlib.util
 import json
@@ -1553,6 +1554,12 @@ def _step_using(job: dict[str, Any], action: str) -> dict[str, Any]:
     return steps[0]
 
 
+def _step_named(job: dict[str, Any], name: str) -> dict[str, Any]:
+    steps = [step for step in job["steps"] if step.get("name") == name]
+    assert len(steps) == 1, steps
+    return steps[0]
+
+
 def _shard_pytest_tokens() -> list[str]:
     tokens = _tokens(_run_of(_workflow()["jobs"][SHARD_JOB], "pytest"))
     return tokens[tokens.index("pytest") + 1 :]
@@ -1584,6 +1591,9 @@ def test_shard_job_keeps_the_runner_environment_extras_and_timeouts() -> None:
     assert (setup_python["uses"], setup_python["with"]) == ("actions/setup-python@v5", {"python-version": "3.12"})
     assert _step_using(shard, "astral-sh/setup-uv")["uses"] == "astral-sh/setup-uv@v5"
     assert _run_of(shard, "uv sync") == "uv sync --group dev --extra discovery --extra browser"
+    # BF-985: a step that reaches its own limit fails instead of cancelling the job, so the uploads still run.
+    assert _step_named(shard, "Run tests")["timeout-minutes"] == 38
+    assert _step_named(shard, "Run tests")["timeout-minutes"] < shard["timeout-minutes"]
 
 
 def test_shard_command_loads_the_plugin_and_keeps_the_original_pytest_arguments() -> None:
@@ -1598,6 +1608,8 @@ def test_shard_command_loads_the_plugin_and_keeps_the_original_pytest_arguments(
     assert _option(args, "-p") == ["scripts._ci_shard_pytest_plugin"]
     assert _option(args, "--probos-shard-evidence-dir") == ["<runner.temp>/ci-shard-evidence"]
     assert not [token for token in args if token.startswith("--probos-shard-durations")]
+    assert _option(args, "--probos-shard-stack-dir") == ["<runner.temp>/ci-shard-stacks"]
+    assert not [token for token in args if token.startswith("--probos-shard-stall-seconds")]
 
 
 @pytest.mark.parametrize("flag", sorted(SELECTION_FLAGS))
@@ -1616,9 +1628,12 @@ def test_workflow_cannot_change_pytest_selection_through_the_environment() -> No
 
 def test_shard_job_uploads_its_evidence_whatever_the_outcome() -> None:
     shard = _workflow()["jobs"][SHARD_JOB]
-    upload = _step_using(shard, "actions/upload-artifact")
+    uploads = [step for step in shard["steps"] if str(step.get("uses", "")).startswith("actions/upload-artifact@")]
+    upload = _step_named(shard, "Upload shard evidence")
     major = int(upload["uses"].split("@v")[1].split(".")[0])
 
+    # BF-985: the stall dumps have their own upload, before this one; the evidence upload stays last.
+    assert [step["name"] for step in uploads] == ["Upload stall stack dumps", "Upload shard evidence"]
     assert major >= 4
     assert shard["steps"].index(upload) == len(shard["steps"]) - 1
     assert upload["if"] == "${{ !cancelled() }}"
@@ -1629,6 +1644,34 @@ def test_shard_job_uploads_its_evidence_whatever_the_outcome() -> None:
         "overwrite": True,
         "retention-days": 7,
     }
+
+
+def test_shard_job_uploads_the_stack_dumps_of_a_failed_or_cancelled_shard_apart_from_the_evidence() -> None:
+    jobs = _workflow()["jobs"]
+    shard = jobs[SHARD_JOB]
+    steps = shard["steps"]
+    run = _step_named(shard, "Run tests")
+    stacks = _step_named(shard, "Upload stall stack dumps")
+    evidence = _step_named(shard, "Upload shard evidence")
+    pattern = _step_using(jobs[SUMMARY_JOB], "actions/download-artifact")["with"]["pattern"]
+    stack_dir = _tokens(stacks["with"]["path"])[0]
+    evidence_dir = _tokens(evidence["with"]["path"])[0]
+
+    assert stacks["uses"] == evidence["uses"]
+    assert steps.index(run) < steps.index(stacks) < steps.index(evidence)
+    assert stacks["if"] == "${{ failure() || cancelled() }}"
+    assert stacks["with"] == {
+        "name": "ci-shard-stacks-${{ matrix.shard }}",
+        "path": "${{ runner.temp }}/ci-shard-stacks",
+        "if-no-files-found": "ignore",
+        "overwrite": True,
+        "retention-days": 7,
+    }
+    # verify rejects any entry in the evidence root but shard-K/<worker>.json: the dumps must never land there.
+    for index in shard["strategy"]["matrix"]["shard"]:
+        assert not fnmatch.fnmatchcase(stacks["with"]["name"].replace("${{ matrix.shard }}", str(index)), pattern)
+    assert stack_dir != evidence_dir and not stack_dir.startswith(evidence_dir + "/")
+    assert _option(_shard_pytest_tokens(), "--probos-shard-stack-dir") == [stack_dir]
 
 
 def test_summary_job_keeps_the_check_name_and_cannot_pass_on_a_skipped_shard() -> None:
@@ -1694,5 +1737,6 @@ def test_workflow_keeps_the_rationale_comments_beside_the_commands_they_explain(
     assert "BF-322" in timeout_comments and "BF-657" in timeout_comments
     assert "BF-322" in step_comments and "BF-657" in step_comments and "-n auto" in step_comments
     assert "--maxfail=10" in step_comments and "missing node" in step_comments
+    assert "BF-985" in step_comments and "timeout-minutes: 38" in step_comments
     assert re.search(r"#.*exactly once", text)
     assert "release authority" in text

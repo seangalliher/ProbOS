@@ -326,6 +326,7 @@ class EventType(str, Enum):
     BACKUP_COMPLETE = "backup_complete"  # AD-466
     BACKUP_FAILED = "backup_failed"  # AD-466
     SECRET_ROTATED = "secret_rotated"  # AD-456
+    SECRET_MASKED = "secret_masked"  # AD-1337: tool output had a known credential value masked, or was withheld
     EGRESS_BLOCKED = "egress_blocked"  # AD-456
     CLASSIFICATION_DISCLOSURE_BLOCKED = "classification_disclosure_blocked"  # AD-530
     BOUNDARY_VIOLATION_DETECTED = "boundary_violation_detected"  # AD-511
@@ -486,14 +487,6 @@ class EventType(str, Enum):
 
     # ── Crew Development (AD-507) ──────────────────────────────────
     CURRICULUM_MODULE_QUERIED = "curriculum_module_queried"  # AD-507
-
-    # AD-486: Holodeck Birth Chamber phase events
-    HOLODECK_AGENT_ADMITTED = "holodeck_agent_admitted"
-    HOLODECK_PHASE_ENTERED = "holodeck_phase_entered"
-    HOLODECK_PHASE_GATE_PASSED = "holodeck_phase_gate_passed"
-    HOLODECK_PHASE_GATE_BLOCKED = "holodeck_phase_gate_blocked"
-    HOLODECK_GRADUATION = "holodeck_graduation"
-    HOLODECK_AFFECTIVE_BASELINE_OBSERVED = "holodeck_affective_baseline_observed"
 
     # AD-539b: Holodeck scenario generation from skill gaps
     HOLODECK_SCENARIO_GENERATED = "holodeck_scenario_generated"

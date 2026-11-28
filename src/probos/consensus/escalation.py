@@ -14,6 +14,7 @@ import time
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+from probos.security.secret_masking import MASKING_FAILED_TEXT, RouteTextMask, secret_masker_of
 from probos.types import (
     ConsensusOutcome,
     EscalationResult,
@@ -46,6 +47,23 @@ Rules:
 - "modify" if you can suggest corrected parameters that might succeed
 - Be conservative — when in doubt, reject and let the user decide
 """
+
+
+def _arbitration_prompt(runtime: Any, node: Any, error: str, context: dict) -> str | None:
+    """AD-1337 S5: the Tier 2 prompt, masked with the runtime's secret masker; None when the pass fails.
+
+    ``error`` is a node's exception or rejection text, which no masking seam saw: a decomposed DAG's mesh intents never
+    pass the tool executor. Without a masker the prompt is the same text as before. A module function because
+    ``EscalationManager`` is at the 500-line class bound.
+    """
+    mask = RouteTextMask(secret_masker_of(runtime), route="dag_arbitration")
+    prompt = mask(
+        f"Intent: {node.intent}\n"
+        f"Params: {json.dumps(node.params, default=str)}\n"
+        f"Error: {error}\n"
+        f"Context: {json.dumps(context, default=str)}\n"
+    )
+    return prompt if mask.settle() else None
 
 
 class EscalationManager:
@@ -272,12 +290,11 @@ class EscalationManager:
         self, node: Any, error: str, context: dict
     ) -> EscalationResult:
         """Ask the LLM to judge the failure."""
-        prompt = (
-            f"Intent: {node.intent}\n"
-            f"Params: {json.dumps(node.params, default=str)}\n"
-            f"Error: {error}\n"
-            f"Context: {json.dumps(context, default=str)}\n"
-        )
+        prompt = _arbitration_prompt(self.runtime, node, error, context)
+        if prompt is None:  # AD-1337 S5: the masking pass failed: nothing is sent, and the cascade goes on to Tier 3
+            return EscalationResult(
+                tier=EscalationTier.ARBITRATION, resolved=False, original_error=error, reason=MASKING_FAILED_TEXT,
+            )
 
         request = LLMRequest(
             prompt=prompt,

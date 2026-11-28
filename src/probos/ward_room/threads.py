@@ -11,6 +11,7 @@ import uuid
 from typing import Any, Callable, Awaitable
 
 from probos.cognitive.similarity import jaccard_similarity, text_to_words
+from probos.cycle_trace import current_cycle_id  # AD-1360 (#1828)
 from probos.ward_room.models import WardRoomThread, extract_mentions
 
 logger = logging.getLogger(__name__)
@@ -211,6 +212,7 @@ class ThreadManager:
             author_id=author_id, author_callsign=author_callsign,
             post_body=post_body, channel_id=channel_id,
             peer_matches=peer_matches,
+            identity_registry=self._identity_registry,
         )
 
     async def _check_echo_trace(
@@ -597,6 +599,7 @@ class ThreadManager:
                     }],
                     reflection=f"{author_callsign or author_id} posted to {ch_name}: {title[:100]}",
                     source="direct",
+                    correlation_id=current_cycle_id(),  # AD-1360 (#1828): the cycle the thread is made in; "" outside one
                     anchors=AnchorFrame(
                         channel="ward_room",
                         channel_id=channel_id,
@@ -648,6 +651,7 @@ class ThreadManager:
                         f"Similarity: {top_match['similarity']:.0%}."
                     ),
                     source="direct",
+                    correlation_id=current_cycle_id(),  # AD-1360 (#1828): the cycle the thread is made in; "" outside one
                     anchors=AnchorFrame(
                         channel="ward_room",
                         channel_id=channel_id,

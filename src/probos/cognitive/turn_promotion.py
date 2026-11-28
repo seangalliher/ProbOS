@@ -74,7 +74,12 @@ from types import CoroutineType
 from typing import Any, Awaitable, Callable, ClassVar, Protocol, runtime_checkable
 
 from probos.cognitive.dm.bypass_egress import compose_bypass_reply
-from probos.cognitive.promoted_report_delivery import promoted_report_metadata
+from probos.cognitive.promoted_report_delivery import (
+    PROMOTED_REPORT_BODY_MAX_BYTES,
+    bound_promoted_report_body,
+    promoted_report_metadata,
+)
+from probos.cycle_trace import is_cycle_registry  # AD-1360 (#1828)
 from probos.tools.executor import recording_identity, sample_recording_identity
 
 logger = logging.getLogger(__name__)
@@ -366,6 +371,10 @@ class ReportDelivery:
     delivered or not: AD-1248 renders once per route and reuses that text for
     the episode and the outcome artifact, which must not change because the
     thread post failed.
+
+    BF-955: above ``PROMOTED_REPORT_BODY_MAX_BYTES`` the thread and the outbox
+    carry ``bound_promoted_report_body``'s cut of this text; ``body`` stays the
+    full text.
     """
 
     body: str
@@ -984,6 +993,18 @@ async def _store_outcome_artifact(
     }
 
 
+def _register_promoted_work_item(runtime: Any, work_item_id: object) -> None:
+    """AD-1360 (#1828): adopt a promoted run's work-item id into the runtime's cycle-id registry.
+
+    BF-740 pairs the run's outcome episode by ``correlation_id`` = the work item, not a cycle id; registered here, when
+    the item is made and again on each resume (a restart forgets every id), it resolves when that episode is stored.
+    Nothing is registered without a real ``CycleIdRegistry`` on the runtime (not a spec'd mock) or for a blank id.
+    """
+    registry = getattr(runtime, "cycle_registry", None)
+    if is_cycle_registry(registry) and type(work_item_id) is str and work_item_id.strip():
+        registry.register(work_item_id, kind="work_item")
+
+
 async def _create_promoted_work_item(
     *,
     runtime: Any,
@@ -1025,6 +1046,7 @@ async def _create_promoted_work_item(
         return None
     if item is None:
         return None
+    _register_promoted_work_item(runtime, getattr(item, "id", ""))  # AD-1360 (#1828)
     # ``task`` starts ``open``; the run is already executing, so the board must
     # say so. ``open -> in_progress`` requires an assignee, which is set above.
     try:
@@ -1126,6 +1148,11 @@ async def _post_report(
     ``body`` field of every outcome, because this route has two Captain-visible
     sinks -- this thread post and the outcome artifact -- and composing twice is
     how one of them ends up with a different story. Render once per route, reuse.
+
+    BF-955: the text every attempt posts and every queue path stores is bounded
+    once, before the first attempt, to what the outbox accepts, so a replay
+    posts what the first attempt posted. The returned ``body`` is the full
+    composed text.
     """
     from probos.dm_reply import DmReply, ToolFailures
 
@@ -1139,6 +1166,7 @@ async def _post_report(
             work_item_id, type(tool_failures).__name__,
         )
         tool_failures = None
+    prose = body  # BF-955: the agent's text, before the render appends a tool-failure disclosure
     try:
         body = str(DmReply(
             body=body,
@@ -1158,6 +1186,26 @@ async def _post_report(
             work_item_id, _shorten(body, 400),
         )
         return ReportDelivery(body=body, delivered=False, reason="no_store")
+
+    # BF-955: the outbox refuses a body over PROMOTED_REPORT_BODY_MAX_BYTES when
+    # it writes a row and when the drain reads one, and the thread store sets no
+    # limit. So the text is bounded once, here, before the first attempt: every
+    # attempt, the cancellation queue and the exhausted queue carry ``posted``,
+    # and a replay posts what the first attempt posted. ``body`` stays the full
+    # composed text, which the caller reuses for the episode and the artifact.
+    tail = body[len(prose):] if body.startswith(prose) else ""
+    bounded = bound_promoted_report_body(body, keep_tail=tail)
+    posted = bounded.text
+    if bounded.cut_chars:
+        logger.warning(
+            "BF-955: the report for work item %s is %d characters, over the "
+            "%d-byte delivery limit in UTF-8. Before the first attempt, %d "
+            "characters (%d bytes) were cut from the end of its text, ahead of "
+            "any tool-failure disclosure; the thread, every retry and the "
+            "outbox carry the same cut text",
+            work_item_id, len(body), PROMOTED_REPORT_BODY_MAX_BYTES,
+            bounded.cut_chars, bounded.cut_bytes,
+        )
 
     # Minted ONCE, reused by every attempt and by any outbox redelivery. This
     # is what makes an at-least-once retry an exactly-once delivery.
@@ -1195,7 +1243,7 @@ async def _post_report(
                     work_item_id=work_item_id,
                     thread_id=thread_id,
                     agent_id=agent_id,
-                    body=body,
+                    body=posted,  # BF-955: the cancelled turn queues the text the attempts post
                     created_at=created_at,
                     tool_trace_ref=tool_trace_ref,
                 ),
@@ -1217,7 +1265,7 @@ async def _post_report(
                 thread_id=thread_id,
                 message_id=message_id,
                 agent_id=agent_id,
-                body=body,
+                body=posted,  # BF-955: every attempt posts the bounded text
                 created_at=created_at,
                 work_item_id=work_item_id,
                 tool_trace_ref=tool_trace_ref,
@@ -1299,7 +1347,7 @@ async def _post_report(
         work_item_id=work_item_id,
         thread_id=thread_id,
         agent_id=agent_id,
-        body=body,
+        body=posted,  # BF-955: the outbox row carries the text the attempts posted
         created_at=created_at,
         tool_trace_ref=tool_trace_ref,
     )
@@ -2905,6 +2953,7 @@ async def resume_promoted_turn(runtime: Any, item: Any, request_id: str) -> str:
     item = await _resumed_item_now(runtime, item, work_item_id, request_id)
     if item is None:
         return RESUME_MOVED_ON
+    _register_promoted_work_item(runtime, work_item_id)  # AD-1360 (#1828): again on resume; a restart forgot it
     agent_id = str(getattr(item, "assigned_to", "") or "")
     metadata = getattr(item, "metadata", None)
     if type(metadata) is not dict:

@@ -13,9 +13,7 @@ import asyncio
 import io
 import os
 import sqlite3
-import stat
 import sys
-import types
 from argparse import Namespace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -34,6 +32,7 @@ from probos.knowledge import records_snapshot
 from probos.knowledge.archive_store import ArchiveStore
 from probos.knowledge.nature_description import PROCEDURES_DB, describe_nature
 from probos.storage.sqlite_factory import default_factory
+from tests.posix_stat import _posix_stat
 
 _SRC = Path(probos.__file__).resolve().parent
 _SHIP = "ship-did-alpha-0001"
@@ -460,18 +459,6 @@ def test_a_refused_dry_run_reads_nothing_through_the_procedures_link(
     assert "This reset would refuse" in out and "is a link" in out
     assert "Coolant drift triage" not in out  # none of the target's text
     assert not _archive_db(tmp_path).exists()
-
-
-def _posix_stat() -> Any:
-    """A POSIX build's ``stat`` module, stricter: no ``IO_REPARSE_TAG_*`` (Windows-only) and no ``FILE_ATTRIBUTE_*``.
-
-    A5: ``Lib/stat.py`` defines the 17 ``FILE_ATTRIBUTE_*`` constants on every platform; they are removed here too,
-    and no S6 module reads either set, so no result depends on the difference (A4).
-    Swapped in for ``records_snapshot.stat`` only, never deleted from the interpreter's ``stat``."""
-    return types.SimpleNamespace(**{
-        name: value for name, value in vars(stat).items()
-        if not name.startswith(("_", "IO_REPARSE_TAG_", "FILE_ATTRIBUTE_"))
-    })
 
 
 def test_a_clean_slate_needs_no_windows_only_name(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

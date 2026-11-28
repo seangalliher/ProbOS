@@ -31,7 +31,7 @@ from probos.cognitive.agentic_dispatch import (
     WorkItemAgenticOutcome,
 )
 from probos.tools.permissions import ToolPermissionStore
-from probos.tools.protocol import ToolResult, ToolType
+from probos.tools.protocol import ToolPermission, ToolResult, ToolType
 from probos.tools.registry import ToolRegistry
 from probos.types import AgentMeta, AgentState
 
@@ -201,6 +201,7 @@ async def test_executor_run_returns_final_text_and_stopped_reason() -> None:
     tool = _FakeTool("fake_tool")
     registry.register(tool, provider="test")
     perm_store = ToolPermissionStore()
+    await perm_store.issue_grant("counselor-001", "fake_tool", ToolPermission.READ)  # #1796: the loop runs only offered tools; a dispatch run offers its granted tools.
     gap_driver = _FakeGapDriver()
     llm = _ScriptedLLM(
         [
@@ -238,6 +239,7 @@ async def test_executor_run_captures_denied_tools() -> None:
     )
     perm_store = ToolPermissionStore()
     registry.set_permission_store(perm_store)
+    await perm_store.issue_grant("counselor-001", "restricted_tool", ToolPermission.NONE)  # #1796: the loop runs only offered tools; a grant offers it, and a NONE grant leaves the registry's rank-gate denial (this case's subject) unchanged.
     gap_driver = _FakeGapDriver()
     llm = _ScriptedLLM(
         [
@@ -270,6 +272,7 @@ async def test_executor_run_persists_tool_trace_ref_when_store_wired() -> None:
     tool = _FakeTool("fake_tool")
     registry.register(tool, provider="test")
     perm_store = ToolPermissionStore()
+    await perm_store.issue_grant("counselor-001", "fake_tool", ToolPermission.READ)  # #1796: the loop runs only offered tools; a dispatch run offers its granted tools.
     gap_driver = _FakeGapDriver()
     store = _RecordingAttachmentStore()
     llm = _ScriptedLLM(
@@ -313,6 +316,7 @@ async def test_executor_run_tool_trace_ref_none_when_store_unwired() -> None:
     tool = _FakeTool("fake_tool")
     registry.register(tool, provider="test")
     perm_store = ToolPermissionStore()
+    await perm_store.issue_grant("counselor-001", "fake_tool", ToolPermission.READ)  # #1796: the loop runs only offered tools; a dispatch run offers its granted tools.
     gap_driver = _FakeGapDriver()
     llm = _ScriptedLLM(
         [
@@ -348,6 +352,7 @@ async def test_run_agentic_dispatch_returns_str_after_refactor() -> None:
     tool = _FakeTool("fake_tool")
     registry.register(tool, provider="test")
     perm_store = ToolPermissionStore()
+    await perm_store.issue_grant("counselor-001", "fake_tool", ToolPermission.READ)  # #1796: the loop runs only offered tools; a dispatch run offers its granted tools.
     gap_driver = _FakeGapDriver()
     llm = _ScriptedLLM(
         [
@@ -397,6 +402,7 @@ async def test_run_agentic_dispatch_surfaces_gaps_after_refactor() -> None:
     )
     perm_store = ToolPermissionStore()
     registry.set_permission_store(perm_store)
+    await perm_store.issue_grant("counselor-001", "restricted_tool", ToolPermission.NONE)  # #1796: the loop runs only offered tools; a grant offers it, and a NONE grant leaves the registry's rank-gate denial (this case's subject) unchanged.
     gap_driver = _FakeGapDriver()
     llm = _ScriptedLLM(
         [

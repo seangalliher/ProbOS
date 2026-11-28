@@ -180,8 +180,17 @@ export function NotificationCard({ notification }: { notification: NotificationV
       setMessage('Context unavailable: this room has no usable current host or matching session.');
       return;
     }
+    // #1414 item 14: a read the live fence refuses, with no session cached for the parent, would
+    // open a room with no session band yet. The room tries focus once, finds no band and returns;
+    // a band mounted later by the panel's own read is never focused and the request stays pending.
+    // Open nothing.
+    if (!current.hydrateCrewSession(session.task_id, session, issuedAt)
+      && !useStore.getState().crewSessionsByParent.has(session.task_id)) {
+      cancel();
+      setMessage('Context unavailable: the room changed while it was loading. Retry to check again.');
+      return;
+    }
     current.setChatThread(thread);
-    current.hydrateCrewSession(session.task_id, session, issuedAt);
     current.openGroupChatThread(hostId, thread.id);
     current.setNotificationNavigation({
       requestId, generation,

@@ -73,6 +73,7 @@ from probos.cognitive.swe_harness.tools import (
     SourceToolResult,
     WorkspaceSliceToolResult,
     register_native_swe_tools,
+    with_slice_note,
 )
 from probos.execution.workspace import WorkspaceManager
 from probos.execution.workspace_result_store import WorkspaceResultStore
@@ -107,6 +108,7 @@ from probos.tools.work_item_pull_tool import ClaimWorkItemTool, DiscoverWorkItem
 from probos.tools.work_item_steps_tool import OwnedStepsViewResult
 from probos.types import LLMRequest, LLMResponse
 from probos.workforce import BookableResource, Booking, ReadyWorkPage, WorkItem
+from tests.offered_tools import offer  # #1796: the loop runs only offered tools.
 from tests.test_ad1147_parallel_tools import _RecordingEmit
 from tests.test_ad1192_owned_steps_dm import (  # noqa: F401  (the AD-1192 owned-steps rig and its helpers)
     _page_frame,
@@ -1314,7 +1316,10 @@ async def test_armed_fresh_read_returns_the_native_content_with_a_verified_refer
     armed = await _invoke(executor, reader, params, context, read=read)
     assert isinstance(native, ToolResult) and not isinstance(native, _SOURCE_RESULTS)
     assert isinstance(armed, _SOURCE_RESULTS)
-    assert armed.output == native.output  # universal newlines, slicing and the trailing newline
+    # AD-1361 (#1743 item 1): a sliced read_file states the whole. The plain path puts the note in its text; the
+    # verified path carries it beside its text, and AD-1240's delivery shows it, so the text stays the slice.
+    assert bool(armed.slice_note) == (reader == "read_file" and bool(arguments))
+    assert native.output == with_slice_note(armed.output, armed.slice_note)  # universal newlines, slicing, trailing newline
     reference = armed.source_reference
     assert reference.path == str(path) and reference.whole == (not arguments)
     assert reference.raw_sha256 == hashlib.sha256(raw_bytes).hexdigest() and reference.total_lines == 4
@@ -1601,7 +1606,11 @@ async def test_same_named_directory_outside_the_workspace_keeps_ordinary_line_se
     path.write_bytes(b"first\r\nsecond\r\nthird\r\n")
     raw = await _invoke(executor, "read_file", {"path": str(path), "offset": 1, "limit": 1}, context)
     assert isinstance(raw, ToolResult) and not isinstance(raw, _SOURCE_RESULTS)
-    assert raw.error is None and raw.output == "second"
+    # AD-1361 (#1743 item 1): the plain path's slice is followed by the note naming the whole.
+    assert raw.error is None and raw.output == (
+        "second\n\n[read_file slice: lines 1 to 2 of 3, counted from 0 (offset=1, limit=1). "
+        "More follows: call read_file again with the same path and offset=2 to read on.]"
+    )
 
 
 # --- delivery admission: the preview path and the work-pull receipt ---------
@@ -2009,7 +2018,7 @@ async def test_original_source_no_copy_full_loop_recovers_through_real_reader(
     before = {str(item.relative_to(tmp_path)): item.read_bytes() for item in tmp_path.rglob("*") if item.is_file()}
     async with _started(runtime):
         result = await loop.run(
-            system_prompt="fixture", user_message="read source", tools=[], context=context,
+            system_prompt="fixture", user_message="read source", tools=[*offer(reader)], context=context,  # #1796: the loop runs only offered tools, so the scripted call's tool is offered.
         )
         assert result.stopped_reason == "complete" and len(llm.readbacks) == 2
         assert result_delivery(result.tool_results[0]).status == "source"
@@ -2040,7 +2049,7 @@ async def test_no_unusable_pointer_for_tiny_cap_or_insufficient_iterations(
         tool_result_max_chars=cap, workspace_results=runtime.workspace_results,
     )
     async with _started(runtime):
-        result = await loop.run(system_prompt="", user_message="", tools=[], context=context)
+        result = await loop.run(system_prompt="", user_message="", tools=[*offer("fixture_result")], context=context)  # #1796: the loop runs only offered tools, so the scripted call's tool is offered.
         assert result.stopped_reason == "error" and result.error == code
         assert 0 < len(result.final_text) <= min(cap, 128)
         assert result.tool_results[0].is_error is False
@@ -2065,7 +2074,7 @@ async def test_unavailable_owner_is_armed_but_small_outputs_remain_legacy(
             tool_result_max_chars=6000, structured_tool_messages=structured,
         )
         loop.workspace_results = UnavailableWorkspaceResults()
-        result = await loop.run(system_prompt="", user_message="", tools=[], context=context)
+        result = await loop.run(system_prompt="", user_message="", tools=[*offer("fixture_result")], context=context)  # #1796: the loop runs only offered tools, so the scripted call's tool is offered.
         assert result.stopped_reason == expected
         if expected == "error":
             assert result.error == "workspace_unavailable" and len(llm.requests) == 1
@@ -2106,7 +2115,7 @@ async def test_source_promise_changed_refuses_then_next_top_level_is_fresh(
         structured_tool_messages=structured, workspace_results=runtime.workspace_results,
     )
     async with _started(runtime):
-        result = await loop.run(system_prompt="", user_message="", tools=[], context=context)
+        result = await loop.run(system_prompt="", user_message="", tools=[*offer(reader)], context=context)  # #1796: the loop runs only offered tools, so the scripted call's tool is offered.
         assert result.stopped_reason == "error" and result.error == "source_changed"
         assert len(result.tool_calls) == 2 and len(llm.requests) == 2
         assert "changedline" not in result.final_text
@@ -2118,7 +2127,7 @@ async def test_source_promise_changed_refuses_then_next_top_level_is_fresh(
             tool_result_max_chars=6000, structured_tool_messages=structured,
             workspace_results=runtime.workspace_results,
         )
-        fresh = await next_loop.run(system_prompt="", user_message="", tools=[], context=context)
+        fresh = await next_loop.run(system_prompt="", user_message="", tools=[*offer("read_file")], context=context)  # #1796: the loop runs only offered tools, so the scripted call's tool is offered.
         assert fresh.stopped_reason == "complete"
         assert _last_result(next_llm.requests[-1]) == "fresh new turn\n"
 
@@ -2145,8 +2154,13 @@ async def test_explicit_recovery_after_scope_exit_refuses_plaintext(tmp_path: Pa
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("reader,arguments,expected", [
-    ("read_file", {"offset": -2, "limit": 1}, "c"),
-    ("read_file", {"offset": 1, "limit": 0}, ""),
+    # AD-1361 (#1743 item 1): the model is shown a sliced read_file's note after the slice (the range actually
+    # returned, of the 4 lines); an empty range is the note alone; a whole read is unchanged.
+    ("read_file", {"offset": -2, "limit": 1}, (
+        "c\n\n[read_file slice: lines 2 to 3 of 4, counted from 0 (offset=2, limit=1). "
+        "More follows: call read_file again with the same path and offset=3 to read on.]"
+    )),
+    ("read_file", {"offset": 1, "limit": 0}, "[read_file slice: no lines in this range. The file has 4 lines, counted from 0.]"),
     ("read_file", {}, "a\nb\nc\nd\n"),
     ("codebase_read_source", {"start_line": 2, "end_line": 3}, "b\nc"),
     ("codebase_read_source", {"start_line": -4, "end_line": -1}, "a\nb\nc"),
@@ -2163,7 +2177,7 @@ async def test_armed_original_reader_preserves_ordinary_line_ranges(
         llm_client=llm, tool_executor=executor, max_iterations=3,
         workspace_results=runtime.workspace_results,
     )
-    result = await loop.run(system_prompt="", user_message="", tools=[], context=context)
+    result = await loop.run(system_prompt="", user_message="", tools=[*offer(reader)], context=context)  # #1796: the loop runs only offered tools, so the scripted call's tool is offered.
     assert result.stopped_reason == "complete"
     assert _last_result(llm.requests[-1]) == expected
     assert not runtime.workspace_results.root.exists()
@@ -2179,7 +2193,7 @@ async def test_original_single_overlarge_line_reports_unrecoverable_window(tmp_p
         llm_client=llm, tool_executor=executor, max_iterations=4,
         tool_result_max_chars=6000, workspace_results=runtime.workspace_results,
     )
-    result = await loop.run(system_prompt="", user_message="", tools=[], context=context)
+    result = await loop.run(system_prompt="", user_message="", tools=[*offer("read_file")], context=context)  # #1796: the loop runs only offered tools, so the scripted call's tool is offered.
     assert result.stopped_reason == "error" and result.error == "source_line_too_large"
     assert not runtime.workspace_results.root.exists()
 
@@ -2211,7 +2225,7 @@ async def test_reader_offer_refresh_and_compaction_preserve_whole_recovery_group
         workspace_results=runtime.workspace_results,
     )
     async with _started(runtime):
-        result = await loop.run(system_prompt="", user_message="", tools=[], context=context)
+        result = await loop.run(system_prompt="", user_message="", tools=[tool_registration_to_llm_definition(registration)], context=context)  # #1796: the loop runs only offered tools, so the scripted call's tool is offered.
         assert result.stopped_reason == "complete" and compactor.calls == 4
         assert len(llm.readbacks) == 2
         assert all(any(tool["function"]["name"] == "read_file" for tool in request.tools)
@@ -2252,7 +2266,7 @@ async def test_current_reader_authority_required_without_widening(
         workspace_results=runtime.workspace_results,
     )
     async with _started(runtime):
-        result = await loop.run(system_prompt="", user_message="", tools=[], context=context)
+        result = await loop.run(system_prompt="", user_message="", tools=[*offer("fixture_result")], context=context)  # #1796: the loop runs only offered tools, so the scripted call's tool is offered.
         assert result.stopped_reason == "error"
         assert result.error == ("reader_locked" if denial == "loto" else "reader_unavailable")
         assert raw.calls == 1 and len(llm.requests) == 1
@@ -2281,7 +2295,7 @@ async def test_parallel_delivery_failure_drains_request_order_preserves_producer
         parallel_tool_calls_enabled=True, workspace_results=UnavailableWorkspaceResults(),
         event_emit_fn=lambda event, payload: events.append((event, payload)),
     )
-    result = await loop.run(system_prompt="", user_message="", tools=[], context=context)
+    result = await loop.run(system_prompt="", user_message="", tools=[*offer("codebase_query", "codebase_find_tests")], context=context)  # #1796: the loop runs only offered tools, so the scripted call's tool is offered.
     assert result.stopped_reason == "error" and result.error == "workspace_unavailable"
     assert [item.id for item in result.tool_results] == ["first", "second"]
     assert [item.is_error for item in result.tool_results] == [True, False]
@@ -2316,7 +2330,7 @@ async def test_delegation_body_only_offloaded_evidence_stays_exact(tmp_path: Pat
         structured_tool_messages=structured, workspace_results=runtime.workspace_results,
     )
     async with _started(runtime):
-        result = await loop.run(system_prompt="", user_message="", tools=[], context=context)
+        result = await loop.run(system_prompt="", user_message="", tools=[*offer("fixture_result")], context=context)  # #1796: the loop runs only offered tools, so the scripted call's tool is offered.
         assert result.stopped_reason == "complete"
         original = result.tool_results[0]
         assert isinstance(original, DelegatedToolCallResult) and original.evidence is evidence
@@ -2340,7 +2354,7 @@ async def test_original_source_instructions_reach_next_request_not_workspace_gui
         llm_client=llm, tool_executor=executor, max_iterations=4,
         tool_result_max_chars=6000, workspace_results=runtime.workspace_results,
     )
-    result = await loop.run(system_prompt="base", user_message="", tools=[], context=context)
+    result = await loop.run(system_prompt="base", user_message="", tools=[*offer("read_file")], context=context)  # #1796: the loop runs only offered tools, so the scripted call's tool is offered.
     assert result.stopped_reason == "complete"
     assert "ORIGINAL_GUIDANCE" in llm.requests[1].system_prompt
     assert str(runtime.workspace_results.root) not in llm.requests[1].system_prompt
@@ -2376,7 +2390,7 @@ async def test_real_work_pull_receipt_armed_loop_preserves_preadmission_and_inli
             tool_result_max_chars=cap, structured_tool_messages=structured,
             workspace_results=UnavailableWorkspaceResults(),
         )
-        result = await loop.run(system_prompt="", user_message="", tools=[], context=context)
+        result = await loop.run(system_prompt="", user_message="", tools=[*offer("claim_work_item")], context=context)  # #1796: the loop runs only offered tools, so the scripted call's tool is offered.
         assert result.stopped_reason == "complete"
         stored = await store.get_work_item(item.id)
         if cap == 1:
@@ -2489,7 +2503,7 @@ async def test_shared_loop_concurrent_runs_isolate_source_promises(tmp_path: Pat
         workspace_results=runtime.workspace_results,
     )
     first, second = await asyncio.gather(*(
-        loop.run(system_prompt=label, user_message="", tools=[], context=context)
+        loop.run(system_prompt=label, user_message="", tools=[*offer("read_file")], context=context)  # #1796: the loop runs only offered tools, so the scripted call's tool is offered.
         for label in ("first", "second")
     ))
     assert first.stopped_reason == second.stopped_reason == "complete"
@@ -2526,7 +2540,7 @@ async def test_armed_below_threshold_requests_and_results_are_byte_identical(
                 workspace_results=owner,
             )
             assert (loop.workspace_results is not None) == (owner is not None)  # premise: really armed
-            result = await loop.run(system_prompt="", user_message="", tools=[], context=context)
+            result = await loop.run(system_prompt="", user_message="", tools=[*offer("fixture_result")], context=context)  # #1796: the loop runs only offered tools, so the scripted call's tool is offered.
             assert result.stopped_reason == "complete"
             observations.append({
                 "requests": [asdict(request) for request in llm.requests],
@@ -2573,7 +2587,7 @@ async def test_armed_capture_failures_are_truthful_without_retry_or_publication(
         llm_client=llm, tool_executor=executor, max_iterations=4, tool_result_max_chars=6000,
         workspace_results=runtime.workspace_results,
     )
-    result = await loop.run(system_prompt="", user_message="", tools=[], context=context)
+    result = await loop.run(system_prompt="", user_message="", tools=[*offer("fixture_result")], context=context)  # #1796: the loop runs only offered tools, so the scripted call's tool is offered.
     assert result.stopped_reason == "error" and result.error == code
     assert result.tool_results[0].is_error is False and raw.calls == 1
     assert len(result.final_text) <= 128 and result.final_text
@@ -2608,7 +2622,7 @@ async def test_raised_producer_error_retained_recoverable_and_not_logged(
         structured_tool_messages=structured, workspace_results=runtime.workspace_results,
     )
     async with _started(runtime):
-        result = await loop.run(system_prompt="", user_message="", tools=[], context=context)
+        result = await loop.run(system_prompt="", user_message="", tools=[*offer("fixture_result")], context=context)  # #1796: the loop runs only offered tools, so the scripted call's tool is offered.
         assert result.stopped_reason == "complete" and raw.calls == 1
         assert result.tool_results[0].is_error is True and result.tool_results[0].output == canonical
         assert "Producer outcome: error." in _last_result(llm.requests[1])
@@ -2636,7 +2650,7 @@ async def test_source_recovery_over_canonical_ceiling_refuses_even_with_unbounde
         llm_client=llm, tool_executor=executor, max_iterations=3, tool_result_max_chars=0,
         workspace_results=runtime.workspace_results,
     )
-    result = await loop.run(system_prompt="", user_message="", tools=[], context=context)
+    result = await loop.run(system_prompt="", user_message="", tools=[*offer("codebase_read_source")], context=context)  # #1796: the loop runs only offered tools, so the scripted call's tool is offered.
     assert result.stopped_reason == "error" and result.error == "capture_limit"
     assert len(llm.requests) == 2 and result.tool_results[-1].is_error is False
     assert not runtime.workspace_results.root.exists()
@@ -2692,7 +2706,7 @@ async def test_available_delegation_small_cap_refuses_without_losing_evidence(
         workspace_results=runtime.workspace_results,
     )
     async with _started(runtime):
-        result = await loop.run(system_prompt="", user_message="", tools=[], context=context)
+        result = await loop.run(system_prompt="", user_message="", tools=[*offer("fixture_result")], context=context)  # #1796: the loop runs only offered tools, so the scripted call's tool is offered.
         assert result.stopped_reason == "error" and result.error == "delivery_frame_too_large"
         delivered = result.tool_results[0]
         assert isinstance(delivered, DelegatedToolCallResult) and delivered.evidence is evidence
@@ -2730,7 +2744,11 @@ async def test_owned_recovery_refuses_unconsumable_slice_without_recursive_offlo
                 assert name == "read_file"
                 self.arguments["limit"] = 13000 if case == "oversized_slice" else 1
                 return _turn(name, _call_id="read-2", **self.arguments)
-            assert case == "last_iteration" and number == 3
+            assert number == 3
+            if case == "oversized_slice":
+                # BF-946 M5: the slice over the bound came back as the bounded recovery_slice_too_large error.
+                assert _last_result(request).startswith("Result delivery failed (recovery_slice_too_large).")
+                return _done()
             assert _last_result(request) == body[:1]
             return _turn("read_file", _call_id="read-3", **self.arguments)
 
@@ -2741,14 +2759,18 @@ async def test_owned_recovery_refuses_unconsumable_slice_without_recursive_offlo
         workspace_results=runtime.workspace_results,
     )
     async with _started(runtime):
-        result = await loop.run(system_prompt="", user_message="", tools=[], context=context)
-        expected = "delivery_frame_too_large" if case == "oversized_slice" else "recovery_iterations_unavailable"
-        assert result.stopped_reason == "error" and result.error == expected
+        result = await loop.run(system_prompt="", user_message="", tools=[*offer("fixture_result")], context=context)  # #1796: the loop runs only offered tools, so the scripted call's tool is offered.
+        expected = "recovery_slice_too_large" if case == "oversized_slice" else "recovery_iterations_unavailable"
         assert result_delivery(result.tool_results[-1]).code == expected
+        if case == "oversized_slice":
+            # BF-946 M5: the promise holds, so the run went on and ended when the model answered.
+            assert result.stopped_reason == "complete" and len(result.tool_calls) == len(llm.requests) - 1
+        else:
+            assert result.stopped_reason == "error" and result.error == expected
+            assert len(result.tool_calls) == len(llm.requests)
         assert all(not item.is_error for item in result.tool_results)
         assert result.tool_results[-1].output == body[:llm.arguments["limit"]]
-        assert len(llm.requests) == (2 if case == "oversized_slice" else 3)
-        assert len(result.tool_calls) == len(llm.requests) and raw.calls == 1
+        assert len(llm.requests) == 3 and raw.calls == 1
         assert _artifact_count(runtime) == 1
 
 
@@ -2779,7 +2801,7 @@ async def test_large_source_subrange_recovers_exact_original_lines_without_copy(
         workspace_results=runtime.workspace_results,
     )
     async with _started(runtime):
-        result = await loop.run(system_prompt="", user_message="", tools=[], context=context)
+        result = await loop.run(system_prompt="", user_message="", tools=[*offer(reader)], context=context)  # #1796: the loop runs only offered tools, so the scripted call's tool is offered.
         assert result.stopped_reason == "complete" and len(llm.readbacks) == 2
         delivered = result.tool_results[0]
         assert delivered.output == selected
@@ -2824,7 +2846,7 @@ async def test_storage_failure_preserves_producer_without_logging_backend_detail
         workspace_results=owner,
     )
     async with _started(runtime):
-        result = await loop.run(system_prompt="", user_message="", tools=[], context=context)
+        result = await loop.run(system_prompt="", user_message="", tools=[*offer("fixture_result")], context=context)  # #1796: the loop runs only offered tools, so the scripted call's tool is offered.
         code = "workspace_write_failed" if typed else "delivery_unavailable"
         assert result.stopped_reason == "error" and result.error == code
         assert result.tool_results[0].output == body and result.tool_results[0].is_error is False
@@ -2851,7 +2873,7 @@ async def test_error_outcome_frame_too_small_keeps_error_identity(
         workspace_results=runtime.workspace_results,
     )
     async with _started(runtime):
-        result = await loop.run(system_prompt="", user_message="", tools=[], context=context)
+        result = await loop.run(system_prompt="", user_message="", tools=[*offer("fixture_result")], context=context)  # #1796: the loop runs only offered tools, so the scripted call's tool is offered.
         assert result.stopped_reason == "error" and result.error == "delivery_frame_too_large"
         assert result.final_text == "!"
         assert result.tool_results[0].output == error and result.tool_results[0].is_error is True
@@ -2877,7 +2899,7 @@ async def test_strict_offload_threshold_uses_canonical_utf8_bytes(
         workspace_results=runtime.workspace_results,
     )
     async with _started(runtime):
-        result = await loop.run(system_prompt="", user_message="", tools=[], context=context)
+        result = await loop.run(system_prompt="", user_message="", tools=[*offer("fixture_result")], context=context)  # #1796: the loop runs only offered tools, so the scripted call's tool is offered.
         assert result.stopped_reason == "complete" and raw.calls == 1
         delivery = result_delivery(result.tool_results[0])
         if size > 12288:
@@ -3061,7 +3083,7 @@ async def _run_promised_alias(
         structured_tool_messages=structured, workspace_results=runtime.workspace_results,
     )
     async with _started(runtime):
-        result = await loop.run(system_prompt="", user_message="", tools=[], context=context)
+        result = await loop.run(system_prompt="", user_message="", tools=[*offer("read_file")], context=context)  # #1796: the loop runs only offered tools, so the scripted call's tool is offered.
     return result, observed
 
 
@@ -3210,7 +3232,7 @@ async def test_fresh_read_error_loop_contract_is_unchanged_by_arming(
                 llm_client=llm, tool_executor=executor, max_iterations=4,
                 structured_tool_messages=structured,
                 workspace_results=runtime.workspace_results if armed else None,
-            ).run(system_prompt="", user_message="", tools=[], context=context)
+            ).run(system_prompt="", user_message="", tools=[*offer(reader)], context=context)  # #1796: the loop runs only offered tools, so the scripted call's tool is offered.
             assert result.stopped_reason == "complete" and result.error == ""
             assert len(llm.requests) == 2 and not llm.responses  # the correction round is consumed
             assert len(result.tool_results) == 1 and result.tool_results[0].is_error
@@ -3288,7 +3310,7 @@ async def test_r1_fresh_native_error_preserves_observer_and_consumes_correction_
         llm_client=llm, tool_executor=executor, max_iterations=3,
         structured_tool_messages=structured,
         workspace_results=runtime.workspace_results if armed else None,
-    ).run(system_prompt="", user_message="", tools=[], context=context)
+    ).run(system_prompt="", user_message="", tools=[*offer(reader)], context=context)  # #1796: the loop runs only offered tools, so the scripted call's tool is offered.
     assert result.stopped_reason == "complete" and result.error == "" and not llm.responses
     assert len(llm.requests) == 3 and len(observations) == len(result.tool_results) == 2
     failed = observations[0]
@@ -3380,7 +3402,7 @@ async def test_r1_worked_source_call_keeps_lexical_promise_before_target_access(
                 llm_client=llm, tool_executor=executor, max_iterations=4,
                 structured_tool_messages=structured, workspace_results=owner,
             )
-            result = await loop.run(system_prompt="", user_message="", tools=[], context=context)
+            result = await loop.run(system_prompt="", user_message="", tools=[*offer(reader)], context=context)  # #1796: the loop runs only offered tools, so the scripted call's tool is offered.
             assert result.stopped_reason == "error" and result.error == "source_changed"
             assert len(llm.requests) == 2 and len(observed) == 2
             assert isinstance(observed[0], _SOURCE_RESULTS)
@@ -3397,12 +3419,14 @@ async def test_r1_worked_source_call_keeps_lexical_promise_before_target_access(
             fresh = await AgenticLoop(
                 llm_client=fresh_llm, tool_executor=executor, max_iterations=3,
                 structured_tool_messages=structured, workspace_results=owner,
-            ).run(system_prompt="", user_message="", tools=[], context=context)
+            ).run(system_prompt="", user_message="", tools=[*offer("read_file")], context=context)  # #1796: the loop runs only offered tools, so the scripted call's tool is offered.
             assert fresh.stopped_reason == "complete" and not fresh_llm.responses
             expected = "REPLACEMENT_PAYLOAD" if change == "physical" else canonical.splitlines()[0]
-            assert _last_result(fresh_llm.requests[-1]) == expected
             assert isinstance(observed[-1], _SOURCE_RESULTS)
             assert observed[-1].recovery is False
+            # AD-1361 (#1743 item 1): the fresh sliced read keeps its text and is shown with the note naming the whole.
+            assert observed[-1].output == expected and observed[-1].slice_note.startswith("[read_file slice: lines 0 to 1 of ")
+            assert _last_result(fresh_llm.requests[-1]) == with_slice_note(expected, observed[-1].slice_note)
     finally:
         if change == "physical":
             _unlink_alias(source_dir)
@@ -3482,7 +3506,7 @@ async def test_r1_promised_native_read_errors_remain_delivery_refusals_without_f
     result = await AgenticLoop(
         llm_client=llm, tool_executor=executor, max_iterations=4,
         structured_tool_messages=structured, workspace_results=runtime.workspace_results,
-    ).run(system_prompt="", user_message="", tools=[], context=context)
+    ).run(system_prompt="", user_message="", tools=[*offer(reader)], context=context)  # #1796: the loop runs only offered tools, so the scripted call's tool is offered.
     assert result.stopped_reason == "error" and result.error == "source_changed"
     assert len(llm.requests) == 2 and len(observed) == 2
     assert type(observed[1]) is RecoveryFailureToolResult and observed[1].output is None
@@ -3567,7 +3591,7 @@ async def test_promise_survives_authority_loss_through_the_loop(
         event_emit_fn=emit, inner_loop_hook=hook, workspace_results=runtime.workspace_results,
     )
     async with _started(runtime):
-        result = await loop.run(system_prompt="", user_message="", tools=[], context=context)
+        result = await loop.run(system_prompt="", user_message="", tools=[*offer("read_file", "event_log_query")], context=context)  # #1796: the loop runs only offered tools, so the scripted call's tool is offered.
     assert emitted and set(emitted) == {"path", "offset", "limit"}  # premise: the call was emitted before the loss
     assert result.stopped_reason == "error" and result.error == "reference_unavailable"
     assert result.final_text == "Result delivery failed (reference_unavailable)."
@@ -3621,7 +3645,7 @@ async def test_refused_only_group_makes_no_hook_call_and_still_closes_the_run(
         workspace_results=runtime.workspace_results,
     )
     async with _started(runtime):
-        result = await loop.run(system_prompt="", user_message="", tools=[], context=context)
+        result = await loop.run(system_prompt="", user_message="", tools=[*offer("read_file")], context=context)  # #1796: the loop runs only offered tools, so the scripted call's tool is offered.
     assert result.stopped_reason == "error" and result.error == "reference_unavailable"
     assert [call.id for call in result.tool_calls] == ["fixture-call", "recovery"]
     assert [item.id for item in result.tool_results] == ["fixture-call"]  # the refusal is not an outcome
@@ -3679,7 +3703,7 @@ async def test_tier_steps_observe_only_the_outcomes_of_a_refused_group(
         workspace_results=runtime.workspace_results,
     )
     async with _started(runtime):
-        result = await loop.run(system_prompt="", user_message="", tools=[], context=context)
+        result = await loop.run(system_prompt="", user_message="", tools=[*offer("read_file", "event_log_query")], context=context)  # #1796: the loop runs only offered tools, so the scripted call's tool is offered.
     assert result.stopped_reason == "error" and result.error == "reference_unavailable"
     # The refused request is never reported to the controller; a sibling's outcome is, and a group
     # of nothing but refusals is not reported at all (an empty step is not a step).
@@ -3703,7 +3727,7 @@ async def test_offer_failure_with_an_untyped_exception_stops_with_reader_unavail
         llm_client=llm, tool_executor=executor, max_iterations=4, tool_result_max_chars=6000,
         workspace_results=runtime.workspace_results,
     )
-    result = await loop.run(system_prompt="", user_message="", tools=[], context=context)
+    result = await loop.run(system_prompt="", user_message="", tools=[*offer("read_file")], context=context)  # #1796: the loop runs only offered tools, so the scripted call's tool is offered.
     assert result_delivery(result.tool_results[0]).status == "source"  # premise: a promise was made first
     assert result.stopped_reason == "error" and result.error == "reader_unavailable"
     assert result.final_text == "Result delivery failed (reader_unavailable)."
@@ -3743,7 +3767,7 @@ async def test_terminal_failure_is_selected_by_request_order(
         structured_tool_messages=structured, workspace_results=runtime.workspace_results,
     )
     async with _started(runtime):
-        result = await loop.run(system_prompt="", user_message="", tools=[], context=context)
+        result = await loop.run(system_prompt="", user_message="", tools=[*offer("read_file", "codebase_query")], context=context)  # #1796: the loop runs only offered tools, so the scripted call's tool is offered.
     assert len(requests) == 2 and opaque.calls == 1  # both requests were issued; the failing one still ran
     assert result.stopped_reason == "error"
     # The failure that ends the run is the first one in request order.
@@ -3797,7 +3821,7 @@ async def test_delivered_results_are_never_presented_for_acknowledgement(
         workspace_results=runtime.workspace_results,
     )
     async with _started(runtime):
-        result = await loop.run(system_prompt="", user_message="", tools=[], context=context)
+        result = await loop.run(system_prompt="", user_message="", tools=[*offer("codebase_query", "codebase_find_tests")], context=context)  # #1796: the loop runs only offered tools, so the scripted call's tool is offered.
     assert result.stopped_reason == "complete" and len(llm.requests) == 4
     # Premise: the loop really offloaded the big result and really recovered a slice of it.
     assert [(item.id, getattr(result_delivery(item), "status", None)) for item in result.tool_results] == [
@@ -3966,6 +3990,7 @@ async def test_refusal_before_later_real_error_reaches_correlation(
     failing.tool_id = "codebase_query"
     runtime.tool_registry.register(failing)
     await runtime.tool_permission_store.issue_grant(_AGENT_ID, failing.tool_id, ToolPermission.READ)
+    await runtime.tool_permission_store.issue_grant(_AGENT_ID, "read_file", ToolPermission.READ)  # #1796: the loop runs only offered tools, so the scripted call's tool is offered (a dispatch run offers its granted tools).
     received: list[Any] = []
     real_correlate = dispatch_module.correlate_tool_outcomes
 
@@ -4066,7 +4091,7 @@ async def test_armed_self_query_presentation_sites_match_the_unarmed_loop(
             result = await AgenticLoop(
                 llm_client=llm, tool_executor=executor, max_iterations=3, tool_result_max_chars=6000,
                 structured_tool_messages=structured, workspace_results=owner,
-            ).run(system_prompt="", user_message="", tools=[], context=context)
+            ).run(system_prompt="", user_message="", tools=[*offer("self_query")], context=context)  # #1796: the loop runs only offered tools, so the scripted call's tool is offered.
             assert result.stopped_reason == "complete"
             observations.append((asdict(result.tool_results[0]), _last_result(llm.requests[1])))
         assert observations[0] == observations[1]  # both ``from_tool_result`` sites: armed == unarmed
@@ -4105,7 +4130,7 @@ async def test_armed_loop_refuses_a_large_result_without_the_authorized_view(
         workspace_results=runtime.workspace_results,
     )
     async with _started(runtime):
-        result = await loop.run(system_prompt="", user_message="", tools=[], context=context)
+        result = await loop.run(system_prompt="", user_message="", tools=[*offer("fixture_result")], context=context)  # #1796: the loop runs only offered tools, so the scripted call's tool is offered.
     assert result.stopped_reason == "error" and result.error == "workspace_authority_unavailable"
     assert raw.calls == len(llm.requests) == 1 and not runtime.workspace_results.root.exists()
 
@@ -4152,7 +4177,7 @@ async def test_delivery_scope_is_closed_on_every_exit(
         workspace_results=runtime.workspace_results,
     )
     async with _started(runtime):
-        task = asyncio.create_task(loop.run(system_prompt="", user_message="", tools=[], context=context))
+        task = asyncio.create_task(loop.run(system_prompt="", user_message="", tools=[*offer("read_file")], context=context))  # #1796: the loop runs only offered tools, so the scripted call's tool is offered.
         if exit_kind == "cancelled":
             await entered.wait()
             task.cancel()
@@ -4301,7 +4326,7 @@ async def test_ordinary_16k_result_with_the_owned_steps_metadata_key_still_offlo
         structured_tool_messages=structured, workspace_results=runtime.workspace_results,
     )
     async with _started(runtime):
-        result = await loop.run(system_prompt="", user_message="", tools=[], context=context)
+        result = await loop.run(system_prompt="", user_message="", tools=[*offer("fixture_result")], context=context)  # #1796: the loop runs only offered tools, so the scripted call's tool is offered.
         assert result.stopped_reason == "complete" and raw.calls == 1
         delivery = result_delivery(result.tool_results[0])
         # A metadata key confers no exemption: only the producer's own type does.
@@ -4481,7 +4506,7 @@ async def test_delivery_remaining_follows_both_ad1208_ceilings(
         structured_tool_messages=structured, workspace_results=runtime.workspace_results, **limits,
     )
     async with _started(runtime):
-        result = await loop.run(system_prompt="", user_message="", tools=[], context=context)
+        result = await loop.run(system_prompt="", user_message="", tools=[*offer("http_fetch", "fixture_small", "fixture_large")], context=context)  # #1796: the loop runs only offered tools, so the scripted call's tool is offered.
         names = [call.name for call in result.tool_calls]
         counted = sum(not is_tier_1_tool_call(call.name, call.arguments) for call in result.tool_calls)
         redone = [request.tier_choice_reason == "floor_redo" for request in llm.requests]
@@ -4538,7 +4563,7 @@ async def test_delivery_remaining_reaches_every_tool_execution_path(
         workspace_results=runtime.workspace_results,
     )
     async with _started(runtime):
-        result = await loop.run(system_prompt="", user_message="", tools=[], context=context)
+        result = await loop.run(system_prompt="", user_message="", tools=[*offer(large_tool)], context=context)  # #1796: the loop runs only offered tools, so the scripted call's tool is offered.
         # The remainder (3, then 2) reached ``prepare_result`` on that path, so the result was
         # offloaded and read back; a path that dropped it would refuse with the default of 0.
         assert result.stopped_reason == "complete" and len(llm.requests) == 3 and tool.calls == 1
@@ -5070,7 +5095,7 @@ async def test_workspace_promise_refuses_replaced_reader_before_invocation(
             llm_client=llm, tool_executor=executor, max_iterations=4, tool_result_max_chars=6000,
             structured_tool_messages=structured, parallel_tool_calls_enabled=parallel,
             event_emit_fn=emit, workspace_results=runtime.workspace_results,
-        ).run(system_prompt="", user_message="", tools=[], context=context)
+        ).run(system_prompt="", user_message="", tools=[*offer(producer.tool_id)], context=context)  # #1796: the loop runs only offered tools, so the scripted call's tool is offered.
     reference = result_delivery(result.tool_results[0]).reference
     # Premise: the call that was refused printed exactly the published path, which is a real artifact.
     assert printed[0][0] == "read_file" and printed[0][1]["path"] == reference.path
@@ -5202,7 +5227,7 @@ async def test_repeated_slices_of_a_promised_workspace_path_validate_each_time(
         result = await AgenticLoop(
             llm_client=llm, tool_executor=executor, max_iterations=6, tool_result_max_chars=6000,
             structured_tool_messages=structured, workspace_results=store,
-        ).run(system_prompt="", user_message="", tools=[], context=context)
+        ).run(system_prompt="", user_message="", tools=[*offer("fixture_result")], context=context)  # #1796: the loop runs only offered tools, so the scripted call's tool is offered.
     reference = result_delivery(result.tool_results[0]).reference
     first = printed[0][1]
     assert printed[0][0] == "read_file" and first["path"] == reference.path and first["offset"] == 0
@@ -5246,7 +5271,7 @@ async def test_unpromised_artifact_path_keeps_the_typed_fresh_route(
         return await AgenticLoop(
             llm_client=llm, tool_executor=executor, max_iterations=4, tool_result_max_chars=6000,
             structured_tool_messages=structured, workspace_results=store,
-        ).run(system_prompt="", user_message="", tools=[], context=context)
+        ).run(system_prompt="", user_message="", tools=[*offer("fixture_result", "read_file")], context=context)  # #1796: the loop runs only offered tools, so the scripted call's tool is offered.
 
     async with _started(runtime):
         # A first run publishes the artifact; the model never reads it back.
@@ -5521,7 +5546,7 @@ async def test_workspace_promise_refuses_the_other_native_reader_before_invocati
         result = await AgenticLoop(
             llm_client=llm, tool_executor=executor, max_iterations=4, tool_result_max_chars=6000,
             structured_tool_messages=structured, event_emit_fn=emit, workspace_results=runtime.workspace_results,
-        ).run(system_prompt="", user_message="", tools=[], context=context)
+        ).run(system_prompt="", user_message="", tools=[*offer("fixture_result", "codebase_read_source")], context=context)  # #1796: the loop runs only offered tools, so the scripted call's tool is offered.
     reference = result_delivery(result.tool_results[0]).reference
     assert named == [reference.path] and Path(reference.path).is_file()  # premise: the published artifact
     assert result.stopped_reason == "error" and result.error == "reference_unavailable"

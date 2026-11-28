@@ -15,6 +15,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, TypeVar
 
+from probos.admission.seam import check_at
+from probos.admission.taxonomy import EFFECT_EGRESS
 from probos.tools.browser.loop_host import (
     PlaywrightLoopHost,
     get_playwright_host,
@@ -30,6 +32,7 @@ from probos.tools.browser.url_route_guard import (
 
 if TYPE_CHECKING:
     from probos.config import BrowserToolConfig
+    from probos.security.secret_masking import SecretHandle
 
 logger = logging.getLogger(__name__)
 
@@ -147,6 +150,8 @@ class BrowserSession:
         self._terminated = False
         self._recording_failed = False
         self._recording_finished = False
+        # AD-1337 S4: the registrations of the credentials filled into this session; released when it closes.
+        self._secret_handles: list[SecretHandle] = []
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -192,6 +197,7 @@ class BrowserSession:
         """Launch Chromium and open a fresh BrowserContext."""
         if self._terminated:
             raise RuntimeError("Ended browser session cannot be restarted")
+        check_at(getattr(getattr(self, "_runtime", None), "admission_service", None), effect=EFFECT_EGRESS, presented_id=self._agent_id)  # AD-1346 M3e3c (D211): the engine's egress sink, in shadow, in the caller's task before the engine starts; it blocks nothing
         self._ensure_host()
         await self._initialize(self._start_and_record)
 
@@ -264,6 +270,7 @@ class BrowserSession:
         """AD-1052b: attach to an EXTERNAL user-launched browser over CDP."""
         if self._terminated:
             raise RuntimeError("Ended browser session cannot be reconnected")
+        check_at(getattr(getattr(self, "_runtime", None), "admission_service", None), effect=EFFECT_EGRESS, presented_id=self._agent_id)  # AD-1346 M3e3c (D211): the CDP connect's egress sink, in shadow, in the caller's task before the connect; it blocks nothing
         self._ensure_host()
         await self._initialize(lambda: self._run_hosted(lambda: self._connect_impl(endpoint)))
 
@@ -291,6 +298,24 @@ class BrowserSession:
         except Exception:
             logger.debug("AD-1052b: set_default_timeout failed on connected page", exc_info=True)
 
+    def hold_secret(self, handle: SecretHandle) -> None:
+        """AD-1337 S4: keep ``handle`` registered until this session closes; a closed session releases it at once."""
+        if self._terminated:
+            handle.release()
+            return
+        self._secret_handles.append(handle)
+
+    @property
+    def holds_secrets(self) -> bool:
+        """AD-1337 S4: whether a value filled into this session is registered for masking."""
+        return bool(self._secret_handles)
+
+    def release_secrets(self) -> None:
+        """AD-1337 S4: release every value this session holds; repeatable."""
+        held, self._secret_handles = self._secret_handles, []
+        for handle in held:
+            handle.release()
+
     async def stop(self) -> None:
         """Attempt cleanup, retaining failed resources for a subsequent retry."""
         await self.close_resources()
@@ -298,6 +323,9 @@ class BrowserSession:
     async def close_resources(self) -> bool:
         """Join protected cleanup; False means resources need a retry."""
         self._terminated = True
+        # AD-1337 S4: an ended session is never read again, so its filled values stop being masked. The tool ends a
+        # session only after its operations finish, and each operation masks its own result (BrowserTool.invoke).
+        self.release_secrets()
         if self._cleanup_task is None or (
             self._cleanup_task.done() and not self._cleanup_task.result()
         ):

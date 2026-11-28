@@ -29,6 +29,8 @@ import uuid
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from probos.admission.seam import check_at
+from probos.admission.taxonomy import EFFECT_STORE_WRITE
 from probos.mesh.disclosure import DisclosureLevel
 
 if TYPE_CHECKING:
@@ -91,6 +93,12 @@ class ClinicalNotesStore:
     never leak across a missing store.
     """
 
+    _admission: object = None  # AD-1346 M3e4d1 (D286, set_admission): None checks nothing
+
+    def set_admission(self, service: object) -> None:
+        """AD-1346 M3e4d1 (D286): the service ``write_note`` hands ``check_at``; None checks nothing."""
+        self._admission = service
+
     def __init__(
         self,
         db_path: str = "",
@@ -136,6 +144,7 @@ class ClinicalNotesStore:
             disclosure_level=int(disclosure_level),
             created_at=time.time(),
         )
+        check_at(self._admission, effect=EFFECT_STORE_WRITE, presented_id=author_agent_id)  # AD-1346 M3e4d1 (D285): the note's store-write check, in shadow, before the write; it blocks nothing
         if self._db:
             await self._db.execute(
                 "INSERT INTO clinical_notes "

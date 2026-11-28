@@ -15,6 +15,7 @@ from probos.cognitive.swe_harness.tool_call import (
 )
 from probos.tools.protocol import ToolResult
 from probos.types import LLMResponse
+from tests.offered_tools import offer_scripted  # #1796: the loop runs only offered tools.
 
 
 @dataclass
@@ -107,7 +108,7 @@ async def test_loop_one_tool_use_then_text_stops_at_iteration_two() -> None:
     out = await loop.run(
         system_prompt="sys",
         user_message="task",
-        tools=[{"type": "function"}],
+        tools=[{"type": "function"}, *offer_scripted(client.responses)],  # #1796: the loop runs only offered tools, so the scripted calls' tools are offered.
         context={"agent_id": "a"},
     )
     assert out.iterations == 2
@@ -156,7 +157,7 @@ async def test_loop_emits_tool_call_started_and_completed() -> None:
     await loop.run(
         system_prompt="s",
         user_message="u",
-        tools=[{"type": "function"}],
+        tools=[{"type": "function"}, *offer_scripted(client.responses)],  # #1796: the loop runs only offered tools, so the scripted calls' tools are offered.
         context={"agent_id": "a"},
     )
     names = [e.name for e in events]
@@ -176,7 +177,7 @@ async def test_loop_max_iterations_forces_stop() -> None:
     out = await loop.run(
         system_prompt="s",
         user_message="u",
-        tools=[{"type": "function"}],
+        tools=[{"type": "function"}, *offer_scripted(client.responses)],  # #1796: the loop runs only offered tools, so the scripted calls' tools are offered.
         context={"agent_id": "a"},
     )
     assert out.stopped_reason == "max_iterations"
@@ -215,7 +216,7 @@ async def test_loop_tool_exception_continues_with_error_result() -> None:
     out = await loop.run(
         system_prompt="s",
         user_message="u",
-        tools=[{"type": "function"}],
+        tools=[{"type": "function"}, *offer_scripted(client.responses)],  # #1796: the loop runs only offered tools, so the scripted calls' tools are offered.
         context={"agent_id": "a"},
     )
     # Loop continued past tool exception
@@ -255,7 +256,7 @@ async def test_loop_never_raises_under_failures() -> None:
     out = await loop.run(
         system_prompt="s",
         user_message="u",
-        tools=[{"type": "function"}],
+        tools=[{"type": "function"}, *offer_scripted(client.responses)],  # #1796: the loop runs only offered tools, so the scripted calls' tools are offered.
         context={"agent_id": "a"},
     )
     assert isinstance(out, AgenticResult)
@@ -274,7 +275,7 @@ async def test_loop_appends_assistant_and_tool_result_messages() -> None:
     await loop.run(
         system_prompt="s",
         user_message="u",
-        tools=[{"type": "function"}],
+        tools=[{"type": "function"}, *offer_scripted(client.responses)],  # #1796: the loop runs only offered tools, so the scripted calls' tools are offered.
         context={"agent_id": "a"},
     )
     # Second LLM call's prompt should reference the tool_result feedback
@@ -337,7 +338,7 @@ async def test_loop_compactor_invoked_when_threshold_reached() -> None:
     await loop.run(
         system_prompt="s",
         user_message=bulky_user_message,
-        tools=[],
+        tools=[*offer_scripted(client.responses)],  # #1796: the loop runs only offered tools, so the scripted calls' tool is offered.
         context={"agent_id": "a"},
     )
     assert len(compaction_calls) >= 1
@@ -356,7 +357,7 @@ async def test_loop_tool_call_history_populated_across_iterations() -> None:
     out = await loop.run(
         system_prompt="s",
         user_message="u",
-        tools=[{"type": "function"}],
+        tools=[{"type": "function"}, *offer_scripted(client.responses)],  # #1796: the loop runs only offered tools, so the scripted calls' tools are offered.
         context={"agent_id": "a"},
     )
     assert [tc.name for tc in out.tool_calls] == ["a", "b"]
@@ -376,7 +377,7 @@ async def test_loop_executor_returning_error_result_continues() -> None:
     out = await loop.run(
         system_prompt="s",
         user_message="u",
-        tools=[{"type": "function"}],
+        tools=[{"type": "function"}, *offer_scripted(client.responses)],  # #1796: the loop runs only offered tools, so the scripted calls' tools are offered.
         context={"agent_id": "a"},
     )
     assert out.iterations == 2

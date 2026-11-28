@@ -67,13 +67,7 @@ classes:
   cognitive/insights.py::TopicCount:
     disposition: retire
     owner: '#1324'
-  cognitive/memory_security.py::MemorySecurityGate:
-    disposition: wire
-    owner: '#1324'
   cognitive/memory_security.py::MemorySecurityRegistry:
-    disposition: wire
-    owner: '#1324'
-  cognitive/memory_security.py::StoreSecurityDecision:
     disposition: wire
     owner: '#1324'
   cognitive/memory_transparency.py::MemoryProvenance:

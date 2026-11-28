@@ -353,6 +353,31 @@ class RecordsConfig(BaseModel):
     # AD-1138: index records into SemanticKnowledgeLayer and serve Oracle
     # Tier 2 from it. Default-OFF — when False, Tier 2 uses the keyword path.
     semantic_index_enabled: bool = False
+    # BF-957: probos doctor's records_git check reads these; the store's behaviour does not depend on them.
+    git_lock_stale_minutes: float = Field(
+        default=10.0,
+        gt=0,
+        description=(
+            "BF-957: probos doctor reports the records repository's .git/index.lock as stale (FAIL) once it is "
+            "this many minutes old. Ship's Records stops its own git commands after 30 seconds."
+        ),
+    )
+    git_uncommitted_warn_paths: int = Field(
+        default=50,
+        ge=1,
+        description=(
+            "BF-957: probos doctor warns when the records repository holds more than this many uncommitted "
+            "paths, untracked or modified."
+        ),
+    )
+    git_last_commit_warn_hours: float = Field(
+        default=24.0,
+        gt=0,
+        description=(
+            "BF-957: probos doctor warns when the records repository's last commit is at least this many hours "
+            "old while uncommitted paths exist."
+        ),
+    )
 
 
 class ArchiveConfig(BaseModel):
@@ -371,7 +396,6 @@ class OrientationConfig(BaseModel):
     warm_boot_orientation: bool = True
     proactive_supplement: bool = True
     populate_watch_section: bool = True
-    populate_ward_room_department: bool = True
     populate_event_log_window: bool = True
 
 
@@ -437,7 +461,8 @@ class SelfImprovementConfig(BaseModel):
 
     Default-False -- operator opt-in. The pipeline spawns real QA agents, opens a
     new ChromaDB collection, and writes promoted agents to
-    ``src/probos/agents/designed/``. AD-633 / AD-695 default-False precedent.
+    ``{data_dir}/promoted-agents/`` (BF-937: never into the source checkout).
+    AD-633 / AD-695 default-False precedent.
     """
 
     enabled: bool = False
@@ -445,7 +470,13 @@ class SelfImprovementConfig(BaseModel):
     iteration_cap: int = Field(default=5, ge=1, le=20)
     evolution_half_life_seconds: float = Field(default=2592000.0, ge=1.0)  # 30 days
     evolution_collection_name: str = "self_improvement_lessons"
-    persistence_root_dir: str = "src/probos/agents/designed"
+    persistence_root_dir: str = Field(
+        default="",
+        description=(
+            "Where promoted agent source is written. Empty means {data_dir}/promoted-agents. A directory inside the "
+            "source checkout ProbOS runs from is refused (BF-937, #1678): repository changes go through GitHub."
+        ),
+    )
 
 
 class ConsultationConfig(BaseModel):

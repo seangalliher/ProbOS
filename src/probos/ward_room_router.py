@@ -1083,6 +1083,14 @@ class WardRoomRouter:
         if not proposals_ch:
             return {"success": False, "error": "Improvement Proposals channel not found"}
 
+        # BF-934: the extraction now runs on every cycle's output, so an agent that repeats a proposal repeats its title: the proposal it
+        # filed stays the one proposal (same author, same title, case and spacing aside, among the channel's threads).
+        author_id = agent.id if hasattr(agent, "id") else "unknown"
+        wanted = " ".join(f"[Proposal] {title}".split()).casefold()
+        for filed in await self._ward_room.list_threads(proposals_ch.id, limit=100):
+            if filed.author_id == author_id and " ".join(filed.title.split()).casefold() == wanted:
+                return {"success": False, "error": "Proposal already filed", "duplicate_of": filed.id}
+
         # Get callsign for attribution
         callsign = ""
         if self._callsign_registry:
@@ -1102,7 +1110,7 @@ class WardRoomRouter:
         # Create thread in proposals channel (DISCUSS mode)
         thread = await self._ward_room.create_thread(
             channel_id=proposals_ch.id,
-            author_id=agent.id if hasattr(agent, "id") else "unknown",
+            author_id=author_id,
             title=f"[Proposal] {title}",
             body=body,
             author_callsign=callsign,
@@ -1149,6 +1157,12 @@ class WardRoomRouter:
                     direction=direction,
                 )
                 net_score = result.get("net_score", 0)
+
+                # BF-934: a vote the Ward Room already held is not a new endorsement and earns its author nothing again. The proactive
+                # extraction now runs on every cycle's output, however often the same output repeats.
+                if not result["changed"]:
+                    logger.debug("BF-934: Endorsement of %s by %s is the vote already held; no trust signal", post_id, agent_id)
+                    continue
 
                 # AD-426 Pillar 3: Bridge endorsement to trust signal
                 post_detail = await self._ward_room.get_post(post_id)

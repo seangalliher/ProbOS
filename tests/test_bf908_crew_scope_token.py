@@ -829,7 +829,9 @@ async def test_a_settings_save_never_writes_the_keyring_token_into_the_config_fi
     text = path.read_text(encoding="utf-8")
     assert yaml.safe_load(text)["system"]["log_level"] == "DEBUG"  # premise: the save did rewrite the file
     assert KEYRING_TOKEN not in text
-    assert yaml.safe_load(text)["auth"]["crew_scope_token"] == ""
+    # #1414 item 3: a save writes the file as it was on disk plus its patch, so it writes no auth section at
+    # all; before, it wrote the whole in-memory config, whose token field is empty.
+    assert "auth" not in yaml.safe_load(text)
 
 
 async def test_an_ordinary_crew_scope_route_refuses_while_locked() -> None:

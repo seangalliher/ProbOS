@@ -11,7 +11,7 @@ import { WorkItemReconciler, bindWorkItemReconciler } from './workItemReconcilia
 import type { WorkItemReadState } from './workItemReconciliation';
 import type {
   Agent, Connection, PoolInfo, PoolGroupInfo, SystemMode, DagNode, ChatMessage, SelfModProposal,
-  BuildProposal, BuildFailureReport, ArchitectProposalView, BuildQueueItem, MissionControlTask,
+  BuildProposal, BuildFailureReport, BuildReviewNotes, ArchitectProposalView, BuildQueueItem, MissionControlTask,
   AgentTaskView, NotificationView,
   AgentProfileMessage, AgentConversation,  // AD-406
   WardRoomChannel,  // AD-407
@@ -723,7 +723,7 @@ export interface HXIState {
     threadId?: string | null,
     detail?: string | null,
   ) => void;
-  addChatMessage: (role: 'user' | 'agent' | 'system', text: string, meta?: { selfModProposal?: SelfModProposal; buildProposal?: BuildProposal; buildFailureReport?: BuildFailureReport; architectProposal?: ArchitectProposalView; agent_id?: string; callsign?: string }) => void;
+  addChatMessage: (role: 'user' | 'agent' | 'system', text: string, meta?: { selfModProposal?: SelfModProposal; buildProposal?: BuildProposal; buildFailureReport?: BuildFailureReport; buildReview?: BuildReviewNotes; architectProposal?: ArchitectProposalView; agent_id?: string; callsign?: string }) => void;
   clearAnimationEvent: (key: 'pendingConsensusFlash' | 'pendingSelfModBloom' | 'pendingRoutingPulse' | 'pendingFeedbackPulse') => void;
   setConnected: (v: boolean) => void;
   setHoveredAgent: (agent: Agent | null, pos?: { x: number; y: number }) => void;
@@ -2070,7 +2070,9 @@ export const useStore = create<HXIState>((set, get) => ({
     }
     set({ notebooksLoading: true });
     try {
-      const res = await fetch(`/api/records/search?q=${encodeURIComponent(q)}&scope=ship`);
+      // BF-952 A1: the server confines the walk to notebooks/ before its cap of 20, so a note
+      // is not cut by twenty better matches elsewhere; the filter below stays as a guard.
+      const res = await fetch(`/api/records/search?q=${encodeURIComponent(q)}&scope=ship&directory=notebooks`);
       if (!res.ok) {
         set({ notebooksSearchResults: [], notebooksLoading: false });
         return;
@@ -2082,7 +2084,7 @@ export const useStore = create<HXIState>((set, get) => ({
         score: r.score || 0,
         snippet: r.snippet || '',
       }));
-      // Filter to notebooks/* only — search runs over all records
+      // Filter to notebooks/* only — a guard; the server already confined the walk (BF-952 A1)
       const filtered = all.filter(r => r.path.startsWith('notebooks/'));
       set({ notebooksSearchResults: filtered, notebooksLoading: false });
     } catch {
@@ -3183,6 +3185,7 @@ export const useStore = create<HXIState>((set, get) => ({
       ...(meta?.selfModProposal ? { selfModProposal: meta.selfModProposal } : {}),
       ...(meta?.buildProposal ? { buildProposal: meta.buildProposal } : {}),
       ...(meta?.buildFailureReport ? { buildFailureReport: meta.buildFailureReport } : {}),
+      ...(meta?.buildReview ? { buildReview: meta.buildReview } : {}),
       ...(meta?.architectProposal ? { architectProposal: meta.architectProposal } : {}),
       ...(meta?.agent_id ? { agent_id: meta.agent_id } : {}),
       ...(meta?.callsign ? { callsign: meta.callsign } : {}),
@@ -3799,7 +3802,8 @@ export const useStore = create<HXIState>((set, get) => ({
         set({ buildProgress: null });
         const msg = (data.message || '') as string;
         if (msg) {
-          get().addChatMessage('system', msg);
+          // BF-978 (#1809): the review lists ride as metadata; BuildReviewLists checks their shape when it renders.
+          get().addChatMessage('system', msg, { buildReview: { issues: data.review_issues as string[] | undefined, suggestions: data.review_suggestions as string[] | undefined } });
         }
         break;
       }
@@ -3866,8 +3870,11 @@ export const useStore = create<HXIState>((set, get) => ({
           get().addChatMessage('system',
             `Builder started: ${item.title}${item.ad_number ? ` (AD-${item.ad_number})` : ''}`);
         } else if (item.status === 'reviewing') {
+          // BF-937 (#1678): a build in review is a candidate branch, not a merge: say so, and where its worktree is kept.
+          const kept = item.worktree_path ? ` Candidate branch kept in ${item.worktree_path}.` : '';
           get().addChatMessage('system',
-            `Build ready for review: ${item.title}${item.ad_number ? ` (AD-${item.ad_number})` : ''}`);
+            `Build ready for review: ${item.title}${item.ad_number ? ` (AD-${item.ad_number})` : ''}.${kept}`
+            + ' It is not merged: local merge is unavailable, and delivery comes through GitHub (AD-1336).');
         } else if (item.status === 'merged') {
           get().addChatMessage('system',
             `Build merged: ${item.title}${item.ad_number ? ` (AD-${item.ad_number})` : ''} → ${item.commit_hash.slice(0, 7)}`);

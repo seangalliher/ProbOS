@@ -325,11 +325,13 @@ def test_route_premises_are_the_contract_counts() -> None:
     """BYTE-1/BYTE-2 parametrize over these sets; a drift must not silently shrink them."""
     # AD-1270 (#1324) slice 4c deleted BOOT_CAMP_PHASE_ADVANCED, an unrouted member: 397 -> 396;
     # and BOOT_CAMP_PHASE_ADVANCE (AD-638 phases 2 and 3), another: 396 -> 395.
-    assert len(EventType) == 395
-    assert len(ROUTED_VALUES) == 29
-    assert (len(_ROUTED), len(_NOT_ROUTED)) == (29, 366)
+    # AD-1337 S2 (#1560) added SECRET_MASKED, a routed DURABLE member: 395 -> 396, 29 -> 30, 37 -> 38.
+    # AD-1355 S1 (#1700) deleted six unrouted HOLODECK_* members (AD-486's Birth Chamber): 396 -> 390, 366 -> 360.
+    assert len(EventType) == 390
+    assert len(ROUTED_VALUES) == 30
+    assert (len(_ROUTED), len(_NOT_ROUTED)) == (30, 360)
     assert {m.value for m in _ROUTED} == ROUTED_VALUES
-    assert sum(1 for p in DECLARATIONS.values() if p is Persistence.DURABLE) == 37
+    assert sum(1 for p in DECLARATIONS.values() if p is Persistence.DURABLE) == 38
     assert len(OWNER_RECORDS) == 8
     assert all(persistence_of(name) is Persistence.DURABLE for name in OWNER_RECORDS)
     assert all(is_routed(m.name) for m in _ROUTED)

@@ -267,6 +267,14 @@ async def _synthesize_tts_impl(req: Request, runtime: Any) -> dict[str, Any]:
     # single round trip.
     defer_visemes = payload.get("defer_visemes") is True
 
+    # BF-930 (#1668): a spoken reply is activity for the idle full dream, so the idle dream
+    # does not start between replies that come less than idle_threshold_seconds apart. The
+    # scheduler bounds it (SPEECH_DREAM_DEFER_CAP_SECONDS). A runtime without a scheduler
+    # skips it.
+    dream_scheduler = getattr(runtime, "dream_scheduler", None)
+    if dream_scheduler is not None:
+        dream_scheduler.record_speech_activity()
+
     from probos.audio.tts import select_backend
     voice_service = getattr(runtime, "voice_synthesis", None)
     started = time.perf_counter()
@@ -325,9 +333,10 @@ async def _synthesize_tts_impl(req: Request, runtime: Any) -> dict[str, Any]:
     # BF-918: the stage timings the live acceptance reads (probos.log).
     logger.info(
         "BF-918: tts route chars=%d synth_ms=%.0f store_ms=%.0f visemes_ms=%.0f "
-        "total_ms=%.0f visemes=%s audio_ms=%d",
+        "total_ms=%.0f visemes=%s audio_ms=%d id=%s",
         len(text), (synthesized - started) * 1000, (stored - synthesized) * 1000,
         (finished - stored) * 1000, (finished - started) * 1000, visemes_mode, duration_ms,
+        attachment_id[:8],
     )
 
     return {

@@ -88,6 +88,7 @@ if TYPE_CHECKING:
     from probos.cognitive.mcp_workbench import MCPDispatchOffer, MCPDispatchSource
     from probos.cognitive.verifier_independence import VerifierJudgePolicy
     from probos.consensus.trust import TrustNetwork
+    from probos.security.secret_masking import SecretMasker
     from probos.substrate.registry import AgentRegistry
     from probos.workforce import WorkItemStore
 
@@ -632,6 +633,9 @@ class _SessionCorrectionRuntime:
     emit_event: None = None
     event_emit_fn: None = None
     fault_observer: ToolFaultObservationPort | None = None
+    # AD-1337 S3 (#1560): the runtime's masker, so the correction's dispatch executor and loop mask what its tools
+    # return (agentic_dispatch reads it through secret_masker_of). A filter over tool output, not runtime authority.
+    secret_masker: SecretMasker | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -1019,6 +1023,7 @@ def _session_correction_runtime(
 ) -> _SessionCorrectionRuntime:
     """Build one event-neutral governed capability projection for correction."""
     from probos.cognitive.agentic_dispatch import register_mesh_intent_tools
+    from probos.security.secret_masking import secret_masker_of
 
     del department, rank
     source_registry = getattr(runtime, "tool_registry", None)
@@ -1288,6 +1293,7 @@ def _session_correction_runtime(
             ToolFaultObservationPort(observer.observe_tool_run)
             if observer is not None else None
         ),
+        secret_masker=secret_masker_of(runtime),
     )
 
 

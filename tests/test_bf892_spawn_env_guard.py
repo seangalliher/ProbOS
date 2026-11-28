@@ -93,6 +93,7 @@ TRUSTED_ENV_SITES: dict[tuple[str, str], tuple[int, str]] = {
     ("src/probos/cognitive/referent_gate.py", "GitObjectResolver._resolve_sync"): (1, "git cat-file -e -- <token>"),
     ("src/probos/cognitive/scout.py", "ScoutAgent._search_github"): (1, "gh api needs GH_TOKEN or gh config"),
     ("src/probos/credential_store.py", "CredentialStore._resolve"): (1, "credential helper (gh auth token)"),
+    ("src/probos/doctor/checks/records_git_check.py", "_git_read_sync"): (1, "git status/log on the records repo, GIT_OPTIONAL_LOCKS=0 (BF-957)"),
     ("src/probos/doctor/checks/sandbox_check.py", "_docker_info_sync"): (1, "docker info: DOCKER_HOST"),
     ("src/probos/episodic_health.py", "check_episodic_health"): (1, "ProbOS's own probe module: PROBOS_* config"),
     ("src/probos/execution/authority.py", "_ManifestPreparer._repository_binding"): (3, "git with system/global config stripped"),

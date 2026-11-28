@@ -24,6 +24,7 @@ When given a build prompt (a file path to a markdown spec in `prompts/`):
 5. **Post-build section audit**: Verify every `###` section header in the build prompt maps to implemented code. If a section has no corresponding change, that is an omission — report it before marking complete.
 6. **Update trackers** as specified in the prompt's Tracking section.
 7. **Report test count** at each step.
+8. **Report readings and leftovers.** Your final report lists, one line each, every reading you took where the prompt left a detail implicit and no design choice was involved (the reading, and the one you rejected), and the dead code you noticed and left alone. A gap that needs a design choice is not a reading: stop and ask.
 
 ## Scope Constraints (Hard Rules)
 
@@ -32,7 +33,8 @@ When given a build prompt (a file path to a markdown spec in `prompts/`):
 - Do NOT make architectural decisions. If a design choice is needed that the prompt does not specify, **stop and ask**.
 - Do NOT skip tests or proceed past failing tests.
 - Do NOT refactor adjacent code for "improvement." Stay within the boundary of the prompt.
-- If the prompt is ambiguous, **stop and ask** — do not guess.
+- Remove what your own change made unused (imports, variables, functions, files), and nothing else. Leave dead code you did not create and list it in your report.
+- If the prompt is ambiguous where a design choice is needed, **stop and ask** — do not guess. A small implicit detail with no design choice takes the reading that changes least, listed in your report (step 8).
 
 ## Engineering Principles (Standing Order)
 

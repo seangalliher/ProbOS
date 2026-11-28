@@ -20,6 +20,9 @@ from collections.abc import AsyncIterator, Mapping
 from pathlib import Path
 from typing import Any
 
+from probos.admission.seam import check_at
+from probos.admission.taxonomy import EFFECT_STORE_WRITE
+from probos.cycle_trace import CycleIdResolver, judge_correlation_id  # AD-1360 (#1828)
 from probos.cognitive.importance_scorer import compute_importance
 from probos.cognitive.affect_scorer import score_affect
 from probos.cognitive.similarity import jaccard_similarity
@@ -58,8 +61,12 @@ from probos.types import (
     resolve_provenance,
 )
 from probos.types import EBBINGHAUS_DEFAULT_STABILITY_SECONDS
+from probos.utils.loop_yield import LoopYield  # BF-932
 
 logger = logging.getLogger(__name__)
+
+# BF-932 (#1670): the AD-873 decay sweep gives the event loop a turn every this many episodes (a count, not a time).
+_DECAY_EPISODES_PER_YIELD = 8
 
 # AD-1340: at most one "episode archive unavailable" warning per interval.
 _ARCHIVE_WARN_INTERVAL_S = 300.0
@@ -481,6 +488,19 @@ def resolve_sovereign_id_from_slot(slot_id: str, identity_registry: Any) -> str:
     if cert:
         return cert.agent_uuid
     return slot_id
+
+
+def resolve_sovereign_id_from_registry(agent_id: str, registry: Any) -> str:
+    """BF-992: the id an agent's episodes carry, for a caller that holds a slot id and the agent registry.
+
+    The registry is keyed by slot id; the agent it returns answers through ``resolve_sovereign_id``
+    (its sovereign id, else its slot id). An id the registry does not hold, such as one that is
+    already a sovereign id, and a missing registry return the id unchanged.
+    """
+    agent = registry.get(agent_id) if registry is not None else None
+    if agent is None:
+        return agent_id
+    return resolve_sovereign_id(agent)
 
 
 async def migrate_episode_agent_ids(
@@ -1355,6 +1375,16 @@ async def _erase_store_file(kind: str, path: str | None, ids: list[str]) -> bool
     return True
 
 
+def _sole_agent_id(episode: Episode) -> str | None:
+    """AD-1346 M3e4b (D232): the id ``store`` presents to its store-write check: the episode's one agent id, else None.
+
+    An episode that names no agent, or more than one, presents None, so the check compares no principal. It reads
+    ``agent_ids`` with ``getattr`` and a default, as D127 reads a request's ``agent_id``.
+    """
+    ids = getattr(episode, "agent_ids", None)
+    return ids[0] if type(ids) is list and len(ids) == 1 and type(ids[0]) is str and ids[0] else None
+
+
 class EpisodicMemory:
     """ChromaDB-backed episodic memory with semantic similarity recall."""
 
@@ -1362,6 +1392,8 @@ class EpisodicMemory:
     MAX_EPISODES_PER_HOUR = 20  # per agent, rolling window
     SIMILARITY_WINDOW_MINUTES = 30
     SIMILARITY_THRESHOLD = 0.8  # Jaccard word-level
+
+    _admission: object = None  # AD-1346 M3e4b (D233, set_admission): None checks nothing
 
     def __init__(
         self,
@@ -1463,6 +1495,7 @@ class EpisodicMemory:
         self._security_config: Any = None  # AD-607: memory security config (validates recall)
         self._security_gate: Any = None  # AD-607h: store-time prompt-injection gate
         self._security_event_emitter: Any = None  # AD-607: emit hook for security events
+        self._cycle_registry: CycleIdResolver | None = None  # AD-1360 (#1828): bound by set_cycle_registry
         self._store_write_lock = asyncio.Lock()
         self._store_tails: dict[str, list[asyncio.Event]] = {}  # AD-1340 R3: see _get_store_tails
 
@@ -1498,6 +1531,10 @@ class EpisodicMemory:
         are swallowed so security-event emission never breaks the memory path.
         """
         self._security_event_emitter = emitter
+
+    def set_cycle_registry(self, registry: CycleIdResolver | None) -> None:
+        """AD-1360 (#1828): the registry ``store()`` checks an episode's AD-492 correlation id against."""
+        self._cycle_registry = registry
 
     def _emit_security_event(self, event_type: Any, payload: dict) -> None:
         """AD-607: emit a security event through the wired emitter (if any).
@@ -1549,8 +1586,11 @@ class EpisodicMemory:
                 "anomalies": list(validation.anomalies),
                 "score": float(validation.score),
             })
-            # Provenance-specific event (separate audit channel)
-            ok, reason = validate_provenance(episode)
+            # Provenance-specific event (separate audit channel). AD-1360 (#1828): judged with the cutoff the verdict
+            # above used, so the event names the reason that fired.
+            from probos.cognitive.memory_security import configured_correlation_cutoff
+
+            ok, reason = validate_provenance(episode, correlation_cutoff=configured_correlation_cutoff(config))
             if not ok:
                 self._emit_security_event(EventType.MEMORY_PROVENANCE_GAP, {
                     "episode_id": getattr(episode, "id", ""),
@@ -1572,6 +1612,31 @@ class EpisodicMemory:
             logger.debug("AD-607: recall anomaly gate failed", exc_info=True)
             return False
 
+    def _drop_security_anomalies(
+        self,
+        episodes: list[Episode],
+        *,
+        query: str = "",
+        anchor_query: Any = None,
+    ) -> list[Episode]:
+        """BF-984 (#1830): AD-607's recall verdict over the episodes a read is about to return.
+
+        The shared filter of the public reads that build their result without the per-candidate verdict
+        (``recall_for_agent_with_confidence``, ``recent_for_agent``, ``recent``, ``recall_by_intent``,
+        ``retrieve_contrastive_episodes`` and ``get_by_ids(for_evidence=True)``). Applied to the final list, after
+        AD-1293's exclusion, so it checks only what the read returns, and an enforced drop shortens the result rather
+        than promoting another episode. Unbound (no config) the list is returned unchanged; with every ``enforce_*``
+        flag false every episode is kept and an anomaly is reported. The public reads that return episodes without
+        the verdict, and why, are listed in tests/test_bf984_recall_gate_coverage.py, which fails on any public read
+        that is neither gated nor listed. ``getattr``: test modules build an EpisodicMemory with ``__new__``.
+        """
+        if getattr(self, "_security_config", None) is None:
+            return episodes
+        return [
+            episode for episode in episodes
+            if not self._security_anomaly_drop(episode, query=query, anchor_query=anchor_query)
+        ]
+
     def set_retroactive_evolver(self, evolver: Any) -> None:
         """AD-608: Wire the retroactive evolver for store-time evolution."""
         self._retroactive_evolver = evolver
@@ -1579,6 +1644,10 @@ class EpisodicMemory:
     def set_anomaly_window_manager(self, manager: Any) -> None:
         """AD-673: Wire anomaly window manager for episode stamping."""
         self._anomaly_window_manager = manager
+
+    def set_admission(self, service: object) -> None:
+        """AD-1346 M3e4b (D233): the service ``store`` hands ``check_at``; None checks nothing."""
+        self._admission = service
 
     def set_participant_index(self, index: Any) -> None:
         """AD-570b: Wire the participant index after construction."""
@@ -1997,6 +2066,7 @@ class EpisodicMemory:
         """Persist one authoritative episode and report the primary-store outcome."""
         if not isinstance(duplicate_policy, EpisodeDuplicatePolicy):
             raise TypeError("duplicate_policy must be an EpisodeDuplicatePolicy")
+        check_at(self._admission, effect=EFFECT_STORE_WRITE, presented_id=_sole_agent_id(episode))  # AD-1346 M3e4b (D232): the episode's store-write check, in shadow, after the policy check; it blocks nothing
         if not self._collection:
             logger.debug(
                 "Episode %s was not persisted because the primary collection is unavailable",
@@ -2170,6 +2240,16 @@ class EpisodicMemory:
                     episode = dataclasses.replace(episode, anchors=new_anchors)
                     anomaly_window_manager.record_episode_stamped()
 
+            # AD-1360 (#1828): the record AD-607b's correlation rule reads, written here and nowhere else; whatever the
+            # producer set is replaced. The id is checked once, now, against the bound cycle-id registry ("unchecked"
+            # when none is bound, so a missing binding shows on the record instead of passing).
+            episode = dataclasses.replace(
+                episode,
+                stored_at=time.time(),
+                correlation_verdict=judge_correlation_id(
+                    episode.correlation_id, getattr(self, "_cycle_registry", None),
+                ),
+            )
             metadata = self._episode_to_metadata(episode)
             document = self._prepare_document(episode)
 
@@ -2399,7 +2479,9 @@ class EpisodicMemory:
         ordered = [by_id[eid] for eid in episode_ids if eid in by_id]
         if not for_evidence:
             return ordered
-        return self._drop_self_contradicted(ordered, False)  # AD-1293 (#1200)
+        # BF-984 (#1830): an evidence caller also gets AD-607's recall verdict. The bare call stays unfiltered
+        # (history: erasure resolves through it, and the fusion tails gate what they hydrate).
+        return self._drop_security_anomalies(self._drop_self_contradicted(ordered, False))  # AD-1293 (#1200)
 
     async def update_episode_metadata(
         self,
@@ -2589,7 +2671,12 @@ class EpisodicMemory:
                 activations = {}
 
         now = time.time()
+        # BF-932 (#1670): each episode is a synchronous Chroma read and write, so the page held the event loop for the
+        # whole sweep; give the loop a turn every _DECAY_EPISODES_PER_YIELD episodes.
+        pacer = LoopYield(_DECAY_EPISODES_PER_YIELD)
         for i, ep_id in enumerate(ids):
+            if pacer.due():
+                await asyncio.sleep(0)
             try:
                 meta = metas[i] if i < len(metas) else {}
                 ep = self._metadata_to_episode(ep_id, "", meta or {})
@@ -3607,6 +3694,10 @@ class EpisodicMemory:
             missing = [eid for eid in fused_ids if eid not in have]
             if missing:
                 for ep in await self.get_by_ids(missing):
+                    # BF-938 (#1680): get_by_ids is unfiltered, so an episode the dense loop's AD-607 gate dropped came
+                    # back here whenever it matched a keyword. Each hydrated episode passes the same gate.
+                    if self._security_anomaly_drop(ep, query=query):  # BF-938: the AD-607 gate, as the dense loop applies it
+                        continue
                     have[ep.id] = ep
             return [have[eid] for eid in fused_ids if eid in have]
         except Exception:
@@ -3708,6 +3799,8 @@ class EpisodicMemory:
         contrastive = self._drop_self_contradicted(
             contrastive, include_self_contradicted
         )
+        # BF-984 (#1830): AD-607's recall verdict, before the CONTRASTIVE_RECALL report, which names what is returned.
+        contrastive = self._drop_security_anomalies(contrastive, query=query)
 
         # AD-655: emit CONTRASTIVE_RECALL when an emit hook is wired
         emit = getattr(self, "_emit_event", None)
@@ -4031,8 +4124,11 @@ class EpisodicMemory:
 
         # AD-1293 (#1200): exclude after sovereign fusion, for the same reason
         # as the global path -- the fusion tail re-hydrates ids via get_by_ids.
+        # BF-984 (#1830): AD-607's recall verdict at the same point, for the same reason (it also covers the
+        # sparse-hydrated ids), and before the band reset, so an enforced drop that empties the recall reports "none".
         _pre_exclusion = episodes
         episodes = self._drop_self_contradicted(episodes, include_self_contradicted)
+        episodes = self._drop_security_anomalies(episodes, query=query)
         if _pre_exclusion and not episodes:
             confidence = dataclasses.replace(confidence, band="none")
 
@@ -4154,7 +4250,11 @@ class EpisodicMemory:
         # AD-1293 (#1200): after the k-cap, so an excluded episode shortens the
         # result rather than promoting an older one -- the safe direction, and
         # it keeps the single-pass scan this fallback exists to be.
-        return self._drop_self_contradicted(episodes, include_self_contradicted)
+        # BF-984 (#1830): AD-607's recall verdict, after the exclusion and for the same reason. No query or anchor
+        # view: a recency read is judged on provenance.
+        return self._drop_security_anomalies(
+            self._drop_self_contradicted(episodes, include_self_contradicted)
+        )
 
     async def recall_by_intent(
         self, intent_type: str, k: int = 5,
@@ -4197,7 +4297,10 @@ class EpisodicMemory:
             if len(episodes) >= k:
                 break
 
-        return self._drop_self_contradicted(episodes, include_self_contradicted)  # AD-1293
+        # BF-984 (#1830): AD-607's recall verdict, after the exclusion; no anchor view (provenance only).
+        return self._drop_security_anomalies(
+            self._drop_self_contradicted(episodes, include_self_contradicted)  # AD-1293
+        )
 
     async def recent(
         self, k: int = 10, *, include_self_contradicted: bool = False,
@@ -4221,12 +4324,14 @@ class EpisodicMemory:
         paired = list(zip(result["ids"], result["metadatas"], result["documents"]))
         paired.sort(key=lambda x: x[1].get("timestamp", 0), reverse=True)
 
-        return self._drop_self_contradicted(  # AD-1293 (#1200)
-            [
-                self._metadata_to_episode(doc_id, document, metadata)
-                for doc_id, metadata, document in paired[:k]
-            ],
-            include_self_contradicted,
+        return self._drop_security_anomalies(  # BF-984 (#1830): AD-607's recall verdict, after the exclusion
+            self._drop_self_contradicted(  # AD-1293 (#1200)
+                [
+                    self._metadata_to_episode(doc_id, document, metadata)
+                    for doc_id, metadata, document in paired[:k]
+                ],
+                include_self_contradicted,
+            )
         )
 
     async def get_embeddings(self, episode_ids: list[str]) -> dict[str, list[float]]:
@@ -4394,6 +4499,10 @@ class EpisodicMemory:
             "stability": float(ep.stability),
             # AD-979f: affective-salience retrieval slot (0.0 = neutral)
             "affect_salience": float(ep.affect_salience),
+            # AD-1360 (#1828): the store-time record (store() writes it; seed() and _force_update keep what the
+            # episode carries). Not in compute_episode_hash, so no stored hash changes.
+            "stored_at": float(ep.stored_at),
+            "correlation_verdict": ep.correlation_verdict or "",
         }
         # AD-570: Promote key anchor fields for ChromaDB where-clause filtering
         if ep.anchors:
@@ -4557,6 +4666,15 @@ class EpisodicMemory:
             affect_salience = float(metadata.get("affect_salience", 0.0))
         except (TypeError, ValueError):
             affect_salience = 0.0
+        # AD-1360 (#1828): the store-time record. A row stored before AD-1360 lacks both keys and reads (0.0, ""),
+        # which AD-607b never judges.
+        try:
+            stored_at = float(metadata.get("stored_at", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            stored_at = 0.0
+        correlation_verdict = metadata.get("correlation_verdict", "")
+        if not isinstance(correlation_verdict, str):
+            correlation_verdict = ""
         return Episode(
             id=doc_id,
             timestamp=round(float(metadata.get("timestamp", 0.0)), 6),
@@ -4588,6 +4706,8 @@ class EpisodicMemory:
             stability=stability,
             # AD-979f: affective-salience retrieval slot
             affect_salience=affect_salience,
+            stored_at=stored_at,  # AD-1360 (#1828)
+            correlation_verdict=correlation_verdict,  # AD-1360 (#1828)
         )
 
     # ---- AD-567b: Salience-weighted recall pipeline --------------------
@@ -5025,17 +5145,14 @@ class EpisodicMemory:
 
         # AD-607a/c: anchor-aware recall anomaly gate over scored results
         if getattr(self, "_security_config", None) is not None and budgeted:
-            _aq = _AnchorQueryView(
-                watch_section=query_watch_section or watch_section,
-                channel=channel,
-                department=department,
-                trigger_agent=trigger_agent or agent_id,
-                trigger_type=intent_type or trigger_type,
-            )
+            # BF-938 (#1680): the view is built from this method's own cues; it named recall_by_anchor's parameters,
+            # so any bound config raised NameError here. ``agent_id`` is the recalling agent's sovereign id, not who
+            # drove an episode (an episode's trigger_agent is a callsign, "captain" or an author id): never compared.
+            _aq = _AnchorQueryView(watch_section=query_watch_section, trigger_type=intent_type)
             filtered_rs: list[RecallScore] = []
             for rs in budgeted:
                 if self._security_anomaly_drop(
-                    rs.episode, query=semantic_query, anchor_query=_aq,
+                    rs.episode, query=query, anchor_query=_aq,
                 ):
                     continue
                 filtered_rs.append(rs)
@@ -5252,7 +5369,7 @@ class EpisodicMemory:
                 watch_section=watch_section,
                 channel=channel,
                 department=department,
-                trigger_agent=trigger_agent or agent_id,
+                trigger_agent=trigger_agent,  # BF-938: never the recalling agent's sovereign id (see recall_weighted)
                 trigger_type=trigger_type,
             )
             filtered: list[Episode] = []

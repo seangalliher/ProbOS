@@ -44,11 +44,22 @@ from probos.tools.protocol import ToolResult
 from probos.types import LLMRequest, LLMResponse
 from probos.workforce import WorkItemStore
 from tests import test_ad1125_room_bound_execution as room
+from tests.offered_tools import offer  # #1796: the loop runs only offered tools.
 from tests.test_ad1258_self_knowledge import _OfferSysProxy
 
 
 BASE_COMMIT = "7dd9542289fbe3b574b09f4e9b5fe934c35f424c"
 GOLDEN_PATH = Path(__file__).parent / "fixtures" / "ad1152_agentic_off_golden.json"
+# BF-983 (#1676): what the next author does when the default configuration's digest no longer matches the golden.
+_DEFAULT_CONFIG_RULE = (
+    "default_config_sha256: the default SystemConfig dump changed. An added field: pop it in _off_observation with its "
+    "default asserted; the golden stays. A deleted field or a changed default: add a line in _off_observation that "
+    "names it (assert the key is absent, or assert its new value), then refresh by measurement: run "
+    "test_default_off_matches_pinned_base with -n 0, confirm default_config_sha256 is the only key that differs, copy "
+    "the actual digest into the golden's observation.default_config_sha256, run again and copy the reported "
+    "observation digest into observation_sha256. Never re-capture the golden. "
+    "See docs/development/agentic-event-correlation.md, 'Validation lineage'."
+)
 LOOP_EVENTS = (
     EventType.AGENTIC_LOOP_ITERATION.value,
     EventType.AGENTIC_TOOL_CALL_STARTED.value,
@@ -244,6 +255,11 @@ async def _off_observation(
     assert config["approval_inbox"].pop("decision_pre_clearance_enabled") is False
     assert config["approval_inbox"].pop("decision_pre_clearance_default_ttl_hours") == 24
     assert config["approval_inbox"].pop("decision_pre_clearance_max_ttl_hours") == 168
+    # AD-1356 S4's three agent-work deciders were added after this capture too; their defaults are the issue's table
+    # (routine auto, elevated chief), and this observation runs no agent work.
+    assert config["approval_inbox"].pop("agent_work_routine_decider") == "auto"
+    assert config["approval_inbox"].pop("agent_work_elevated_decider") == "chief"
+    assert config["approval_inbox"].pop("agent_work_critical_decider") == "captain"
     # AD-1228's five inert proactive_cognitive fields were added after this capture too.
     assert config["proactive_cognitive"].pop("standing_interests_enabled") is False
     assert config["proactive_cognitive"].pop("standing_interest_max_per_agent") == 12
@@ -324,6 +340,32 @@ async def _off_observation(
     # AD-1346 M3c's shadow-admission section was added after this capture too. Its switch defaults on, and it is
     # read in ProbOSRuntime.start, which this observation never calls.
     assert config.pop("admission") == {"shadow_enabled": True}
+    # BF-957's three records-git thresholds were added after this capture too. Only the doctor's records_git check
+    # reads them, and the store's behaviour does not depend on them; this observation runs no doctor check.
+    assert config["records"].pop("git_lock_stale_minutes") == 10.0
+    assert config["records"].pop("git_uncommitted_warn_paths") == 50
+    assert config["records"].pop("git_last_commit_warn_hours") == 24.0
+    # AD-1360's inert correlation cutoff (0.0 judges no episode) was added to the memory-security section after this
+    # capture too.
+    assert config["security"]["memory"].pop("correlation_cutoff") == 0.0
+    # BF-932's loop-stall threshold (1.0 s; 0 starts no sampler) was added after this capture too. The sampler is
+    # started in ProbOSRuntime.start, which this observation never calls.
+    assert config["system"].pop("loop_stall_warn_seconds") == 1.0
+    # Deleted fields and changed defaults (BF-983, #1676). Each one moved the digest, which was refreshed by measurement
+    # (_DEFAULT_CONFIG_RULE); the line names what the pinned digest no longer contains, or now contains.
+    # BF-924 (#1654) removed the Counselor's four unread fields.
+    assert not {"enabled", "profile_retention_days", "alert_on_red", "alert_on_yellow"} & set(config["counselor"])
+    # BF-926 (#1656) deleted AD-607d's leak-guard flag.
+    assert "enforce_leak_guard" not in config["security"]["memory"]
+    # AD-1270 slice 4c (#1324) deleted AD-509's phase-tracker section, then boot camp's nudge cooldown.
+    assert "boot_camp_phase" not in config
+    assert "nudge_cooldown_seconds" not in config["boot_camp"]
+    # BF-962/963 (#1792) deleted the unread orientation flag.
+    assert "populate_ward_room_department" not in config["orientation"]
+    # AD-1355 S1 (#1700) deleted AD-486's Birth Chamber section.
+    assert "holodeck_birth_chamber" not in config
+    # BF-937 (#1678) changed a default: promoted agents go to {data_dir}/promoted-agents, never the source checkout.
+    assert config["self_improvement"]["persistence_root_dir"] == ""
     runtime = _local_runtime()
     events: list[dict[str, Any]] = []
     runtime.add_event_listener(lambda event: events.append(_snapshot(event)), LOOP_EVENTS)
@@ -345,9 +387,14 @@ async def _off_observation(
             parallel_tool_calls_enabled=parallel, structured_tool_messages=parallel,
         )
         result = await loop.run(
-            system_prompt="sys", user_message="task", tools=[], context=context,
+            system_prompt="sys", user_message="task", tools=[*offer("read_page")], context=context,  # #1796: the loop runs only offered tools, so the scripted calls' tool is offered.
             on_run_started=callbacks.append,
         )
+        # #1796: the offer was added after this capture. Each request carried exactly it; the captured requests carried
+        # none, so that value is restored and every other byte stays compared with the golden.
+        assert [request["request"]["tools"] for request in client.requests] == [offer("read_page")] * 2
+        for request in client.requests:
+            request["request"]["tools"] = []
         assert result.stopped_reason == "complete" and result.total_tokens == 18
         assert len(tools.calls) == 2 and len(client.requests) == 2
         assert callbacks == [tools.calls[0]["context"]["_agentic_run_id"]]
@@ -523,7 +570,7 @@ async def test_default_off_matches_pinned_base(
     assert golden["production_pristine"] is True
     actual = await _off_observation(tmp_path, monkeypatch)
     for key, expected in golden["observation"].items():
-        assert actual[key] == expected, key
+        assert actual[key] == expected, (_DEFAULT_CONFIG_RULE if key == "default_config_sha256" else key)
     assert _json_bytes(actual) == _json_bytes(golden["observation"])
     assert hashlib.sha256(_json_bytes(actual)).hexdigest() == golden["observation_sha256"]
 
@@ -692,7 +739,7 @@ async def test_concurrent_same_instance_duplicate_ids_reach_runtime_listener() -
     runtime.add_event_listener(unrelated.append, ["irrelevant"])
     tasks = [
         asyncio.create_task(loop.run(
-            system_prompt=name, user_message="task", tools=[], context=incoming,
+            system_prompt=name, user_message="task", tools=[*offer("read_page")], context=incoming,  # #1796: the loop runs only offered tools, so the scripted calls' tool is offered.
             on_run_started=callbacks[name].append,
         ))
         for name in callbacks
@@ -778,7 +825,7 @@ async def test_original_indices_preserve_order_ceiling_and_mutation_barrier(
         tools, parallel_tool_calls_enabled=parallel, max_parallel_tool_calls=bound,
     )
     task = asyncio.create_task(loop.run(
-        system_prompt="sys", user_message="task", tools=[], context={"agent_id": "a"},
+        system_prompt="sys", user_message="task", tools=[*offer("write_file", "read_page", "unknown")], context={"agent_id": "a"},  # #1796: the loop runs only offered tools, so the scripted calls' tools are offered.
     ))
     try:
         await asyncio.wait_for(started.wait(), 3)
@@ -806,7 +853,7 @@ async def test_nested_same_instance_tool_run_keeps_parent_identity() -> None:
             self.calls.append(_snapshot(kwargs))
             if kwargs["params"]["label"] == "outer:first":
                 nested_results.append(await loop.run(
-                    system_prompt="inner", user_message="nested", tools=[],
+                    system_prompt="inner", user_message="nested", tools=[*offer("read_page")],  # #1796: the loop runs only offered tools, so the scripted calls' tool is offered.
                     context=kwargs["context"], on_run_started=nested_ids.append,
                 ))
             return ToolResult(output=kwargs["params"]["label"])
@@ -814,7 +861,7 @@ async def test_nested_same_instance_tool_run_keeps_parent_identity() -> None:
     tools = _NestedTools()
     loop, _, events = _listened_loop(_PerRunClient(), tools)
     result = await loop.run(
-        system_prompt="outer", user_message="task", tools=[],
+        system_prompt="outer", user_message="task", tools=[*offer("read_page")],  # #1796: the loop runs only offered tools, so the scripted calls' tool is offered.
         context={"agent_id": "same"}, on_run_started=outer_ids.append,
     )
     assert result.final_text == "done:outer" and nested_results[0].final_text == "done:inner"
@@ -845,7 +892,7 @@ async def test_reentrant_callbacks_and_delayed_emission_capture_run_locals() -> 
             if name == "outer":
                 start("callback")
         pending_runs.append(asyncio.create_task(loop.run(
-            system_prompt=name, user_message=name, tools=[], context=incoming,
+            system_prompt=name, user_message=name, tools=[*offer("read_page")], context=incoming,  # #1796: the loop runs only offered tools, so the scripted calls' tool is offered.
             on_run_started=observed,
         )))
 
@@ -902,7 +949,7 @@ async def test_iteration_source_qualifies_only_accumulated_prefix(
             LLMResponse(content="done", tokens_used=third),
         ]), _ToolRecorder(),
     )
-    result = await loop.run(system_prompt="sys", user_message="task", tools=[], context={})
+    result = await loop.run(system_prompt="sys", user_message="task", tools=[*offer("read_page")], context={})  # #1796: the loop runs only offered tools, so the scripted calls' tool is offered.
     iterations = [event["data"] for event in events if event["type"] == LOOP_EVENTS[0]]
     assert [data["token_source"] for data in iterations] == prefix
     assert iterations[0]["total_tokens"] == 0
@@ -925,7 +972,7 @@ async def test_tool_failures_keep_pairable_identity(parallel: bool, error: str) 
         _ScriptedClient([_tool_turn("a", "b"), LLMResponse(content="done", tokens_used=2)]),
         _FailedTools(), parallel_tool_calls_enabled=parallel,
     )
-    result = await loop.run(system_prompt="sys", user_message="task", tools=[], context={})
+    result = await loop.run(system_prompt="sys", user_message="task", tools=[*offer("read_page")], context={})  # #1796: the loop runs only offered tools, so the scripted calls' tool is offered.
     assert result.stopped_reason == "complete" and all(item.is_error for item in result.tool_results)
     assert len(result.tool_results) == 2
     assert all(e["data"]["is_error"] for e in events if e["type"] == LOOP_EVENTS[2])
@@ -949,7 +996,7 @@ async def test_exit_boundaries_preserve_existing_event_cardinality(case: str) ->
     )
     ids: list[str] = []
     result = await loop.run(
-        system_prompt="sys", user_message="task", tools=[], context={},
+        system_prompt="sys", user_message="task", tools=[*offer("read_page")], context={},  # #1796: the loop runs only offered tools, so the scripted call's tool is offered.
         on_run_started=ids.append,
     )
     assert len(ids) == 1
@@ -989,7 +1036,7 @@ async def test_cancelled_executing_and_queued_calls_emit_no_fake_completion(boun
         parallel_tool_calls_enabled=True, max_parallel_tool_calls=bound,
     )
     task = asyncio.create_task(loop.run(
-        system_prompt="sys", user_message="task", tools=[], context={},
+        system_prompt="sys", user_message="task", tools=[*offer("read_page")], context={},  # #1796: the loop runs only offered tools, so the scripted calls' tool is offered.
     ))
     try:
         await asyncio.wait_for(entered.wait(), 3)
@@ -1027,7 +1074,7 @@ async def test_sink_failures_do_not_change_execution(sink: str) -> None:
     )
     ids: list[str] = []
     result = await loop.run(
-        system_prompt="sys", user_message="task", tools=[], context={}, on_run_started=ids.append,
+        system_prompt="sys", user_message="task", tools=[*offer("read_page")], context={}, on_run_started=ids.append,  # #1796: the loop runs only offered tools, so the scripted call's tool is offered.
     )
     outcomes = await asyncio.gather(*tuple(loop._tasks), return_exceptions=True)
     assert result.stopped_reason == "complete" and result.total_tokens == 9 and len(ids) == 1
@@ -1108,7 +1155,7 @@ async def test_enabled_run_identity_reaches_real_tool_records_without_changing_i
         ids: list[str] = []
         for name in ("first", "second"):
             result = await loop.run(
-                system_prompt=name, user_message="task", tools=[],
+                system_prompt=name, user_message="task", tools=[*offer("read_page")],  # #1796: the loop runs only offered tools, so the scripted calls' tool is offered.
                 context={"agent_id": "same", "_agentic_run_id": "inherited"},
                 on_run_started=ids.append,
             )

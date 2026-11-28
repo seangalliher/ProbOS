@@ -20,6 +20,10 @@
 export interface SpeechScope {
   keys: Set<string>;
   seen: boolean;
+  /** BF-928 (#1666): has a transcript load landed for this scope in this session? Set by the first load that
+   *  lands (`markScopeLoaded`), whatever triggered it, and evicted with the scope like the other two fields. The
+   *  first load of a scope is history and is seeded, because `seen` is usually used up on an empty list first. */
+  loaded: boolean;
 }
 
 /** Per-scope memory of what has already been decided about. A scope is one

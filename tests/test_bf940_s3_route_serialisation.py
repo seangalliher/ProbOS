@@ -1,0 +1,444 @@
+"""BF-940 slice 3 (#1686, F7-1): a record the reader parsed is a record the Ship's Records routes can answer.
+
+FastAPI writes what a handler returns as JSON after the handler has returned, outside the handler's own error boundary. A record the
+reader parsed but the JSON writer cannot write (a mapping nested deeper than the writer's recursion guard allows, bytes that are not UTF-8, a lone
+surrogate, a value that holds itself) was therefore an unhandled HTTP 500 on the read route, on its PROV-O projection and on every route that returns a
+frontmatter value. Real ``RecordsStore``
+over ``tmp_path`` with ``~`` moved, hand-made records, the real router through ``TestClient(raise_server_exceptions=False)`` (so the
+500 is a response a test can assert on, not an exception out of ``get``), no network.
+
+The writer's depth stop is pydantic-core's recursion guard, a compiled constant that differs by platform (the read route's body first fails at nesting 97
+on Windows and 253 on Linux), so no test pins a depth: the module asks its own ``TypeAdapter(Any)`` at import where the read route's body and a listing's
+stop, and derives every depth below from the answer. BF-970 (#1801): the reader now stops first. A frontmatter whose text holds ``FRONTMATTER_DEPTH_LIMIT`` (64)
+collections open at once, or more, is unparsed (read as ``{}``), below the writer's stop on every platform, so no record nested that deep in its text is too
+deep for a route; the nesting rows left ``_UNWRITABLE`` and the cases that drove them now pin that. BF-970 A2 (round 1 F3): an alias opens no collection in
+the text and builds a loaded value deeper than it, so a record the reader parses can still be too deep for a listing's body and not for the read route's
+(``_ALIAS_LINKS``); the class keeps that window. A lone surrogate reaches a record as an ASCII escape, ``\\ud800``, in the JSON a notebook
+route is sent or in the YAML of a hand-made record: a literal one cannot be written to a file as UTF-8.
+
+The class is strict xfail until M2 (each case fails at an ``assert`` of its own body on the unfixed tree, after its premise); the
+module's functions are guards and pass on both trees. A case asserts its premise first: the healthy records alone are answered, and
+the reader itself parsed the record (``read_entry`` returns it), so a failure cannot mean the record was never read. The inventory
+test reads the router object, not its source.
+"""
+
+from __future__ import annotations
+
+import datetime
+import json
+import logging
+import math
+from collections.abc import Callable
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
+
+import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+from pydantic import TypeAdapter
+
+from probos.config import RecordsConfig, SystemConfig
+from probos.knowledge.backlinks import KnowledgeBrowserService
+from probos.knowledge.provo import project_record_frontmatter
+from probos.knowledge.records_store import RecordsStore
+from probos.routers.records import router
+from probos.utils import frontmatter as frontmatter_module
+
+_HEALTHY = "---\nauthor: alice\nclassification: ship\ntopic: healthy\ntags: [coolant]\n---\n\ncoolant healthy body\n"
+_NOTE = "notebooks/alice/ok.md"
+_LOG = "captains-log/ok.md"
+_BAD_NOTE = "notebooks/alice/case.md"
+_BAD_LOG = "captains-log/case.md"
+_LONE = "\ud800"  # a lone surrogate: a JSON escape gives one to ``json.loads``, a YAML escape to the reader; never write one to a file
+_JSON = {"content-type": "application/json"}
+_READ = f"/api/records/documents/{_BAD_NOTE}"
+_LISTINGS = [
+    pytest.param("/api/records/documents", id="documents"),
+    pytest.param("/api/records/notebooks/alice", id="notebook"),
+    pytest.param("/api/records/captains-log", id="captains-log"),
+    pytest.param("/api/records/browse", id="browse"),
+    pytest.param("/api/records/search?q=coolant", id="search"),
+]
+
+_WRITER = TypeAdapter(Any)  # the call FastAPI makes for a handler annotated ``-> Any``
+
+
+def _writes(body: Any) -> bool:
+    try:
+        _WRITER.dump_json(body)
+    except (ValueError, RecursionError):  # PydanticSerializationError is a ValueError
+        return False
+    return True
+
+
+def _mapping(depth: int) -> Any:
+    """What ``_nested(depth)`` parses to: ``depth`` single-key mappings around a leaf."""
+    value: Any = 1
+    for _ in range(depth):
+        value = {"a": value}
+    return value
+
+
+def _read_body(frontmatter: dict[str, Any]) -> dict[str, Any]:
+    """The body of the read route: the record itself."""
+    return {"path": _BAD_NOTE, "frontmatter": frontmatter}
+
+
+def _listing_body(frontmatter: dict[str, Any]) -> dict[str, Any]:
+    """The body of a listing: the record two levels below the body's top (``{key: [record]}``)."""
+    return {"documents": [_read_body(frontmatter)]}
+
+
+def _first_refused(body_of: Callable[[dict[str, Any]], dict[str, Any]]) -> int:
+    """The least nesting at which the writer refuses the body ``body_of`` builds around it, asked of the writer that runs."""
+    for depth in range(1, 300):
+        if not _writes(body_of({"meta": _mapping(depth)})):
+            return depth
+    raise AssertionError("premise: the writer wrote every body up to 299 levels deep, so there is no depth stop to derive the depths of this file from")
+
+
+# The writer's depth stop is pydantic-core's recursion guard, a compiled constant that differs by platform (255, or 99 on Windows): it is asked of the
+# writer here and written nowhere as a number. A listing's body holds a record two levels below its top, so it stops two levels sooner.
+_READ_LIMIT = _first_refused(_read_body)
+_LISTING_LIMIT = _first_refused(_listing_body)
+_JUST_BELOW = _LISTING_LIMIT - 5  # written by the read route and by every listing, on any platform
+_JUST_OVER = _LISTING_LIMIT + 5  # refused by the read route and by every listing, on any platform
+_FAR_OVER = _READ_LIMIT + 50  # refused likewise (BF-970: the reader reads a frontmatter this deep as unparsed; only the premise below uses it)
+assert _READ_LIMIT == _LISTING_LIMIT + 2 and _LISTING_LIMIT > 5, "premise: the writer stops a listing's body two levels before the read route's"
+assert (
+    _writes(_listing_body({"meta": _mapping(_JUST_BELOW)}))
+    and not _writes(_read_body({"meta": _mapping(_JUST_OVER)}))
+    and not _writes(_read_body({"meta": _mapping(_FAR_OVER)}))
+), "premise: each depth the cases use is on the side of the writer's limit that its case needs"
+
+
+def _chain(links: int) -> str:
+    """A flow list of ``links`` anchored lists, each holding the one before it by an alias. As text it holds three collections
+    open at once (the record's mapping, this list, one anchored list), whatever ``links`` is: an alias opens none."""
+    return "[" + ", ".join(["&n0 [x]", *(f"&n{i} [*n{i - 1}]" for i in range(1, links))]) + "]"
+
+
+def _chain_value(links: int) -> list[Any]:
+    """What ``_chain(links)`` loads to: its last list nests ``links`` lists deep, each holding the one before it."""
+    value: list[Any] = ["x"]
+    chain = [value]
+    for _ in range(1, links):
+        value = [value]
+        chain.append(value)
+    return chain
+
+
+def _first_alias_window() -> int:
+    """The least chain whose record the read route's body can hold and a listing's cannot, asked of the writer that runs."""
+    start = max(2, _LISTING_LIMIT - 10)
+    assert _writes(_listing_body({"meta": _chain_value(start)})), "premise: the scan starts below a listing's limit"
+    for links in range(start, _READ_LIMIT + 10):
+        frontmatter = {"meta": _chain_value(links)}
+        if _writes(_read_body(frontmatter)) and not _writes(_listing_body(frontmatter)):
+            return links
+    raise AssertionError("premise: no chain falls between a listing's limit and the read route's")
+
+
+# BF-970 A2 (round 1 F3): the reader's limit counts collections open at once in the TEXT, and an alias opens none (L8), so a record
+# the reader parses can load to a value as deep as the writer's limit. This chain is the first whose record the read route writes and
+# a listing's body, two levels deeper, does not; the writer's stop is platform-dependent, so it is derived like the depths above.
+_ALIAS_LINKS = _first_alias_window()
+
+# (the YAML value of one key, a text that must never reach a log line). BF-970 (#1801): the two nesting rows (five levels over a listing's limit,
+# fifty over the read route's) left this list: the reader reads a frontmatter that deep as unparsed, ``{}``, which every route writes
+# (``test_a_record_nested_past_the_readers_limit_is_answered_as_unparsed``). Each case asserts that the reader parsed its record, so a reader that
+# stops sooner fails at a premise line, not at a status. ``lone-surrogate`` is the ASCII YAML escape, never a literal one.
+_UNWRITABLE = [
+    pytest.param("!!binary //4=", "xff", id="bytes-not-utf-8"),
+    pytest.param("&a [*a]", "[...]", id="holds-itself"),
+    pytest.param('"\\ud800"', "ud800", id="lone-surrogate"),
+]
+_SHAPES = (
+    "---\nauthor: alice\nclassification: ship\nwhen: 2026-11-09T01:02:03Z\nday: 2026-11-09\nkinds: !!set {p: null}\nraw: !!binary aGk=\n"
+    "1: \u00e9\nnot_a_number: .nan\ntags: [coolant]\n---\n\ncoolant shapes body\n"
+)
+_SHAPES_JSON = {
+    "author": "alice", "classification": "ship", "when": "2026-11-09T01:02:03Z", "day": "2026-11-09", "kinds": ["p"], "raw": "hi",
+    "1": "\u00e9", "not_a_number": None, "tags": ["coolant"],
+}
+_ROUTES = {
+    ("GET", "/api/records/stats"): "holds no record value",
+    ("GET", "/api/records/documents"): "holds a record value",
+    ("GET", "/api/records/documents/{path:path}"): "holds a record value",
+    ("POST", "/api/records/captains-log"): "holds no record value",
+    ("GET", "/api/records/captains-log"): "holds a record value",
+    ("GET", "/api/records/notebooks/{callsign}"): "holds a record value",
+    ("POST", "/api/records/notebooks/{callsign}"): "holds no record value",
+    ("GET", "/api/records/search"): "holds a record value",
+    ("GET", "/api/records/history/{path:path}"): "holds no record value",
+    ("GET", "/api/records/browse"): "holds a record value",
+    ("GET", "/api/records/backlinks/{path:path}"): "holds a record value",
+    ("GET", "/api/records/graph"): "holds a record value",
+    ("GET", "/api/records/timeline"): "holds a record value",
+}
+_DRIVEN = {
+    ("GET", "/api/records/documents"), ("GET", "/api/records/documents/{path:path}"), ("GET", "/api/records/captains-log"),
+    ("GET", "/api/records/notebooks/{callsign}"), ("GET", "/api/records/search"), ("GET", "/api/records/browse"),
+    ("GET", "/api/records/graph"), ("GET", "/api/records/backlinks/{path:path}"), ("GET", "/api/records/timeline"),
+}
+
+
+@pytest.fixture(autouse=True)
+def _home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    assert Path.home() == home, "premise: ~ is the temporary home"
+
+
+def _nested(depth: int) -> str:
+    return "{a: " * depth + "1" + "}" * depth
+
+
+def _record(key: str, value: str) -> str:
+    return f"---\nauthor: alice\nclassification: ship\n{key}: {value}\ntags: [coolant]\n---\n\ncoolant case body\n"
+
+
+def _make_store(root: Path, files: dict[str, str]) -> RecordsStore:
+    repo = root / "ship-records"
+    repo.mkdir(parents=True, exist_ok=True)
+    for rel, text in files.items():
+        (repo / rel).parent.mkdir(parents=True, exist_ok=True)
+        (repo / rel).write_text(text, encoding="utf-8")
+    return RecordsStore(RecordsConfig(repo_path=str(repo), auto_commit=False))
+
+
+def _get(store: RecordsStore, url: str) -> Any:
+    return _send(store, "GET", url)
+
+
+def _send(store: RecordsStore, method: str, url: str, **kwargs: Any) -> Any:
+    app = FastAPI()
+    app.state.runtime = SimpleNamespace(
+        config=SystemConfig(), records_store=store, _records_store=store, knowledge_browser=KnowledgeBrowserService(store),
+    )
+    app.include_router(router)
+    with TestClient(app, raise_server_exceptions=False) as client:
+        return client.request(method, url, **kwargs)
+
+
+def _items(response: Any) -> list[dict[str, Any]]:
+    body = response.json()
+    return next(body[key] for key in ("documents", "entries", "results") if key in body)
+
+
+def _shape(url: str, body: dict[str, Any]) -> Any:
+    """What must not change when a record is left out of a listing: all of the body, but for the search's scores, which count the whole corpus."""
+    if url.startswith("/api/records/search"):
+        return {"paths": [hit["path"] for hit in body["results"]], "count": body["count"]}
+    return body
+
+
+async def test_a_record_holding_every_shape_the_reader_builds_is_answered_as_it_always_was(tmp_path):
+    """Guard (passes on every tree): a UTC datetime, a date, a set, UTF-8 bytes, a unicode value under an int key and ``nan`` are written as they were."""
+    path = "notebooks/alice/shapes.md"
+    store = _make_store(tmp_path, {path: _SHAPES})
+    frontmatter = (await store.read_entry(path, reader_id="captain"))["frontmatter"]
+    assert type(frontmatter["when"]) is datetime.datetime and frontmatter["when"].tzinfo is not None
+    assert type(frontmatter["day"]) is datetime.date and frontmatter["kinds"] == {"p"} and frontmatter["raw"] == b"hi"
+    assert frontmatter[1] == "\u00e9" and math.isnan(frontmatter["not_a_number"]), "premise: the reader builds each shape"
+    read = _get(store, f"/api/records/documents/{path}")
+    assert read.status_code == 200 and read.json()["frontmatter"] == _SHAPES_JSON
+    listing = _get(store, "/api/records/documents")
+    assert listing.status_code == 200 and listing.json()["documents"][0]["frontmatter"] == _SHAPES_JSON
+
+
+@pytest.mark.parametrize("url", [pytest.param(_READ, id="read"), *_LISTINGS])
+async def test_the_deepest_record_the_reader_parses_is_answered_by_every_route(tmp_path, url):
+    """Guard. BF-970 (#1801): this stood five levels below the writer's listing limit; the reader now stops first, so the deepest
+    record it parses, 63 collections open at once (the record's mapping and 62 nested ones), is answered on the read route and in
+    every listing, on any platform."""
+    depth = frontmatter_module.FRONTMATTER_DEPTH_LIMIT - 2
+    assert depth < _LISTING_LIMIT, "premise: the reader's deepest record is within the writer's listing limit"
+    store = _make_store(tmp_path, {_NOTE: _HEALTHY, _LOG: _HEALTHY, _BAD_NOTE: _record("meta", _nested(depth)), _BAD_LOG: _record("meta", _nested(depth))})
+    entry = await store.read_entry(_BAD_NOTE, reader_id="captain")
+    assert entry is not None and entry["frontmatter"]["meta"] == _mapping(depth), "premise: the reader parsed the record"
+    response = _get(store, url)
+    assert response.status_code == 200 and "case.md" in response.text
+
+
+async def test_a_record_nested_past_the_readers_limit_is_answered_as_unparsed(tmp_path):
+    """BF-970 (#1801): this pinned the reader's ``RecursionError`` for 600 levels (the read route's 503, the record left out of a
+    listing). The reader now reads a frontmatter that deep, or 64 levels and more, as unparsed: the Captain reads ``{}``, the read
+    route answers it, and a listing lists it with the key ``list_entries`` sets."""
+    store = _make_store(tmp_path, {_NOTE: _HEALTHY, _BAD_NOTE: _record("meta", _nested(600))})
+    assert await store.read_entry(_BAD_NOTE, reader_id="captain") == {"frontmatter": {}, "content": "coolant case body", "path": _BAD_NOTE}
+    read = _get(store, _READ)
+    assert read.status_code == 200 and read.json()["frontmatter"] == {}
+    listing = _get(store, "/api/records/documents")
+    assert listing.status_code == 200 and [item["path"] for item in _items(listing)] == [_BAD_NOTE, _NOTE]
+
+
+@pytest.mark.parametrize(("value", "marker"), _UNWRITABLE)
+async def test_the_provenance_projection_of_a_record_the_writer_cannot_write_is_still_answered(tmp_path, value, marker):
+    """Guard: ``?format=prov-jsonld`` copies no ``meta`` value, so it is answered where the record itself is not (the one value it copies, ``created``, is the class below)."""
+    store = _make_store(tmp_path, {_BAD_NOTE: _record("meta", value)})
+    assert await store.read_entry(_BAD_NOTE, reader_id="captain") is not None, "premise: the reader parsed the record"
+    response = _get(store, f"{_READ}?format=prov-jsonld")
+    assert response.status_code == 200 and set(response.json()) == {"@context", "@graph"}
+
+
+@pytest.mark.parametrize("url", ["/api/records/backlinks/notebooks/alice/case.md", "/api/records/timeline"])
+async def test_the_backlinks_and_the_timeline_answer_a_record_whose_unwritable_value_they_do_not_carry(tmp_path, url):
+    """Guard: the backlinks carry a record's tags and topic slug and the timeline its department and day, so a topic that is not text reaches neither body."""
+    store = _make_store(tmp_path, {_NOTE: _HEALTHY, _BAD_NOTE: _record("topic", "!!binary //4=")})  # BF-970: bytes; that nesting is now read as {}
+    assert await store.read_entry(_BAD_NOTE, reader_id="captain") is not None, "premise: the reader parsed the record"
+    assert _get(store, url).status_code == 200
+
+
+def test_every_route_of_the_module_is_classified():
+    """Guard: a route added to ``routers/records.py`` fails here until it is classified, and a route that holds a record value must be driven by the class below."""
+    found = {(method, route.path) for route in router.routes for method in route.methods}
+    assert found == set(_ROUTES), "a route was added, moved or renamed: classify it in _ROUTES (does its body hold a record value?)"
+    assert {key for key, kind in _ROUTES.items() if kind == "holds a record value"} == _DRIVEN, "a route that holds a record value is not driven by the class below"
+
+
+class TestARecordTheReaderParsedIsAnsweredByEveryRoute:
+    @pytest.mark.parametrize(("value", "marker"), _UNWRITABLE)
+    async def test_the_read_route_answers_a_record_the_writer_cannot_write_with_the_controlled_503(self, tmp_path, caplog, value, marker):
+        store = _make_store(tmp_path, {_NOTE: _HEALTHY, _BAD_NOTE: _record("meta", value)})
+        assert await store.read_entry(_BAD_NOTE, reader_id="captain") is not None, "premise: the reader parsed the record"
+        assert _get(store, f"/api/records/documents/{_NOTE}").status_code == 200, "premise: a healthy record is answered"
+        with caplog.at_level(logging.WARNING, logger="probos.routers.records"):
+            response = _get(store, _READ)
+        assert response.status_code == 503
+        assert response.json() == {
+            "error": "Record document unavailable",
+            "availability": {"state": "unavailable", "code": "records.read_failed", "message": "Record document unavailable", "retryable": True},
+        }
+        assert "returning HTTP 503" in caplog.text and marker not in caplog.text and marker not in response.text
+
+    @pytest.mark.parametrize("url", _LISTINGS)
+    @pytest.mark.parametrize(("value", "marker"), _UNWRITABLE)
+    async def test_a_listing_leaves_out_a_record_the_writer_cannot_write_and_keeps_the_rest(self, tmp_path, caplog, url, value, marker):
+        healthy = {_NOTE: _HEALTHY, _LOG: _HEALTHY}
+        reference = _get(_make_store(tmp_path / "healthy", healthy), url)
+        assert reference.status_code == 200 and _items(reference), "premise: the healthy records alone are listed"
+        store = _make_store(tmp_path / "both", {**healthy, _BAD_NOTE: _record("meta", value), _BAD_LOG: _record("meta", value)})
+        assert await store.read_entry(_BAD_NOTE, reader_id="captain") is not None, "premise: the reader parsed the record"
+        with caplog.at_level(logging.WARNING, logger="probos.routers.records"):
+            response = _get(store, url)
+        assert response.status_code == 200
+        assert _shape(url, response.json()) == _shape(url, reference.json())
+        assert "left out of the listing" in caplog.text and "case.md" in caplog.text and marker not in caplog.text
+
+    async def test_no_record_whose_text_the_reader_parses_nests_too_deep_for_a_listing(self, tmp_path):
+        """BF-970 (#1801): this case scanned a window around the listing's limit through the real store for the first depth a
+        listing refused. The reader now reads a frontmatter whose text holds 64 collections open or more as unparsed, so no text
+        nesting it parses reaches that limit: 63 levels are parsed and listed, 64 are read as ``{}`` and listed with the key, on any
+        platform. BF-970 A2 (round 1 F3): a loaded value can still be deeper than its text (an alias); the next case keeps the window."""
+        limit = frontmatter_module.FRONTMATTER_DEPTH_LIMIT
+        assert limit - 2 < _LISTING_LIMIT, "premise: the deepest record the reader parses is within the listing's limit"
+        store = _make_store(tmp_path, {_NOTE: _HEALTHY})
+        for depth, parsed in ((limit - 2, True), (limit - 1, False)):
+            (store.repo_path / _BAD_NOTE).write_text(_record("meta", _nested(depth)), encoding="utf-8")
+            entry = await store.read_entry(_BAD_NOTE, reader_id="captain")
+            assert ("meta" in entry["frontmatter"]) is parsed, depth
+            response = _get(store, "/api/records/documents")
+            assert response.status_code == 200
+            assert [item["path"] for item in _items(response)] == [_BAD_NOTE, _NOTE], depth
+
+    async def test_a_record_whose_aliases_load_too_deep_for_a_listing_is_left_out_and_read_by_the_read_route(self, tmp_path, caplog):
+        """A2-T4, BF-970 A2 (round 1 F3). The window the case above scanned is still reachable by a record the reader parses: the
+        reader's limit counts collections open at once in the text, and an alias opens none, so a chain of ``_ALIAS_LINKS``
+        anchored lists, three levels deep as text, loads as deep as the read route's body allows. The read route writes it; a
+        listing, whose body holds the record two levels deeper, leaves it out (``_writable``) and lists the rest. A check of each
+        record alone, not inside the listing's body, would keep it, and the listing would be the unhandled 500."""
+        value = _chain(_ALIAS_LINKS)
+        block = f"author: alice\nclassification: ship\nmeta: {value}\ntags: [coolant]\n"
+        assert _record("meta", value) == f"---\n{block}---\n\ncoolant case body\n", "premise: the block is the record's"
+        assert not frontmatter_module.frontmatter_nests_too_deep(block), "premise: the text is within the reader's limit"
+        assert _ALIAS_LINKS > frontmatter_module.FRONTMATTER_DEPTH_LIMIT, "premise: the loaded value is deeper than any text the reader parses"
+        store = _make_store(tmp_path, {_NOTE: _HEALTHY, _BAD_NOTE: _record("meta", value)})
+        entry = await store.read_entry(_BAD_NOTE, reader_id="captain")
+        assert entry is not None and entry["frontmatter"]["meta"] == _chain_value(_ALIAS_LINKS), "premise: the reader parsed the record"
+        assert _writes(_read_body(entry["frontmatter"])) and not _writes(_listing_body(entry["frontmatter"])), "premise: the window"
+        read = _get(store, _READ)
+        assert read.status_code == 200 and read.json()["frontmatter"]["meta"] == _chain_value(_ALIAS_LINKS)
+        with caplog.at_level(logging.WARNING, logger="probos.routers.records"):
+            listing = _get(store, "/api/records/documents")
+        assert listing.status_code == 200 and [item["path"] for item in _items(listing)] == [_NOTE]
+        assert "left out of the listing" in caplog.text and "case.md" in caplog.text
+
+    async def test_the_captains_log_limit_counts_the_records_it_returns(self, tmp_path):
+        def entry(created: str, extra: str = "") -> str:
+            return f"---\nauthor: captain\nclassification: ship\ncreated: '{created}'\n{extra}---\n\nentry body\n"
+
+        store = _make_store(tmp_path, {
+            "captains-log/a.md": entry("2026-01-01"), "captains-log/b.md": entry("2026-02-01"),
+            "captains-log/c.md": entry("2026-03-01", "meta: !!binary //4=\n"),  # BF-970: bytes the writer refuses; that nesting now reads as {}
+        })
+        healthy = _make_store(tmp_path / "healthy", {"captains-log/a.md": entry("2026-01-01"), "captains-log/b.md": entry("2026-02-01")})
+        assert [item["path"] for item in _items(_get(healthy, "/api/records/captains-log?limit=1"))] == ["captains-log/b.md"], "premise: b is the newest healthy entry"
+        assert await store.read_entry("captains-log/c.md", reader_id="captain") is not None, "premise: the reader parsed the newest entry"
+        response = _get(store, "/api/records/captains-log?limit=1")
+        assert response.status_code == 200
+        assert [item["path"] for item in _items(response)] == ["captains-log/b.md"]
+
+    @pytest.mark.parametrize(("value", "marker"), [_UNWRITABLE[0], _UNWRITABLE[2]])  # BF-970: the nesting row left _UNWRITABLE; bytes and the lone surrogate stay
+    async def test_the_graph_answers_a_record_whose_topic_the_writer_cannot_write_with_its_own_envelope(self, tmp_path, caplog, value, marker):
+        assert _get(_make_store(tmp_path / "healthy", {_NOTE: _HEALTHY}), "/api/records/graph").status_code == 200, "premise: the healthy graph is answered"
+        store = _make_store(tmp_path / "both", {_NOTE: _HEALTHY, _BAD_NOTE: _record("topic", value)})
+        entry = await store.read_entry(_BAD_NOTE, reader_id="captain")
+        assert entry is not None and "topic" in entry["frontmatter"], "premise: the reader parsed the record"
+        with caplog.at_level(logging.WARNING, logger="probos.routers.records"):
+            response = _get(store, "/api/records/graph")
+        assert response.headers["content-type"].startswith("application/json")
+        assert response.status_code == 500
+        assert response.json() == {
+            "error": "graph assembly failed",
+            "availability": {"state": "failed", "code": "knowledge_browser.graph_failed", "message": "graph assembly failed", "retryable": True},
+        }
+        assert "returning HTTP 500" in caplog.text and marker not in caplog.text
+
+    @pytest.mark.parametrize(
+        ("field", "url", "message", "code"),
+        [
+            pytest.param("tags", f"/api/records/backlinks/{_BAD_NOTE}", "backlink lookup failed", "knowledge_browser.backlinks_failed", id="tags-backlinks"),
+            pytest.param("department", "/api/records/timeline", "timeline assembly failed", "knowledge_browser.timeline_failed", id="department-timeline"),
+        ],
+    )
+    async def test_a_note_the_notebook_route_accepts_is_answered_by_the_backlinks_and_the_timeline_with_their_own_envelope(self, tmp_path, caplog, field, url, message, code):
+        store = _make_store(tmp_path, {})
+        write = "/api/records/notebooks/alice"
+        healthy = {"topic": "ok", "content": "coolant healthy body", "tags": ["coolant"], "department": "science"}
+        assert _send(store, "POST", write, content=json.dumps(healthy), headers=_JSON).status_code == 200, "premise: the notebook route writes a healthy note"
+        control = f"/api/records/backlinks/{_NOTE}" if field == "tags" else url
+        assert _get(store, control).status_code == 200, "premise: the healthy note alone is answered"
+        poisoned = {"topic": "case", "content": "coolant case body", field: [_LONE] if field == "tags" else _LONE}
+        posted = _send(store, "POST", write, content=json.dumps(poisoned), headers=_JSON)
+        assert posted.status_code == 200 and posted.json() == {"path": _BAD_NOTE, "status": "written"}, "premise: the notebook route accepts the note"
+        entry = await store.read_entry(_BAD_NOTE, reader_id="captain")
+        assert entry is not None and entry["frontmatter"][field] in (_LONE, [_LONE]), "premise: the reader gives the lone surrogate back"
+        service = KnowledgeBrowserService(store)
+        body = await (service.get_backlinks(_BAD_NOTE) if field == "tags" else service.get_timeline())
+        assert not _writes(body), "premise: the body this route builds is one the writer refuses"
+        with caplog.at_level(logging.WARNING, logger="probos.routers.records"):
+            response = _get(store, url)
+        assert response.headers["content-type"].startswith("application/json")
+        assert response.status_code == 500
+        assert response.json() == {"error": message, "availability": {"state": "failed", "code": code, "message": message, "retryable": True}}
+        assert "returning HTTP 500" in caplog.text and "ud800" not in caplog.text
+
+    async def test_the_provenance_projection_of_a_created_the_writer_cannot_write_is_answered_with_the_controlled_503(self, tmp_path, caplog):
+        created = '"2026-11-09\\ud80001:02:03"'  # datetime.fromisoformat takes any one character between the date and the time, a lone surrogate included
+        store = _make_store(tmp_path, {_NOTE: _HEALTHY, _BAD_NOTE: _record("created", created)})
+        entry = await store.read_entry(_BAD_NOTE, reader_id="captain")
+        assert entry is not None and entry["frontmatter"]["created"] == "2026-11-09\ud80001:02:03", "premise: the reader parsed the record"
+        assert not _writes(project_record_frontmatter(_BAD_NOTE, entry["frontmatter"])), "premise: the projection of this record is one the writer refuses"
+        assert _get(store, f"/api/records/documents/{_NOTE}?format=prov-jsonld").status_code == 200, "premise: a healthy record's projection is answered"
+        with caplog.at_level(logging.WARNING, logger="probos.routers.records"):
+            response = _get(store, f"{_READ}?format=prov-jsonld")
+        assert response.status_code == 503
+        assert response.json() == {
+            "error": "Record document unavailable",
+            "availability": {"state": "unavailable", "code": "records.read_failed", "message": "Record document unavailable", "retryable": True},
+        }
+        assert "returning HTTP 503" in caplog.text and "ud800" not in caplog.text

@@ -43,6 +43,7 @@ from probos.cognitive.introspective_telemetry import (
 )
 from probos.admission.seam import shadow_at  # AD-1346 M3c
 from probos.agent_stop import SEAM_DM_ROUTE, active_stop
+from probos.cognitive.context_manifest import context_manifest_metadata  # AD-1357
 from probos.crew_utils import is_crew_agent
 from probos.mesh.intent import IntentAuthorizationDenied
 from probos.cognitive.commands.personality_command import (
@@ -59,6 +60,8 @@ from probos.cognitive.commands.mode_command import handle_mode_command, is_mode_
 from probos.threads.agent_mode import AGENT_MODE_PLAN
 from probos.routers.deps import get_runtime
 from probos.routers.auth import require_crew_scope, verify_ws_token
+
+from probos.utils.step_timing import emit_line, ms_between
 
 logger = logging.getLogger(__name__)
 
@@ -490,6 +493,7 @@ async def set_agent_voice_profile(
         try:
             import time as _time
             from probos.cognitive.episodic import resolve_sovereign_id
+            from probos.cycle_trace import issue_entry_id  # AD-1360 S2b (#1828)
             from probos.types import AnchorFrame, Episode
             sovereign_id = resolve_sovereign_id(agent)
             new_voice_dict = new_profile.to_dict()
@@ -513,6 +517,8 @@ async def set_agent_voice_profile(
                     f"{agent_id}; rationale recorded for learning."
                 ),
                 source="direct",
+                # AD-1360 S2b (#1828): the Captain's approval is an HXI request outside any cycle; its own id.
+                correlation_id=issue_entry_id(getattr(runtime, "cycle_registry", None), kind="hxi_request"),
                 anchors=AnchorFrame(
                     channel="hxi_profile",
                     trigger_type="voice_profile_change",
@@ -2869,6 +2875,9 @@ def _build_reply_metadata(
         emotion = ""
     if emotion:
         meta["emotion"] = emotion
+    # AD-1357 (#1749): what the reply was given, beside it. Absent when the agent
+    # recorded none, so such a turn's metadata is unchanged.
+    meta.update(context_manifest_metadata(result))
     return meta
 
 
@@ -2952,6 +2961,10 @@ async def _agent_chat_impl(
     ],
 ) -> dict[str, Any]:
     """The agent-chat handler proper. See `agent_chat` for why it is split."""
+    # BF-932: log-only stamps of the Captain-DM timeline (``time.perf_counter``); one line is written after the send.
+    _t_entry = time.perf_counter()
+    _t_thread = _t_vision = _t_hook0 = _t_hook1 = _t_entry
+    _hook = "skipped"
     agent = runtime.registry.get(agent_id)
     if agent is None:
         raise HTTPException(status_code=404, detail=f"Agent {agent_id} not found")
@@ -3132,6 +3145,8 @@ async def _agent_chat_impl(
                 "AD-791a: append captain message failed for thread=%s agent=%s",
                 thread.id, agent_id, exc_info=True,
             )
+
+    _t_thread = time.perf_counter()  # BF-932: log-only; the thread-store calls above run synchronously on the event loop
 
     # AD-743: Captain interruption cancels any pending pacing follow-up so the
     # synthesized user-turn doesn't double-fire after a fresh Captain message.
@@ -3451,6 +3466,8 @@ async def _agent_chat_impl(
         )
     )
 
+    _t_vision = time.perf_counter()  # BF-932: log-only
+
     # AD-733a (Wave 171): prepend the agent's current visual context.
     # Confabulation guard (BF-294 lesson): render_for_prompt returns a
     # non-empty "no data" sentinel when the buffer is empty, so the agent
@@ -3471,6 +3488,8 @@ async def _agent_chat_impl(
             if _consumer is not None and getattr(
                 _perception_cfg, "dm_force_describe_enabled", True,
             ):
+                _hook = "ran"  # BF-932: log-only
+                _t_hook0 = time.perf_counter()
                 try:
                     await _consumer.force_describe_current_frame(timeout_s=4.0)
                 except Exception:
@@ -3478,6 +3497,7 @@ async def _agent_chat_impl(
                         "AD-733c-1: force_describe raised for %s",
                         agent_id, exc_info=True,
                     )
+                _t_hook1 = time.perf_counter()
             # AD-733c-2: notify the mode controller of DM activity so the
             # AMBIENT -> ENGAGED transition (and ENGAGED freshness) tracks
             # the real conversational tempo.
@@ -3674,9 +3694,27 @@ async def _agent_chat_impl(
     # is the request was refused. DP 13(c): a refusal must not wear an outage
     # costume. The app-wide handler renders 403; the only ``except Exception``
     # below this point wraps the thread append, so the denial reaches it.
-    result = None if _held_notice else await runtime.intent_bus.send(
-        intent, raise_on_denial=True,
-    )
+    _t_send0 = time.perf_counter()  # BF-932: log-only
+    # BF-977: the line is written whether the send returns or raises. ``sent`` is yes, no (a held thread: nothing
+    # sent) or raised (a denial or any other exception, which propagates unchanged).
+    _sent = "raised"
+    try:
+        result = None if _held_notice else await runtime.intent_bus.send(
+            intent, raise_on_denial=True,
+        )
+        _sent = "no" if _held_notice else "yes"
+    finally:
+        _t_send1 = time.perf_counter()
+        # BF-932: one line per Captain DM: where its time went before the agent's turn and during it (milliseconds,
+        # monotonic clock). ``intent`` is the id the agent's own ``BF-932: dm turn`` line carries.
+        emit_line(
+            logger,
+            "BF-932: dm route intent=%s agent=%s thread_ms=%.0f prep_ms=%.0f hook=%s hook_ms=%.0f dispatch_ms=%.0f "
+            "send_ms=%.0f total_ms=%.0f sent=%s",
+            intent.id[:8], agent_id[:12], ms_between(_t_entry, _t_thread), ms_between(_t_thread, _t_vision), _hook,
+            ms_between(_t_hook0, _t_hook1), ms_between(_t_vision, _t_send0) - ms_between(_t_hook0, _t_hook1),
+            ms_between(_t_send0, _t_send1), ms_between(_t_entry, _t_send1), _sent,
+        )
 
     callsign = ""
     if hasattr(runtime, 'callsign_registry'):
@@ -3738,6 +3776,7 @@ async def _agent_chat_impl(
     # see the same instance via ``self.ctx.sanity_gate``.
     sanity_gate = getattr(runtime, "dm_sanity_gate", None)
     from probos.cognitive.dm import DmReplyContext, DmReplyPipeline
+    from probos.cycle_trace import issue_entry_id, result_cycle_id  # AD-1360 (#1828)
     from probos.dm_reply import DmReply, ToolInvocations, require_rendered  # AD-1248
     _owned_steps_view = None
     _owned_steps_views: dict[
@@ -3810,6 +3849,9 @@ async def _agent_chat_impl(
         owned_steps_views=_owned_steps_views,
         owned_steps_feedback=_owned_steps_capture_feedback,
         plan_mode_gate=_plan_mode_gate,  # AD-1156
+        # AD-1360 (#1828): the agent cycle this reply came from; S2b: the route's own id when no cycle's id came back
+        # (a held turn, no reply, or a non-cognitive result).
+        cycle_id=result_cycle_id(result) or issue_entry_id(getattr(runtime, "cycle_registry", None), kind="hxi_dm"),
     ))
     await pipeline.run()
     response = pipeline.build_response()

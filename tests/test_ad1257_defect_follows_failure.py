@@ -54,8 +54,9 @@ from probos.fault_report import (
     resolve_tool_defect,
 )
 from probos.tools.permissions import ToolPermissionStore
-from probos.tools.protocol import ToolResult, ToolType
+from probos.tools.protocol import ToolPermission, ToolResult, ToolType
 from probos.tools.registry import ToolRegistry
+from tests.offered_tools import offer_mcp  # #1796: the loop runs only offered tools.
 
 ERROR_TEXT = "unknown browser action: 'key_type'"
 OTHER_ERROR = "Page.click: Timeout 30000ms exceeded."
@@ -334,6 +335,7 @@ async def _run_executor(
     registry = ToolRegistry()
     registry.register(tool, provider="test")
     perm_store = ToolPermissionStore()
+    await perm_store.issue_grant("counselor-ezri", tool.tool_id, ToolPermission.READ)  # #1796: the loop runs only offered tools; a dispatch run offers its granted tools.
     executor = WorkItemAgenticExecutor(llm_client=_ScriptedLLM(responses))
     return await executor.run(
         agent_id="counselor-ezri",
@@ -1186,6 +1188,7 @@ async def test_an_mcp_fault_is_filed_against_the_canonical_id_and_recovers_args(
     trace = _TraceCapturingStore()
     runtime = _exec_runtime(registry, ToolPermissionStore())
     runtime.attachment_store = trace
+    offer_mcp(runtime, MCP_TOOL_ID)  # #1796: the loop runs only offered tools, so the scripted call's tool is offered.
 
     executor = WorkItemAgenticExecutor(
         llm_client=_ScriptedLLM([

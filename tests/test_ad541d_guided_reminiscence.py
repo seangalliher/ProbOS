@@ -25,6 +25,7 @@ from probos.cognitive.guided_reminiscence import (
     ReminiscenceResult,
 )
 from probos.cognitive.counselor import CognitiveProfile, CounselorAgent
+from probos.cognitive.episodic_mock import MockEpisodicMemory
 from probos.config import DreamingConfig
 from probos.events import EventType
 from probos.types import Episode
@@ -65,10 +66,9 @@ def _make_engine(
     **kwargs: Any,
 ) -> GuidedReminiscenceEngine:
     memory = MagicMock()
-    if episodes is not None:
-        memory.recent_for_agent = MagicMock(return_value=list(episodes))
-    else:
-        memory.recent_for_agent = MagicMock(return_value=[])
+    # BF-989 (#1838): recent_for_agent is async on both memories and the selection now awaits it; the
+    # synchronous double hid that the read was never awaited.
+    memory.recent_for_agent = AsyncMock(return_value=list(episodes or []))
     return GuidedReminiscenceEngine(
         episodic_memory=memory,
         llm_client=llm_client,
@@ -93,6 +93,7 @@ def _make_counselor(**overrides: Any) -> CounselorAgent:
     agent._dm_cooldowns = {}
     agent._dm_cooldown_seconds = 300
     agent._reminiscence_engine = None
+    agent._reminiscence_resolve_slot = None  # BF-989 round 1: set with the engine at startup
     agent._reminiscence_cooldowns = {}
     agent._REMINISCENCE_COOLDOWN_SECONDS = 7200
     agent._reminiscence_concern_threshold = 3
@@ -110,18 +111,27 @@ def _make_counselor(**overrides: Any) -> CounselorAgent:
 class TestD1Core:
     """Tests 1-10: Engine core methods."""
 
-    def test_select_episodes_for_session_returns_up_to_k(self):
-        """Test 1: select_episodes_for_session returns at most k episodes."""
-        eps = [_make_episode(ep_id=f"ep-{i}", timestamp=time.time() - i * 100,
-                             agent_ids=["a1", "a2"]) for i in range(6)]
-        engine = _make_engine(episodes=eps)
-        result = engine.select_episodes_for_session("a1", k=3)
-        assert len(result) <= 3
+    @pytest.mark.asyncio
+    async def test_select_episodes_for_session_returns_up_to_k(self):
+        """Test 1: select_episodes_for_session returns at most k episodes.
 
-    def test_select_episodes_for_session_empty_memory(self):
-        """Test 2: Agent with no episodes returns empty list."""
-        engine = _make_engine(episodes=[])
-        result = engine.select_episodes_for_session("a1", k=3)
+        BF-989 (#1838): async over a real MockEpisodicMemory. The selection now awaits recent_for_agent; over
+        the synchronous MagicMock this test passed while every real session failed. Six stored, the most
+        recent skipped, three returned.
+        """
+        memory = MockEpisodicMemory()
+        for i in range(6):
+            await memory.store(_make_episode(ep_id=f"ep-{i}", timestamp=time.time() - i * 100,
+                                             agent_ids=["a1", "a2"]))
+        engine = GuidedReminiscenceEngine(episodic_memory=memory)
+        result = await engine.select_episodes_for_session("a1", k=3)
+        assert len(result) == 3
+
+    @pytest.mark.asyncio
+    async def test_select_episodes_for_session_empty_memory(self):
+        """Test 2: Agent with no episodes returns empty list (BF-989: over a real, empty MockEpisodicMemory)."""
+        engine = GuidedReminiscenceEngine(episodic_memory=MockEpisodicMemory())
+        result = await engine.select_episodes_for_session("a1", k=3)
         assert result == []
 
     def test_build_recall_prompt_contains_timestamp_hint(self):
@@ -214,28 +224,27 @@ class TestD1Sessions:
 
     @pytest.mark.asyncio
     async def test_run_session_full_flow(self):
-        """Test 11: End-to-end session with 3 episodes."""
+        """Test 11: End-to-end session with 3 episodes.
+
+        BF-989 (#1838): the recall is the agent's, through recall_fn, so the client only judges and writes the
+        message. Its old first branch also matched the judge's prompt, which contains "recall", so the judge
+        got recall text and no number: the 0.5 fallback, which is now unmeasured.
+        """
         eps = [_make_episode(ep_id=f"ep-{i}", timestamp=time.time() - i * 1000,
                              agent_ids=["a1", "a2"]) for i in range(4)]
         llm = AsyncMock()
-        # LLM returns recall text, then score
-        call_count = [0]
         async def _complete(req, **_kwargs):
-            call_count[0] += 1
             resp = MagicMock()
-            if "recall" in getattr(req, 'prompt', '').lower() or "what happened" in getattr(req, 'prompt', '').lower():
-                resp.text = "ship was healthy and status checked ok"
-            elif "Score" in getattr(req, 'prompt', '') or "score" in getattr(req, 'prompt', '').lower():
-                resp.text = "0.8"
-            else:
-                resp.text = "Your memories look good."
+            resp.text = "0.8" if req.prompt.startswith("Score") else "Your memories look good."
             return resp
         llm.complete = _complete
 
-        engine = _make_engine(episodes=eps, llm_client=llm, max_episodes_per_session=3)
+        async def _recall(_agent_id: str, _prompt: str) -> str:
+            return "ship was healthy and status checked ok"
+
+        engine = _make_engine(episodes=eps, llm_client=llm, max_episodes_per_session=3, recall_fn=_recall)
         result = await engine.run_session("a1")
-        assert result.episodes_tested <= 3
-        assert result.episodes_tested > 0
+        assert result.episodes_tested == 3
         assert 0.0 <= result.overall_accuracy <= 1.0
         assert result.therapeutic_message != ""
         assert result.duration_ms >= 0
@@ -243,9 +252,14 @@ class TestD1Sessions:
     @pytest.mark.asyncio
     async def test_run_session_no_episodes(self):
         """Test 12: Agent with no episodes returns episodes_tested=0."""
-        engine = _make_engine(episodes=[])
+        # BF-989 round 1: with a recall source the empty selection is what ends the session (with none, the
+        # no-source guard did, before the selection ran)
+        recall = AsyncMock(return_value="unused")
+        engine = _make_engine(episodes=[], recall_fn=recall)
         result = await engine.run_session("a1")
         assert result.episodes_tested == 0
+        assert result.unmeasured == []  # nothing was selected, so nothing is held out
+        recall.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_run_session_computes_confabulation_rate(self):
@@ -272,7 +286,12 @@ class TestD1Sessions:
         llm = AsyncMock()
         llm.complete = _llm_complete
 
-        engine = _make_engine(episodes=eps, llm_client=llm, max_episodes_per_session=3)
+        async def _recall(_agent_id: str, _prompt: str) -> str:
+            # BF-989 (#1838): the recall is the agent's own, through recall_fn; the client's recall branch
+            # above is no longer asked
+            return "then after specifically resulted because the core failed exactly"
+
+        engine = _make_engine(episodes=eps, llm_client=llm, max_episodes_per_session=3, recall_fn=_recall)
         result = await engine.run_session("a1")
         assert result.episodes_tested > 0
         # At least some confabulation expected (the recall text has specific_indicators)
@@ -439,7 +458,11 @@ class TestD3CounselorIntegration:
 
     @pytest.mark.asyncio
     async def test_reminiscence_updates_profile_scores(self):
-        """Test 24: Session updates memory_integrity_score, confabulation_rate, etc."""
+        """Test 24: Session updates memory_integrity_score, last_reminiscence and the session count.
+
+        BF-989 (#1838): it no longer writes confabulation_rate. AD-568d/e own that field (an EMA) and
+        source_governance reads it to downgrade retrieval; the session's rate stays in its event.
+        """
         mock_engine = AsyncMock()
         mock_engine.run_session = AsyncMock(return_value=ReminiscenceResult(
             agent_id="a1", episodes_tested=3, overall_accuracy=0.6,
@@ -450,17 +473,23 @@ class TestD3CounselorIntegration:
         agent = _make_counselor(
             _reminiscence_engine=mock_engine,
             _profile_store=store,
+            _cognitive_profiles={"a1": CognitiveProfile(agent_id="a1", confabulation_rate=0.12)},
         )
         await agent._initiate_reminiscence_session("a1", trigger="test")
         profile = agent._cognitive_profiles["a1"]
         assert profile.memory_integrity_score == pytest.approx(0.6)
-        assert profile.confabulation_rate == pytest.approx(0.1)
+        assert profile.confabulation_rate == pytest.approx(0.12)  # BF-989: the owners' value, not the session's 0.1
         assert profile.reminiscence_sessions == 1
         assert profile.last_reminiscence > 0
 
     @pytest.mark.asyncio
-    async def test_confabulation_escalates_alert_level(self):
-        """Test 25: confabulation_rate >= 0.3 sets alert_level to amber."""
+    async def test_confabulation_leaves_alert_level(self):
+        """Test 25: a session's confabulation_rate >= 0.3 leaves alert_level as it was.
+
+        BF-989 (#1838): renamed from test_confabulation_escalates_alert_level, which pinned the defect as the
+        contract: it asserted "amber", a level agents_at_alert and the /counselor router do not count, written
+        from a session whose recall was a memoryless model's. add_assessment owns alert_level.
+        """
         mock_engine = AsyncMock()
         mock_engine.run_session = AsyncMock(return_value=ReminiscenceResult(
             agent_id="a1", episodes_tested=3, overall_accuracy=0.2,
@@ -472,10 +501,11 @@ class TestD3CounselorIntegration:
             _reminiscence_engine=mock_engine,
             _profile_store=store,
             _confabulation_alert_threshold=0.3,
+            _cognitive_profiles={"a1": CognitiveProfile(agent_id="a1", alert_level="yellow")},
         )
         await agent._initiate_reminiscence_session("a1", trigger="test")
         profile = agent._cognitive_profiles["a1"]
-        assert profile.alert_level == "amber"
+        assert profile.alert_level == "yellow"
 
 
 # ==================================================================
@@ -532,6 +562,11 @@ class TestD4D5D6:
         assert "set_reminiscence_engine" in source
         assert "configure_reminiscence" in source
         assert "reminiscence_enabled" in source
+        # BF-989 (#1838): the engine is wired with the agent's own recall (behaviour: test_bf989 N2 and N7); round 1:
+        # the recall and the Counselor share BF-907's resolver (behaviour: test_bf989 R1)
+        assert "reminiscence_identities.resolve_slot_id" in source
+        assert "recall_fn=agent_recall_fn(runtime.registry, resolve_slot=reminiscence_resolve_slot)" in source
+        assert "set_reminiscence_engine(reminiscence_engine, resolve_slot=reminiscence_resolve_slot)" in source
 
     def test_event_type_exists(self):
         """Bonus: Verify EventType.REMINISCENCE_SESSION_COMPLETE exists."""

@@ -14,6 +14,8 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
+from probos.admission.seam import check_at
+from probos.admission.taxonomy import EFFECT_STORE_WRITE
 from probos.events import EventType
 from probos.protocols import ConnectionFactory, DatabaseConnection, EventEmitterMixin
 
@@ -87,8 +89,6 @@ class AssignmentService(EventEmitterMixin):
         self._db: DatabaseConnection | None = None
         self._emit_event = emit_event
         self._ward_room = ward_room  # WardRoomService reference for auto-channel creation
-        # AD-486: Late-bound by finalize._wire_birth_chamber (Wave 5 convention #5)
-        self._birth_chamber: Any = None
         self._snapshot_cache: list[dict[str, Any]] = []  # Sync cache for build_state_snapshot
         self._connection_factory = connection_factory
         if self._connection_factory is None:
@@ -109,9 +109,11 @@ class AssignmentService(EventEmitterMixin):
             await self._db.close()
             self._db = None
 
-    def set_birth_chamber(self, chamber: Any) -> None:
-        """AD-486: Set the Birth Chamber for Ward Room subscription gating."""
-        self._birth_chamber = chamber
+    _admission: object = None  # AD-1346 M3e4d4 (D308, set_admission): None checks nothing
+
+    def set_admission(self, service: object) -> None:
+        """AD-1346 M3e4d4 (D308): the service ``create_assignment`` hands ``check_at``; None checks nothing."""
+        self._admission = service
 
     # ------------------------------------------------------------------
     # Snapshot cache (sync access for build_state_snapshot)
@@ -193,18 +195,7 @@ class AssignmentService(EventEmitterMixin):
                 ward_room_channel_id = ch.id
                 # Subscribe all members
                 for agent_id in members:
-                    # AD-486: Defer subscription if agent is still in Birth Chamber.
-                    if (
-                        self._birth_chamber is not None
-                        and not self._birth_chamber.is_graduated(agent_id)
-                    ):
-                        self._birth_chamber.queue_pending_subscription(
-                            agent_id, ch.id,
-                            (lambda aid=agent_id, cid=ch.id:
-                                self._ward_room.subscribe(aid, cid)),
-                        )
-                    else:
-                        await self._ward_room.subscribe(agent_id, ch.id)
+                    await self._ward_room.subscribe(agent_id, ch.id)
             except Exception as e:
                 logger.debug("Ward Room channel creation failed for assignment: %s", e)
 
@@ -219,6 +210,7 @@ class AssignmentService(EventEmitterMixin):
             ward_room_channel_id=ward_room_channel_id,
         )
 
+        check_at(self._admission, effect=EFFECT_STORE_WRITE, presented_id=created_by)  # AD-1346 M3e4d4 (D307): the assignment's store-write check, in shadow, before its row's INSERT; it blocks nothing
         await self._db.execute(
             "INSERT INTO assignments (id, name, assignment_type, created_by, created_at, "
             "mission, ward_room_channel_id, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
@@ -332,18 +324,7 @@ class AssignmentService(EventEmitterMixin):
         # Subscribe to Ward Room channel if available
         if self._ward_room and assignment.ward_room_channel_id:
             try:
-                # AD-486: Defer subscription if agent is still in Birth Chamber.
-                if (
-                    self._birth_chamber is not None
-                    and not self._birth_chamber.is_graduated(agent_id)
-                ):
-                    self._birth_chamber.queue_pending_subscription(
-                        agent_id, assignment.ward_room_channel_id,
-                        (lambda aid=agent_id, cid=assignment.ward_room_channel_id:
-                            self._ward_room.subscribe(aid, cid)),
-                    )
-                else:
-                    await self._ward_room.subscribe(agent_id, assignment.ward_room_channel_id)
+                await self._ward_room.subscribe(agent_id, assignment.ward_room_channel_id)
             except Exception as e:
                 logger.debug("Ward Room subscribe failed: %s", e)
 

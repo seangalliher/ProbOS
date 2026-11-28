@@ -167,7 +167,7 @@ AGENT_WORK_CALLS: dict[tuple[str, str, str], tuple[object, ...]] = {
     ("src/probos/activation/dispatcher.py", "Dispatcher.dispatch", "handle_intent"): ("sink", _INTENT_SINK),
     ("src/probos/agents/system_qa.py", "SystemQAAgent.run_smoke_tests", "handle_intent"): ("sink", _INTENT_SINK),
     ("src/probos/cognitive/communication_benchmarks.py", "_send_chain_probe", "handle_intent"): ("sink", _INTENT_SINK),
-    ("src/probos/cognitive/qualification_tests.py", "_send_probe", "handle_intent"): ("sink", _INTENT_SINK),
+    ("src/probos/cognitive/qualification_tests.py", "_probe_intent_result", "handle_intent"): ("sink", _INTENT_SINK),
     ("src/probos/cognitive/sandbox.py", "SandboxRunner.test_agent", "handle_intent"): ("sink", _INTENT_SINK),
     ("src/probos/experience/commands/commands_diagnostic.py", "cmd_diagnostic", "handle_intent"): ("sink", _INTENT_SINK),
     ("src/probos/experience/commands/commands_knowledge.py", "cmd_scout", "handle_intent"): ("sink", _INTENT_SINK),

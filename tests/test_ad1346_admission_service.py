@@ -591,6 +591,30 @@ def test_only_the_wiring_the_shadowed_seams_and_the_sinks_name_the_service_or_im
     From AD-1346 M3e2b ``cognitive/builder.py`` takes it as ``execute_approved_build``'s ``admission_service`` and
     imports the package; ``routers/build.py`` and ``build_pipeline.py`` read it from their runtime and pass it to the
     executor, and ``build_dispatcher.py`` passes the service ``runtime.py`` hands it through ``set_admission``.
+    From AD-1346 M3e3b ``agents/http_fetch.py`` imports the package, and ``runtime.py`` hands ``HttpFetchAgent`` the
+    service through its class-level ``set_admission``; ``cognitive/image_gen_dispatch.py`` reads ``admission_service``
+    from the runtime it is given and imports the package.
+    From AD-1346 M3e3c ``tools/browser/session.py`` reads ``admission_service`` from the runtime its session is handed
+    and imports the package.
+    From AD-1346 M3e4b ``ward_room/service.py`` and ``cognitive/episodic.py`` import the package, and ``runtime.py``
+    hands ``WardRoomService`` and ``EpisodicMemory`` the service through their own ``set_admission``.
+    From AD-1346 M3e4d1 ``cognitive/clinical_notes_store.py`` and ``skill_request.py`` import the package, and
+    ``runtime.py`` hands ``ClinicalNotesStore`` and ``SkillRequestStore`` the service through their own
+    ``set_admission``.
+    From AD-1346 M3e4d2 ``persistent_tasks.py`` imports the package, and ``runtime.py`` hands ``PersistentTaskStore``
+    the service through its own ``set_admission``.
+    From AD-1346 M3e4d3 ``threads/__init__.py`` imports the package inside two methods of ``ChatThreadStore``, and
+    ``runtime.py`` hands ``ChatThreadStore`` the service through its own ``set_admission``.
+    From AD-1346 M3e4d4 ``assignment.py`` imports the package, and ``runtime.py`` hands ``AssignmentService`` the
+    service through its own ``set_admission``.
+    From AD-1346 M3e4d5 ``ward_room/channels.py`` imports the package, and ``WardRoomService.set_admission`` hands
+    ``ChannelManager`` the service through its own ``set_admission``.
+    From AD-1346 M3e4d6 ``capability_request.py`` imports the package, and ``runtime.py`` hands the service to
+    ``init_communication`` as ``admission``, which builds ``CapabilityRequestStore`` with it.
+    From AD-1346 M3e4d7 ``artifacts/__init__.py`` imports the package, and ``runtime.py`` hands ``ArtifactStore`` the
+    service through its own ``set_admission``.
+    From AD-1346 M3e4d8 ``workforce.py`` imports the package, and ``init_communication`` builds ``WorkItemStore`` with
+    the ``admission`` that ``runtime.py`` passes it.
     The routers that name the service or import the package are the three whose routes M3c2 shadows and, from AD-1346
     M3e2b, ``routers/build.py``, and none of them is a module of #1604 property 11's routes, which are never
     admission-gated."""
@@ -627,6 +651,8 @@ def test_only_the_wiring_the_shadowed_seams_and_the_sinks_name_the_service_or_im
         "probos/cognitive/scout.py", "probos/cognitive/swe_harness/tools.py",  # AD-1346 M3e1: the subprocess sinks
         "probos/agents/code_runner.py", "probos/execution/isolation.py", "probos/tools/code_execution_tool.py",  # AD-1346 M3e2a
         "probos/build_dispatcher.py", "probos/build_pipeline.py", "probos/cognitive/builder.py", "probos/routers/build.py",  # AD-1346 M3e2b
+        "probos/cognitive/image_gen_dispatch.py",  # AD-1346 M3e3b
+        "probos/tools/browser/session.py",  # AD-1346 M3e3c
     }, sorted(named)
     assert importers == {
         "probos/agent_work.py", "probos/cognitive/agentic_dispatch.py", "probos/cognitive/cognitive_agent.py",
@@ -638,6 +664,17 @@ def test_only_the_wiring_the_shadowed_seams_and_the_sinks_name_the_service_or_im
         "probos/cognitive/scout.py", "probos/cognitive/swe_harness/tools.py",  # AD-1346 M3e1: the subprocess sinks
         "probos/cognitive/dependency_resolver.py", "probos/execution/isolation.py",  # AD-1346 M3e2a
         "probos/cognitive/builder.py",  # AD-1346 M3e2b
+        "probos/agents/http_fetch.py", "probos/cognitive/image_gen_dispatch.py",  # AD-1346 M3e3b
+        "probos/tools/browser/session.py",  # AD-1346 M3e3c
+        "probos/cognitive/episodic.py", "probos/ward_room/service.py",  # AD-1346 M3e4b
+        "probos/cognitive/clinical_notes_store.py", "probos/skill_request.py",  # AD-1346 M3e4d1
+        "probos/persistent_tasks.py",  # AD-1346 M3e4d2
+        "probos/threads/__init__.py",  # AD-1346 M3e4d3
+        "probos/assignment.py",  # AD-1346 M3e4d4
+        "probos/ward_room/channels.py",  # AD-1346 M3e4d5
+        "probos/capability_request.py",  # AD-1346 M3e4d6
+        "probos/artifacts/__init__.py",  # AD-1346 M3e4d7
+        "probos/workforce.py",  # AD-1346 M3e4d8
     }, sorted(importers)
     routes = {rel for rel in named | importers if rel.startswith("probos/routers/") or rel == "probos/api.py"}
     assert routes == {

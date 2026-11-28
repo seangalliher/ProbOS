@@ -67,12 +67,32 @@ jobs:
         # AD-1270f P2.7: each shard keeps --maxfail=10 as its own budget. A shard that
         # stops early is red and leaves nodes unexecuted, which `python-tests` rejects
         # separately, so --maxfail can never give a green `python-tests` with a missing node.
+        # BF-985: shards have stalled after `[ 99%]` until the job limit cancelled them, and the
+        # evidence upload below skips a cancelled job. This step limit ends a stall as a FAILED
+        # step (a healthy shard reaches `[ 99%]` in about 13-14 minutes), so both uploads run.
+        # --probos-shard-stack-dir makes the controller and every worker write all their stacks
+        # to ci-shard-stacks after 600 s without a test event (scripts/_ci_shard_pytest_plugin.py).
+        timeout-minutes: 38
         run: >-
           uv run python -m pytest tests/ -n auto --maxfail=10 -q --tb=short
           -p scripts._ci_shard_pytest_plugin
           --probos-shard-index ${{ matrix.shard }}
           --probos-shard-count 3
           --probos-shard-evidence-dir "${{ runner.temp }}/ci-shard-evidence"
+          --probos-shard-stack-dir "${{ runner.temp }}/ci-shard-stacks"
+
+      # BF-985: the stall dumps are their own artifact. `verify` rejects any entry in the
+      # evidence root but shard-K/<worker>.json, and `python-tests` downloads every
+      # ci-shard-evidence-* artifact into that root, so this name must not match that pattern.
+      - name: Upload stall stack dumps
+        if: ${{ failure() || cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: ci-shard-stacks-${{ matrix.shard }}
+          path: ${{ runner.temp }}/ci-shard-stacks
+          if-no-files-found: ignore
+          overwrite: true
+          retention-days: 7
 
       - name: Upload shard evidence
         if: ${{ !cancelled() }}
@@ -150,8 +170,13 @@ jobs:
           cache: 'npm'
           cache-dependency-path: ui/package-lock.json
 
+      # BF-938 (#1680): onnxruntime-node's install script downloads a CUDA provider tarball from a GitHub release that now
+      # answers 404, and the failed install stopped this job before any test ran. The UI loads onnxruntime-web in the
+      # browser and nothing under ui/src uses the Node binding, so the package's own variable skips that download.
       - name: Install dependencies
         working-directory: ui
+        env:
+          ONNXRUNTIME_NODE_INSTALL_CUDA: skip
         run: npm ci
 
       - name: Run tests

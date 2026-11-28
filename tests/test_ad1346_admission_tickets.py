@@ -142,8 +142,8 @@ def test_the_ticket_vocabularies_are_closed_and_disjoint_from_the_verdict_codes(
     assert not set(TICKET_REASON_CODES) & set(REASON_CODES), "one taxonomy: no ticket code is a verdict code"
     for code in TICKET_REASON_CODES:
         assert authority._REASON_CODE_RE.fullmatch(code), code
-    assert TICKET_EFFECTS == (SEAM_TOOL, SEAM_MODEL_CALL, "subprocess", "egress")  # AD-1346 M3e1 and M3e3a appended
-    assert TICKET_OPERATIONS == ("issue", "tool", "model_call", "subprocess", "egress")
+    assert TICKET_EFFECTS == (SEAM_TOOL, SEAM_MODEL_CALL, "subprocess", "egress", "store_write")  # AD-1346 M3e1, M3e3a and M3e4a appended
+    assert TICKET_OPERATIONS == ("issue", "tool", "model_call", "subprocess", "egress", "store_write")
     assert TICKET_FINDING_KEYS == (
         "operation", "code", "cause", "ticket_id", "principal_key", "presented_key", "parent_id", "depth",
         "work_kind", "stop_id",

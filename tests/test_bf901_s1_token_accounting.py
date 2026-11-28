@@ -39,6 +39,7 @@ from probos.config import CognitiveConfig
 from probos.crew_execution_usage import TOKEN_SOURCE_ESTIMATED, TOKEN_SOURCE_MEASURED
 from probos.tools.protocol import ToolResult
 from probos.types import LLMRequest, LLMResponse
+from tests.offered_tools import offer_scripted  # #1796: the loop runs only offered tools.
 
 OUTBOUND = [{"role": "user", "content": "a" * 400}]  # 400 // 4 = 100 estimated prompt tokens
 REPLY = "z" * 80  # 80 // 4 = 20 estimated completion tokens
@@ -353,7 +354,7 @@ class _StubExecutor:
 
 async def _run(responses: list[LLMResponse], **kwargs: Any) -> AgenticResult:
     loop = AgenticLoop(llm_client=_ScriptedClient(responses), tool_executor=_StubExecutor(output="r" * 2000), **kwargs)
-    return await loop.run(system_prompt="sys", user_message="task", tools=[], context={"agent_id": "a1"})
+    return await loop.run(system_prompt="sys", user_message="task", tools=[*offer_scripted(responses)], context={"agent_id": "a1"})  # #1796: the loop runs only offered tools, so the scripted calls' tools are offered.
 
 
 async def test_an_estimated_loop_outcome_reaches_the_cost_stop_wording() -> None:

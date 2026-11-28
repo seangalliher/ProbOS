@@ -134,7 +134,6 @@ from probos.config_models.crew import (
     DutyDefinition,
     EPSDepartmentConfig,
     FirewallConfig,
-    HolodeckBirthChamberConfig,
     HolodeckScenarioConfig,
     HolodeckTeamSimulationConfig,
     MemorySecurityConfig,
@@ -2859,6 +2858,9 @@ class SecurityInfraConfig(BaseModel):
     # Setting it restricts those intents to these roots plus the agent
     # workspace. Independent of the floor: the runtime data directory is refused
     # whatever this says, so widening it cannot hand out the credential vault.
+    # BF-944: the pool agents behind those intents apply it as well. The bundled todo, note and scheduler agents read their
+    # files in ~/.probos through read_file and list_directory, so list that directory here: a refused read of the todo or
+    # reminder file makes those agents answer that the list could not be read, and write nothing (BF-961).
     read_roots: list[str] = Field(default_factory=list)
 
     # AD-456b: Runtime Sandboxing
@@ -3941,7 +3943,6 @@ class SystemConfig(BaseModel):
     quality_trigger: QualityTriggerConfig = QualityTriggerConfig()  # AD-564
     quality_router: QualityRouterConfig = QualityRouterConfig()  # AD-565
     onboarding: OnboardingConfig = OnboardingConfig()
-    holodeck_birth_chamber: HolodeckBirthChamberConfig = HolodeckBirthChamberConfig()
     holodeck_scenarios: HolodeckScenarioConfig = HolodeckScenarioConfig()
     team_simulations: HolodeckTeamSimulationConfig = HolodeckTeamSimulationConfig()
     skill_requests: SkillRequestConfig = SkillRequestConfig()  # AD-906
@@ -4151,6 +4152,16 @@ class SystemConfig(BaseModel):
         return v
 
 
+def drop_null_sections(document: dict[str, Any]) -> dict[str, Any]:
+    """Return ``document`` without its top-level ``None`` values.
+
+    YAML sections with all values commented out parse as key: None; dropping them lets pydantic use
+    the section's defaults instead of failing validation. load_config and the HXI config save
+    (routers/config.py, #1414 item 3) share this rule.
+    """
+    return {k: v for k, v in document.items() if v is not None}
+
+
 def load_config(path: str | Path) -> SystemConfig:
     """Load and validate system config from a YAML file."""
     path = Path(path)
@@ -4158,7 +4169,4 @@ def load_config(path: str | Path) -> SystemConfig:
         return SystemConfig()
     with open(path, encoding="utf-8") as f:
         raw = yaml.safe_load(f) or {}
-    # YAML sections with all values commented out parse as key: None.
-    # Remove these so pydantic uses defaults instead of failing validation.
-    raw = {k: v for k, v in raw.items() if v is not None}
-    return SystemConfig.model_validate(raw)
+    return SystemConfig.model_validate(drop_null_sections(raw))

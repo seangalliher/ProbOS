@@ -27,6 +27,21 @@ rest of that ``try``'s are.
 AD-1346 M3e1: ``check_at`` is also called at subprocess sinks (five from M3e1, seven from AD-1346 M3e2a, eight from AD-1346 M3e2b) with the effect
 ``subprocess``, which ``TICKET_EFFECTS`` now holds, so the scope ``hold`` asks for includes it.
 AD-1346 M3e3a: ``TICKET_EFFECTS`` also holds ``egress``, so that scope includes it too.
+AD-1346 M3e3b: ``check_at`` is also called at two egress sinks with the effect ``egress`` and at the image endpoint
+with ``model_call``.
+AD-1346 M3e3c: and at the browser engine's start and its CDP connect with ``egress``.
+AD-1346 M3e4a: ``TICKET_EFFECTS`` also holds ``store_write``, so that scope includes it too.
+AD-1346 M3e4b: ``check_at`` is also called with ``store_write`` at the Ward Room's four content-write entries and at
+the episodic store.
+AD-1346 M3e4d1: and at the clinical notes store's ``write_note`` and the skill request store's ``file_request`` and
+``decide``.
+AD-1346 M3e4d2: and at the persistent task store's ``create_task``.
+AD-1346 M3e4d3: and at the chat thread store's ``create_thread`` and ``append_message_once``.
+AD-1346 M3e4d4: and at the assignment service's ``create_assignment``.
+AD-1346 M3e4d5: and at the Ward Room channel manager's ``create_channel`` and ``get_or_create_dm_channel``.
+AD-1346 M3e4d6: and at the capability request store's ``file_request`` and ``decide``.
+AD-1346 M3e4d7: and at the artifact store's ``add_version`` and ``reconcile_exact_version``.
+AD-1346 M3e4d8: and at the work item store's ``_insert_work_item``.
 The service reads no configuration.
 """
 
@@ -52,7 +67,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 #: AD-1346 M3d2 (D113): the scope and budget ``hold`` asks for: every effect point of ``TICKET_EFFECTS`` (three from
-#: AD-1346 M3e1, four from AD-1346 M3e3a), no ceiling (M5 owns accounts).
+#: AD-1346 M3e1, four from AD-1346 M3e3a, five from AD-1346 M3e4a), no ceiling (M5 owns accounts).
 _WORK_SCOPE: Final = TicketScope(frozenset(TICKET_EFFECTS))
 _NO_CEILINGS: Final = TicketBudget()
 
@@ -177,7 +192,7 @@ class AdmissionService:
         ``probos.admission.seam.hold_at`` calls it. With no registry, or after ``close``, it returns ``NO_HOLD`` and
         issues nothing. Otherwise the ticket's principal is the key ``decide`` gives the presented id (the slot when it
         resolves, D112); ``hold`` asks for every effect point of ``TICKET_EFFECTS`` and no ceiling (D113; AD-1346 M3e1
-        added ``subprocess``, AD-1346 M3e3a ``egress``). The ticket is a child of the carried
+        added ``subprocess``, AD-1346 M3e3a ``egress``, AD-1346 M3e4a ``store_write``). The ticket is a child of the carried
         ticket when ``child is True`` and the carrier holds one, else a root (D111). The carrier then holds the new
         ticket, or None when the registry refused the issue and counted its finding (D114).
         AD-1346 M3d3b2 (D152): with a recorder, the issue's finding is offered to ``ShadowRecorder.offer_ticket`` before
@@ -220,7 +235,17 @@ class AdmissionService:
         """The sink check of one effect point, in shadow: the registry's finding for the ticket the carrier holds (AD-1346 M3d3a).
 
         ``probos.admission.seam.check_at`` calls it at the tool sink, the model gateway and, from AD-1346 M3e1, the
-        subprocess sinks (seven from AD-1346 M3e2a, eight from AD-1346 M3e2b). It reads the carrier in the
+        subprocess sinks (seven from AD-1346 M3e2a, eight from AD-1346 M3e2b), and from AD-1346 M3e3b two egress sinks
+        and the image endpoint, and from AD-1346 M3e3c the browser engine's start and its CDP connect, and from AD-1346
+        M3e4b the Ward Room's four content-write entries and the episodic store, and from AD-1346 M3e4d1 the clinical
+        notes store's ``write_note`` and the skill request store's ``file_request`` and ``decide``, and from AD-1346
+        M3e4d2 the persistent task store's ``create_task``, and from AD-1346 M3e4d3 the chat thread store's
+        ``create_thread`` and ``append_message_once``, and from AD-1346 M3e4d4 the assignment service's
+        ``create_assignment``, and from AD-1346 M3e4d5 the Ward Room channel manager's ``create_channel`` and
+        ``get_or_create_dm_channel``, and from AD-1346 M3e4d6 the capability request store's ``file_request`` and
+        ``decide``, and from AD-1346 M3e4d7 the artifact store's ``add_version`` and
+        ``reconcile_exact_version``, and from AD-1346 M3e4d8 the work item store's ``_insert_work_item``. It reads the
+        carrier in the
         caller's context. On the loop the service was built with, or on any thread when it was built with none, it checks
         at once (``_check_ticket``). Anywhere else (another thread, or another thread's loop) it hands the check, with the
         ticket it read, to that loop with ``call_soon_threadsafe``, so a service built with a loop makes its sink

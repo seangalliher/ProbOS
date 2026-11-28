@@ -22,7 +22,7 @@ from probos.consensus.trust import TrustNetwork
 from probos.crew_profile import CallsignRegistry
 from probos.tools.delegate_task_tool import DelegateTaskTool
 from probos.tools.permissions import ToolPermissionStore
-from probos.tools.protocol import ToolResult, ToolType
+from probos.tools.protocol import ToolPermission, ToolResult, ToolType
 from probos.tools.registry import ToolRegistry
 from probos.tools.search_capabilities_tool import SearchCapabilitiesTool
 
@@ -394,6 +394,7 @@ async def test_delegate_happy_path_returns_result_and_increments_depth(tmp_path)
     )
     probe = _ProbeTool()
     runtime = _delegation_runtime(tmp_path, cs=cs, agent_registry=areg, extra_tools=[probe])
+    await runtime.tool_permission_store.issue_grant("bashir-1", "nested_probe", ToolPermission.READ)  # #1796: the loop runs only offered tools; a dispatch run offers its granted tools.
     # The nested loop (the tool's own client): probe the context, then answer.
     nested_llm = _ScriptedLLM([_tool_use("nested_probe", {}), _text("Sickbay nominal")])
     tool = DelegateTaskTool(
@@ -605,6 +606,7 @@ async def test_loop_delegate_task_runs_nested_executor_and_returns_into_transcri
         tmp_path, cs=cs, agent_registry=areg, extra_tools=[probe],
         agentic_tools=AgenticToolsConfig(delegation_enabled=True),
     )
+    await runtime.tool_permission_store.issue_grant("bashir-1", "nested_probe", ToolPermission.READ)  # #1796: the loop runs only offered tools; a dispatch run offers its granted tools.
     # One scripted LLM drives BOTH the parent loop and (since the delegate tool
     # is registered with self._llm) the nested loop, in pop order.
     parent_llm = _ScriptedLLM([
