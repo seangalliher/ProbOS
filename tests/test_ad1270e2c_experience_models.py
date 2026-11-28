@@ -216,7 +216,9 @@ EXPECTED_DUMPS: dict[str, dict[str, object]] = {
                                    'threads': 4,
                                    'timeout_seconds': 30.0,
                                    # AD-738f S1 (#1868): the Captain's per-role voices, empty by default.
-                                   'agent_voices': {}}},
+                                   'agent_voices': {},
+                                   # AD-738g S2 (#1662): the boot warm-up, on by default, inert unless the backend is kokoro.
+                                   'prewarm': True}},
     'WakeWordConfig': {   'wake_word_trainer_enabled': False,
                           'custom_model_filename': 'captain.onnx',
                           'retain_training_samples': False,

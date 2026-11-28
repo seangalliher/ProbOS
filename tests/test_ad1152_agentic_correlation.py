@@ -353,7 +353,8 @@ async def _off_observation(
     assert config["tts"].pop("kokoro") == {
         "python_path": "tools/kokoro/venv/Scripts/python", "model_path": "tools/kokoro/kokoro-v1.0.onnx",
         "voices_path": "tools/kokoro/voices-v1.0.bin", "voice": "af_heart", "speed": 1.0, "threads": 4,
-        "timeout_seconds": 30.0, "agent_voices": {},
+        # AD-738g S2 adds the boot warm-up switch (default on); it too acts only when tts.backend is "kokoro".
+        "timeout_seconds": 30.0, "agent_voices": {}, "prewarm": True,
     }
     # BF-932's loop-stall threshold (1.0 s; 0 starts no sampler) was added after this capture too. The sampler is
     # started in ProbOSRuntime.start, which this observation never calls.

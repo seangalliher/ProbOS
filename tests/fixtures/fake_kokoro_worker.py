@@ -19,6 +19,7 @@ import importlib.util
 import json
 import os
 import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -97,6 +98,13 @@ class FakeEngine:
             raise ValueError(f"Nothing to synthesize, {text!r} produced no phonemes")
         if text == "CHATTER":
             print("library chatter on stdout")
+        # AD-738g S2: CRASH ends the process mid-request; SLOW takes half a second; HANG outlasts any test's timeout.
+        if text == "CRASH":
+            raise SystemExit(3)
+        if text == "SLOW":
+            time.sleep(0.5)
+        if text == "HANG":
+            time.sleep(60.0)
         frames = int(RATE * 0.05 * (1 + self.voices.index(voice)))
         return np.full(frames, 0.25, dtype=np.float32), RATE
 

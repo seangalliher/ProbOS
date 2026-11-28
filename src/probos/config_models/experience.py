@@ -681,6 +681,13 @@ class KokoroTTSConfig(BaseModel):
     role matches no crew member and changes nothing; each sentence's log line shows its
     ``voice=`` and ``role=``."""
 
+    prewarm: bool = True
+    """AD-738g S2 (#1662): about 5 s after boot, start the worker and speak one line to it in the
+    background, discarding the audio, so the first reply does not pay the cold start (about 3.2 s,
+    measured in S1). It acts only when ``tts.enabled`` is true and ``tts.backend`` is ``kokoro``
+    (the default backend is ``browser``). The cost: the worker's memory is held from boot, also in a
+    session that never speaks. ``false`` starts the worker on the first reply, as before."""
+
     @field_validator("python_path", "model_path", "voices_path")
     @classmethod
     def _paths_can_name_a_file(cls, value: str) -> str:
