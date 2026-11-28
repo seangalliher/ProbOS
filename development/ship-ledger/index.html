@@ -1,0 +1,2441 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Probabilistic agent-native OS runtime">
+      
+      
+        <meta name="author" content="Sean Galliher">
+      
+      
+        <link rel="canonical" href="https://probos.dev/development/ship-ledger/">
+      
+      
+        <link rel="prev" href="../deterministic-ship/">
+      
+      
+        <link rel="next" href="../config-reference/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.2">
+    
+    
+      
+        <title>How Literally Should ProbOS Take Ledger? - ProbOS</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.57a0d79d.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.fb2fffe2.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="deep-purple" data-md-color-accent="amber">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#how-literally-should-probos-take-ledger" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="ProbOS" class="md-header__button md-logo" aria-label="ProbOS" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            ProbOS
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              How Literally Should ProbOS Take Ledger?
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="deep-purple" data-md-color-accent="amber"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="deep-purple" data-md-color-accent="amber"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/seangalliher/ProbOS" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    seangalliher/ProbOS
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="ProbOS" class="md-nav__button md-logo" aria-label="ProbOS" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    ProbOS
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/seangalliher/ProbOS" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    seangalliher/ProbOS
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting Started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quickstart
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    What ProbOS Is
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/shell/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Interactive Shell
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/desktop/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Desktop
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Architecture
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/overview/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/substrate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Substrate
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/mesh/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Mesh
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/consensus/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Consensus
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/cognitive/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cognitive
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/experience/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Experience
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/memory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Memory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/federation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Federation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/knowledge/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Knowledge
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/self-perception-framing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Self-Perception Framing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/architecture-review-2026-10-20/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture Review (2026-10-20)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/hxi-glass-bridge/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    HXI Glass Bridge (Design)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agents
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Agents
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../agents/inventory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agent Inventory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../agents/concepts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Key Concepts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Development
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Development
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../status/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Status
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../roadmap/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Roadmap
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../nooplex-readiness/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Nooplex Readiness
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../platform-maturity-program/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Platform Maturity Program
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../composable-cognition/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Composable Cognition
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../structure/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Project Structure
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../design-principles/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Design Principles
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../deterministic-ship/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Probabilistic Crew, Deterministic Ship
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    How Literally Should ProbOS Take Ledger?
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    How Literally Should ProbOS Take Ledger?
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#1-short-answer" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Short answer
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-what-probos-keeps-today" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. What ProbOS keeps today
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-the-gaps" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. The gaps
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-proposal-a-ships-log-of-chain-heads" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Proposal: a ship's log of chain heads
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="4. Proposal: a ship&#39;s log of chain heads">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#open-questions-for-the-ad-that-builds-it" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Open questions for the AD that builds it
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-is-this-a-use-case-for-blockchain" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. Is this a use case for blockchain?
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../config-reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../contributing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contributing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Research
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Research
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/cognitive-jit-procedural-learning-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cognitive JIT & Procedural Learning
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/emergent-coordination-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Emergent Coordination
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/self-regulation-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cognitive Self-Regulation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/crew-capability-architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Crew Capability Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/crew-development-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Crew Development Framework
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/group-psychometrics-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Group Psychometrics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/universal-agent-activation-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Universal Agent Activation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/memvid-evaluation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Memvid Evaluation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Community
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Community
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="https://discord.gg/cbprTVfsjt" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Discord
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#1-short-answer" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Short answer
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-what-probos-keeps-today" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. What ProbOS keeps today
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-the-gaps" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. The gaps
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-proposal-a-ships-log-of-chain-heads" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Proposal: a ship's log of chain heads
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="4. Proposal: a ship&#39;s log of chain heads">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#open-questions-for-the-ad-that-builds-it" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Open questions for the AD that builds it
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-is-this-a-use-case-for-blockchain" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. Is this a use case for blockchain?
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="how-literally-should-probos-take-ledger">How Literally Should ProbOS Take "Ledger"?<a class="headerlink" href="#how-literally-should-probos-take-ledger" title="Permanent link">&para;</a></h1>
+<p><strong>Status:</strong> Design note; the Captain's decisions of 2026-10-30 are in section 7. Step 1 of the sequence in section 6 (BF-942) is done and step 2 is next. Not an AD; it allocates no number and creates no work by itself.
+<strong>Drafted by:</strong> <code>claude-architect</code> (Claude Code, Opus 5.5), 2026-10-30. Verified against <code>main</code> at <code>1ffbdc61</code>.
+<strong>Revised by:</strong> <code>claude-architect</code> (Claude Code, Opus 5.5), 2026-11-27, for the BF-942 fix. Re-verified against <code>main</code> at <code>32997b18</code>: every statement about BF-942 and BF-980, the "Verified in production?" and "Known gaps" cells of the EventLog, Identity Ledger, security AuditLog and Ship's Records rows, section 6's step 3 candidates, and every citation into a file that changed since <code>1ffbdc61</code> (<code>event_log.py</code>, <code>runtime.py</code>, <code>startup/finalize.py</code>, <code>records_store.py</code>, <code>config.py</code>, <code>config_models/knowledge.py</code>, <code>acm.py</code>, <code>workforce.py</code>, <code>routers/workforce.py</code>, <code>admission/store.py</code>) or did not exist then (<code>doctor/checks/records_git_check.py</code>), and the four records step 1 names (<code>prompts/bf-942-eventlog-truncation-anchor.md</code>, <code>PROGRESS.md</code>, <code>DECISIONS.md</code>, <code>deterministic-ship.md</code>). Citations into the other files, unchanged since <code>1ffbdc61</code>, stand as verified then.
+<strong>Placement:</strong> a companion to <a href="../deterministic-ship/">Probabilistic Crew, Deterministic Ship</a>, invariant 4 ("a fixed past").</p>
+<blockquote>
+<p><strong>Question (the Captain's).</strong> The thesis of the deterministic ship speaks of "a system of record, like a ledger".
+How literally should ProbOS take that? Does it already have a ledger, should it have one, and is this a use case
+for blockchain?</p>
+</blockquote>
+<hr />
+<h2 id="1-short-answer">1. Short answer<a class="headerlink" href="#1-short-answer" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>ProbOS already keeps ledgers, plural.</strong> Three stores are hash-chained (the EventLog, the Identity Ledger and the
+  security AuditLog), Ship's Records is a git repository, and about a dozen other tables are append-only by rule.
+  "Ledger" is already literal in the sense that matters: an append-only record whose past entries are not rewritten.</li>
+<li><strong>What it lacks is one thing a ledger implies: the ability to prove the whole record is unchanged.</strong> The EventLog's
+  chain survives pruning since BF-942 (#1706, fixed 2026-11-09), but no production code verifies it; the Identity
+  Ledger is verified on request, the security AuditLog at boot, and nothing ties the separate stores together.
+  Every guarantee is held on the same disk as the data it protects.</li>
+<li><strong>The literal step worth taking is small:</strong> a ship's log of chain heads. Every so often, record each store's
+  current head hash in one append-only, hash-chained record, signed with the ship's key when one is configured. Then
+  copy that head off the ship to a witness. Without a witness it protects against bugs and stray writers, not against
+  anyone who controls the machine.</li>
+<li><strong>No blockchain inside a ship.</strong> A blockchain is a way for parties who do not trust each other, and have no common
+  authority, to agree on one history. A ship has one authority, the Captain, on one install. A blockchain would add
+  cost and latency and would collide with the Captain's right to erase (AD-754).</li>
+<li><strong>Between ships, use a transparency log, not a blockchain.</strong> Ships run by different operators are where
+  blockchain-like properties start to matter. The established answer there is a Certificate-Transparency-style log:
+  a Merkle tree, signed tree heads, and independent witnesses. ProbOS's DIDs, Ed25519 key binding and signed identity
+  chains (AD-1196 to AD-1198) already point that way.</li>
+</ul>
+<h2 id="2-what-probos-keeps-today">2. What ProbOS keeps today<a class="headerlink" href="#2-what-probos-keeps-today" title="Permanent link">&para;</a></h2>
+<p>"Chained" means each entry carries the hash of the one before, so changing an old entry breaks every later link.
+"Verified" means production code, not only tests, re-derives the chain.</p>
+<table>
+<thead>
+<tr>
+<th>Store</th>
+<th>Chained?</th>
+<th>Verified in production?</th>
+<th>Owner and anchor</th>
+<th>Known gaps</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>EventLog</strong> (AD-490), the system of record for events</td>
+<td>Yes: SHA-256 over <code>prev_hash</code> and the row (<code>substrate/event_log.py:105-116</code>, <code>:772-806</code>)</td>
+<td><strong>No.</strong> <code>verify_chain</code> (<code>event_log.py:1263</code>) has no production caller; only tests call it</td>
+<td><code>EventLog</code></td>
+<td>Pruning no longer severs the chain (BF-942, #1706, PR #1778, fixed 2026-11-09). <code>prune</code> runs hourly with a 7-day, 100,000-row retention by default (<code>runtime.py:4092-4111</code>, <code>config_models/core.py:148-150</code>); each stage that deletes first writes the id and <code>row_hash</code> of the last row it deletes to the one-row <code>events_truncation_anchor</code> table, in the transaction of the delete (<code>event_log.py:95-101</code>, <code>:1404-1419</code>). <code>verify_chain</code> walks from that anchor (<code>:1263-1325</code>): a pruned log whose kept rows verify reports <code>truncated</code> with <code>ok</code> True; a store pruned before the fix whose first kept row does not link to genesis reports <code>unanchored</code> with <code>ok</code> False until its next prune deletes rows; an edited row in the middle reports <code>broken</code> at the first row that fails. BF-980 (#1811, PR #1831, 2026-11-18) chains the first row after a prune that empties the table from the anchor (<code>:799-805</code>). Limits: the anchor sits in <code>events.db</code> beside the rows it describes, so it shows what a prune recorded and does not guard against a writer of that file; and the walk takes no lock, so a prune that commits during it can report a break that is not there (<code>:1274-1275</code>).</td>
+</tr>
+<tr>
+<td><strong>Identity Ledger</strong> (AD-441)</td>
+<td>Yes: <code>LedgerBlock</code> (<code>identity.py:350-369</code>)</td>
+<td>On request: <code>GET /api/identity/ledger</code> (<code>routers/identity.py:52-58</code>). Foreign chains are checked on import when federation is armed (<code>identity.py:372-379</code>)</td>
+<td><code>AgentIdentityRegistry</code></td>
+<td>Blocks are not individually signed. An operator's peer reset deletes one foreign ship's stored chain by design (<code>identity.py:1641</code>, AD-1198 slice 2c).</td>
+</tr>
+<tr>
+<td><strong>Key events</strong> (AD-1196)</td>
+<td>Anchored in the Identity Ledger and signed with Ed25519 (<code>identity_keys.py:1-10</code>)</td>
+<td>When armed, on every chain import (<code>federation/continuity.py:1-30</code>)</td>
+<td>Same</td>
+<td>Off by default: <code>federation.identity_keys_enabled = False</code> (<code>config.py:2520</code>).</td>
+</tr>
+<tr>
+<td><strong>Transfer marks</strong> (AD-1198 2b-ii)</td>
+<td>No, append-only; each row names the chain head it was judged against (<code>identity_transfer_marks.py:11-13</code>)</td>
+<td>Re-judged on armed start</td>
+<td>Same</td>
+<td>Federation-only.</td>
+</tr>
+<tr>
+<td><strong>Security AuditLog</strong> (AD-456, AD-1278)</td>
+<td>Yes, with a truncation anchor so a capped log reads as truncated, not tampered (<code>security/audit.py:1-29</code>, <code>:89-110</code>)</td>
+<td>At boot, on rehydrate (<code>startup/finalize.py:4765-4782</code>)</td>
+<td><code>AuditLog</code></td>
+<td>A failure only logs a warning; the message itself says the Captain alert path is still to come.</td>
+</tr>
+<tr>
+<td><strong>Assistant audit log</strong> (AD-754; a second class also named <code>AuditLog</code>)</td>
+<td>No</td>
+<td>No</td>
+<td><code>security/audit_log.py</code></td>
+<td>Deletes rows after 90 days (<code>audit_log.py:182-188</code>) and redacts in place to <code>[DELETED]</code> (<code>:96-109</code>). Correct for erasure, but it is not a fixed-past record.</td>
+</tr>
+<tr>
+<td><strong>Ship's Records</strong></td>
+<td>Git: each commit hashes its parent (<code>knowledge/records_store.py:673-678</code>, <code>:858-861</code>)</td>
+<td>No. Nothing runs <code>git fsck</code> on its repository or compares heads. <code>probos doctor</code> reports a stale <code>index.lock</code>, too many uncommitted paths and an old last commit while paths are uncommitted (<code>doctor/checks/records_git_check.py:1-6</code>, BF-957, #1760): whether the history still grows, not whether it is unchanged</td>
+<td><code>RecordsStore</code></td>
+<td><code>auto_commit</code> can be turned off (<code>config_models/knowledge.py:322</code>). A failed commit is not raised; since BF-957 it is logged at WARNING, once per distinct error until a git add or commit succeeds, and the last 32 distinct errors are remembered (<code>records_store.py:25</code>, <code>:1898-1961</code>, <code>:1963-1975</code>, <code>:1987-2010</code>), so a write can sit on disk uncommitted behind one warning. The <code>_commit</code> docstring says "Debounced", but the body does not debounce. The store does not sign its commits (a git configuration can), and git's default object hash is SHA-1.</td>
+</tr>
+<tr>
+<td><strong>Ship's Archive</strong> (AD-524, AD-1341)</td>
+<td>No; append-only by rule, one write path (<code>knowledge/archive_store.py:1-17</code>)</td>
+<td>No</td>
+<td><code>ArchiveStore</code></td>
+<td>The Captain's erase deletes the row and leaves a marker that deliberately holds <strong>no hash</strong> (<code>archive_store.py:593-621</code>).</td>
+</tr>
+<tr>
+<td><strong>Archive snapshot ledger</strong> (AD-1341 S6)</td>
+<td>No; rows never deleted, each with the snapshot file's SHA-256 (<code>knowledge/archive_ledger.py:1-17</code>)</td>
+<td>No</td>
+<td><code>ArchiveLedger</code></td>
+<td>Written only by the offline CLI.</td>
+</tr>
+<tr>
+<td><strong>ACM lifecycle transitions</strong></td>
+<td>No; append rows with <code>initiated_by</code> (<code>acm.py:90-96</code>)</td>
+<td>No</td>
+<td>ACM</td>
+<td>The current-state row is updated in place (<code>acm.py:282</code>), which is fine: the transitions are the history.</td>
+</tr>
+<tr>
+<td><strong>Trust</strong></td>
+<td>No. <code>trust_outcome_receipts</code> keep <code>payload_sha256</code> and <code>evidence_sha256</code> (<code>consensus/trust.py:39-50</code>)</td>
+<td>No</td>
+<td><code>TrustNetwork</code></td>
+<td><code>trust_scores</code> is current state, updated in place and deleted on reset or identity merge (<code>trust.py:1223</code>, <code>:1315</code>); <code>trust_snapshots</code> keep pre-merge rows (<code>:53</code>).</td>
+</tr>
+<tr>
+<td><strong>Workforce booking timestamps</strong></td>
+<td>No; documented as append-only (<code>workforce.py:11</code>, <code>:1310</code>)</td>
+<td>No</td>
+<td><code>WorkItemStore</code></td>
+<td><strong>Not append-only in practice:</strong> <code>delete_work_item</code> deletes them (<code>workforce.py:10858-10894</code>), reachable from <code>DELETE</code> on the workforce API (<code>routers/workforce.py:813-822</code>).</td>
+</tr>
+<tr>
+<td><strong>Completion calibration</strong> (<code>economic_calibration.py:639</code>)</td>
+<td>No; outcome and resolution rows are inserted (<code>:235-292</code>)</td>
+<td>No</td>
+<td><code>CompletionCalibrationLedger</code></td>
+<td>Derived statistics are updated in place (<code>:995</code>), which is fine.</td>
+</tr>
+<tr>
+<td><strong>Episode eviction audit</strong> (AD-541f)</td>
+<td>No, explicitly "no hash-chain" (<code>cognitive/eviction_audit.py:1-8</code>)</td>
+<td>No</td>
+<td><code>EvictionAuditLog</code></td>
+<td>Log-and-degrade: an audit failure never blocks an eviction.</td>
+</tr>
+<tr>
+<td><strong>Directives</strong> (AD-386)</td>
+<td>No</td>
+<td>No</td>
+<td><code>DirectiveStore</code></td>
+<td>Revocation sets <code>revoked_at</code> in place (<code>directive_store.py:187</code>); there is no separate history.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Not ledgers, and should not be treated as ones:</strong> the AD-1346 shadow admission store is bounded telemetry and is
+pruned by design (<code>admission/store.py:1-55</code>). Work permits carry a mutable <code>closed</code> flag (<code>tools/work_permits.py:449</code>)
+and nothing consumes them yet (<code>:9-13</code>). Consensus outcomes have no store of their own: in <code>consensus/</code> only
+<code>trust.py</code> creates tables, and <code>governance/</code> creates none. The federation envelope store is forward-only state, not
+history (<code>federation_envelope_store.py:1-13</code>). Classes named "ledger" for in-turn bookkeeping (<code>WriteLedger</code>,
+<code>StepLedger</code>, <code>ProcedureChallengeLedger</code>) are working records, not the ship's system of record.</p>
+<p><strong>Terminology fix.</strong> <code>docs/architecture/federation.md:32</code> and the AD-441 entry
+(<code>roadmap-era-5-completed.md:3826</code>) call the Identity Ledger a "hash-chain blockchain". It is a hash chain with one
+writer and no consensus; calling it a blockchain invites exactly the confusion this note is about.</p>
+<h2 id="3-the-gaps">3. The gaps<a class="headerlink" href="#3-the-gaps" title="Permanent link">&para;</a></h2>
+<ol>
+<li><strong>A chain broke in normal operation; closed 2026-11-09.</strong> EventLog pruning severed the AD-490 chain. BF-942 (#1706,
+   PR #1778) leaves the kept rows unchanged, since rehashing them would forge history, and records a durable
+   truncation anchor like AD-1278's in the transaction of each prune's delete (<code>event_log.py:1337-1419</code>). The anchor
+   is held in <code>events.db</code> with the rows, so gap 4 applies to it.</li>
+<li><strong>Verification is patchy and silent.</strong> The EventLog is never verified, the Identity Ledger only when someone asks,
+   and the AuditLog at boot with a warning nobody is alerted to. Under invariant 6, a check that never runs or
+   that reports only to a log is close to no check.</li>
+<li><strong>Each ledger stands alone.</strong> Nothing proves that the EventLog, the identity chain, Ship's Records and the
+   Archive, taken together, are the history the ship had yesterday.</li>
+<li><strong>Every proof lives on the same disk as the data.</strong> Anyone who can rewrite a store can rewrite its chain too, and
+   restoring an old backup of the whole data directory rolls back the chain along with the data. A hash chain only
+   detects tampering when someone <em>else</em> holds a copy of a recent head. This is the core of the tamper-evident
+   logging literature (Crosby and Wallach, 2009) and of Certificate Transparency's witnesses and gossip.</li>
+</ol>
+<h2 id="4-proposal-a-ships-log-of-chain-heads">4. Proposal: a ship's log of chain heads<a class="headerlink" href="#4-proposal-a-ships-log-of-chain-heads" title="Permanent link">&para;</a></h2>
+<p><strong>What.</strong> One append-only store, the <em>head log</em>. Each entry, called a checkpoint, records for every covered store its
+name, its current head, and the size or position at that head. Each checkpoint also carries the hash of the previous
+checkpoint and the time. When the ship's key is configured (AD-1196), the checkpoint is signed with it as a detached
+JWS (AD-1144). Otherwise it says plainly that it is unsigned.</p>
+<p><strong>What "head" means per store (version 1):</strong></p>
+<table>
+<thead>
+<tr>
+<th>Store</th>
+<th>Head</th>
+<th>Cost to read</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>EventLog</td>
+<td><code>(id, row_hash)</code> of the last row, plus the truncation anchor (BF-942)</td>
+<td>One indexed read</td>
+</tr>
+<tr>
+<td>Identity Ledger</td>
+<td><code>(block_index, block_hash)</code> of the tip</td>
+<td>One read</td>
+</tr>
+<tr>
+<td>Security AuditLog</td>
+<td><code>(sequence, entry_hash)</code> of the last persisted entry, plus <code>_truncated_at</code></td>
+<td>In memory</td>
+</tr>
+<tr>
+<td>Ship's Records</td>
+<td><code>git rev-parse HEAD</code>, plus whether the working tree is clean</td>
+<td>One subprocess</td>
+</tr>
+</tbody>
+</table>
+<p>Version 1 covers only stores that already have a chain. The others (Archive, ACM transitions, trust receipts,
+booking timestamps, calibration, the snapshot ledger) have no head to record. Bringing them in means giving each one
+a chain, or having the head log chain them by recording a digest of the rows added since the last checkpoint. That is
+version 2, and it runs straight into erasure (open question 3).</p>
+<p><strong>Verification.</strong> A verifier walks each store's chain from its anchor, confirms that the head recorded in every
+checkpoint is reachable in the current chain, and checks the head log's own chain and signatures. It reports one
+state per store: <strong>intact</strong>, <strong>truncated at an anchor</strong>, <strong>broken at a position</strong>, or <strong>not verified</strong>, never a bare
+pass (invariant 6). It runs at boot, as the AuditLog check already does, then on a schedule and on demand from a CLI
+or doctor command. The Captain sees the latest checkpoint, its head digest and the last verification result. A
+failure needs a real alert, which no chain has today.</p>
+<p><strong>The witness, which is what makes it more than a checksum.</strong> The checkpoint digest must leave the ship. In rising
+order of cost: the Captain copies or exports it (a short digest shown in the HXI or CLI); a federation peer
+countersigns it over the signed envelopes AD-1197 already provides; or an RFC 3161 timestamp authority or
+OpenTimestamps timestamps it, which sends a 32-byte hash and no data. A witness turns "the store says it is intact"
+into "the store still matches what someone outside saw on that date", and it also detects a rollback of the whole
+data directory.</p>
+<p><strong>What it defends against.</strong> Bugs that delete or rewrite rows (the BF-942 class), writers that bypass a store's owner
+(BF-943 is the file-level cousin), and a silent restore of an older backup. It does not defend against the Captain:
+the Captain owns the ship and may erase, which is why erasure has to be designed in rather than treated as tampering.</p>
+<p><strong>Cost.</strong> One small row per checkpoint; reading the version 1 heads is a handful of indexed reads and one <code>git</code>
+call. A full verification is linear in chain length; the EventLog is capped at 100,000 rows by default. Witnessing
+costs a network call per checkpoint, or none if the Captain copies the digest by hand.</p>
+<h3 id="open-questions-for-the-ad-that-builds-it">Open questions for the AD that builds it<a class="headerlink" href="#open-questions-for-the-ad-that-builds-it" title="Permanent link">&para;</a></h3>
+<ol>
+<li><strong>Signing key and owner.</strong> The ship's DID key exists only when <code>federation.identity_keys_enabled</code> is on (default
+   off), held in the OS keyring (<code>identity_key_store.py:119</code>) or, in development, in plaintext (<code>:209</code>). Should the
+   head log require it, sign when available, or use a separate local key? A local signature adds little against
+   someone who holds the machine; its value is that a third party can verify an exported checkpoint.</li>
+<li><strong>Where it lives.</strong> Its own SQLite file through <code>ConnectionFactory</code>, beside the stores it covers, and owned by one
+   service. It must survive <code>probos reset</code>, as the Archive does, and a reset should close the old timeline with a
+   final checkpoint that the new timeline's first checkpoint cites.</li>
+<li><strong>Erasure.</strong> The Archive's erase marker deliberately keeps no hash of the erased entry, because a hash of short or
+   guessable content can confirm what it was. A version 2 digest over Archive rows would break when an entry is
+   erased. Options: (a) leave erasable stores out of the head log; (b) give each row a random salt and commit only
+   to <code>H(salt, content)</code>, deleting the salt on erase, so the commitment survives but reveals nothing, a known
+   pattern for erasure on append-only logs (EPRS, 2019); (c) record an erasure as a new head with a signed reason
+   and accept that the erased segment can no longer be re-verified. Option (b) changes the Archive's "no hash"
+   rule, so it is the Captain's call.</li>
+<li><strong>Retention.</strong> With BF-942's anchor, every checkpoint older than the anchor refers to rows that are gone.
+   The verifier should report such checkpoints as "covering pruned history" and check only that the anchor sits on
+   the recorded path. The signed head log is also what keeps the anchor itself from being forged: an attacker who
+   rewrites rows and resets the anchor no longer matches earlier checkpoints.</li>
+<li><strong>Which governance files count.</strong> BF-943 shows agents can rewrite governance files in the running checkout.
+   A git tree hash of <code>config/standing_orders/</code> and the Constitution would fit in a checkpoint. Considered and
+   deferred: BF-943's write floor is the first defence.</li>
+<li><strong>Interval.</strong> A fixed interval (hourly, matching the prune loop) or at defined events (boot, shutdown, prune,
+   reset). Events are cheaper and give natural points to verify against.</li>
+</ol>
+<h2 id="5-is-this-a-use-case-for-blockchain">5. Is this a use case for blockchain?<a class="headerlink" href="#5-is-this-a-use-case-for-blockchain" title="Permanent link">&para;</a></h2>
+<p><strong>Inside one ship: no.</strong> A blockchain (Nakamoto, 2008; or a permissioned BFT ledger) solves one problem: getting
+mutually distrusting parties with no common authority to agree on one append-only history, through proof-of-work or
+validator voting. Remove that problem and what remains is a hash chain, which ProbOS already has. A ship has a
+common authority, the Captain, and one install. Running a consensus protocol among processes that share an owner,
+a disk and a key buys nothing a hash chain plus a witness does not, and it costs latency on every commit point,
+operational complexity and a large new dependency.</p>
+<p>It would also collide with two things ProbOS chose deliberately:</p>
+<ul>
+<li><strong>The Captain's right to erase.</strong> AD-754 erasure and the Archive's content-free erase marker exist so that data the
+  Captain asks to forget is actually gone. An immutable replicated ledger is built to make that impossible; the
+  European Parliament's study on blockchain and the GDPR describes this as a structural tension and recommends
+  keeping personal data off-chain (Finck, EPRS, 2019).</li>
+<li><strong>Two meanings of "consensus".</strong> ProbOS's consensus (<code>QuorumEngine</code>, trust-weighted votes on destructive intents)
+  is judgement: should this happen? Blockchain consensus is storage agreement: what order did things happen in?
+  Using the second to stand in for the first, or the reverse, would blur the line <code>deterministic-ship.md</code> draws
+  between what is probabilistic and what is recorded.</li>
+</ul>
+<p><strong>Between ships: blockchain-like properties matter; a blockchain still is not the best tool.</strong> Ships run by
+different operators do not share an authority, so one ship's history is a claim another ship must be able to check.
+That is exactly the setting Certificate Transparency was built for: independent logs, append-only Merkle trees,
+signed tree heads, inclusion and consistency proofs, and monitors and witnesses who compare what they were shown, so
+a log cannot show different histories to different parties (RFC 6962, now RFC 9162). Sigstore's Rekor applies the
+same design to software signing, now on a tile-based log, with witness cosigning in progress. It needs no mining and
+no token, and each ship stays the only writer of its own log.</p>
+<p>What the federation ADs already provide, and where this fits:</p>
+<ul>
+<li><strong>AD-441, AD-443:</strong> <code>did:probos</code> identifiers, birth and transfer certificates, and an exportable, importable
+  Identity Ledger chain.</li>
+<li><strong>AD-1196:</strong> the ship's DID bound to an Ed25519 key, with rotation and recovery, as key events anchored in that
+  chain.</li>
+<li><strong>AD-1197:</strong> canonical signed envelopes with replay protection.</li>
+<li><strong>AD-1198:</strong> authenticated peer admission, chain resync, and verification of every chain relied on.</li>
+</ul>
+<p>Together they give each ship a signed, verifiable identity history that its peers check. What they do not give is
+a peer that <em>remembers</em> another ship's head and would notice a fork or rollback later. The envelope store keeps a
+forward-only hold of each peer's key events, which is the start of that. A federation transparency log would extend
+it: each ship publishes signed checkpoints of its head log, and peers countersign them as witnesses. Epic #1140
+(AD-1196 to AD-1198) is <strong>closed</strong>, so this needs a new issue when federation work resumes; it does not belong under</p>
+<h1 id="1140">1140.<a class="headerlink" href="#1140" title="Permanent link">&para;</a></h1>
+<p><strong>Optional public anchoring.</strong> A ship may periodically timestamp its checkpoint digest on a public chain
+(OpenTimestamps) or with an RFC 3161 authority. Only a 32-byte hash leaves the ship, so it conflicts with neither
+erasure nor privacy. It proves only "this digest existed by this date", which is the one thing a single ship cannot
+prove to itself.</p>
+<h2 id="6-recommended-sequence">6. Recommended sequence<a class="headerlink" href="#6-recommended-sequence" title="Permanent link">&para;</a></h2>
+<ol>
+<li><strong>BF-942 (#1706). Done on 2026-11-09.</strong> A durable truncation anchor for the EventLog, after the AD-1278 pattern,
+   merged in PR #1778 and recorded in <code>prompts/bf-942-eventlog-truncation-anchor.md</code>, <code>PROGRESS.md</code>, <code>DECISIONS.md</code>
+   and invariant 4 of <code>deterministic-ship.md</code>. BF-980 (#1811, PR #1831, 2026-11-18) chains the first row after a
+   prune that empties the table from that anchor.</li>
+<li><strong>Verify what exists and say so. The next step.</strong> One verification service for the three chains plus <code>git fsck</code> on
+   Ship's Records, run at boot and on demand, reporting intact, truncated, broken or not verified, with a Captain alert
+   on failure. This also takes on the AuditLog's missing alert. It could be a BF or a small AD. What <code>unanchored</code>
+   means to an operator (history cut and no anchor records where, as in a store pruned before BF-942) is not decided;
+   it is decided before <code>verify_chain</code> is wired to a doctor check or an integrity report (BF942-F4, #1754).</li>
+<li><strong>Fix the false "append-only" claims found here.</strong> Booking timestamps deleted by <code>delete_work_item</code>: a candidate
+   BF, not filed by 2026-11-27; file it only after confirming reach. The second candidate, Ship's Records' commit
+   failure logged at debug, was fixed by BF-957 (#1760, closed 2026-11-08): it is now logged at WARNING and
+   <code>probos doctor</code> reports the repository's state, and it is still not raised (<code>records_store.py:1990-1994</code>).</li>
+<li><strong>The head log (a future AD).</strong> Version 1 over the chained stores, with a manual or RFC 3161 witness.</li>
+<li><strong>Version 2 coverage</strong> of the Archive and other append-only tables, after the erasure decision below.</li>
+<li><strong>A federation transparency log</strong>, as a new issue when federation resumes, built on AD-1196 to AD-1198.</li>
+</ol>
+<h2 id="7-decisions-captain-2026-10-30">7. Decisions (Captain, 2026-10-30)<a class="headerlink" href="#7-decisions-captain-2026-10-30" title="Permanent link">&para;</a></h2>
+<p>The Captain took the recommended option on all five:</p>
+<ol>
+<li><strong>The head log is adopted as a future AD,</strong> to be filed after steps 1 and 2 (BF-942, then verification with an alert). It is small and makes invariant 4 checkable.</li>
+<li><strong>Witness:</strong> start with the Captain's own copy of the digest, plus an optional RFC 3161 or OpenTimestamps anchor. Peer witnesses come only with federation.</li>
+<li><strong>Erasure versus coverage:</strong> the Archive keeps its "no hash of erased content" rule and stays out of the head log for now. Salted commitments (option b in section 4) are not adopted.</li>
+<li><strong>Signing:</strong> the head log is signed only when the ship's key is configured, and records say "unsigned" otherwise. The key is not a prerequisite.</li>
+<li><strong>Blockchain:</strong> ProbOS uses hash chains and transparency logs, not a blockchain, unless a future need appears for agreement among parties with no common authority.</li>
+</ol>
+<p><strong>Status, 2026-11-27.</strong> Step 1 of the sequence in section 6 is done: BF-942 (#1706) was fixed on 2026-11-09 (PR #1778). Step 2, verification with an alert, is next. The head-log AD is filed only after step 2 (decision 1).</p>
+<h2 id="8-prior-art">8. Prior art<a class="headerlink" href="#8-prior-art" title="Permanent link">&para;</a></h2>
+<ul>
+<li>S. A. Crosby and D. S. Wallach, "Efficient Data Structures for Tamper-Evident Logging", USENIX Security 2009
+  (<a href="https://www.usenix.org/conference/usenixsecurity09/technical-sessions/presentation/efficient-data-structures-tamper-evident">USENIX</a>).
+  <strong>Adopted:</strong> detection needs a commitment held outside the logger. <strong>Deferred:</strong> their history tree, with
+  logarithmic proofs, is worth using only when a third party audits (federation).</li>
+<li>B. Laurie, A. Langley, E. Kasper, RFC 6962 (2013), and B. Laurie, E. Messeri, R. Stradling, RFC 9162, Certificate
+  Transparency 2.0 (2021) (<a href="https://datatracker.ietf.org/doc/html/rfc9162">RFC 9162</a>). <strong>Adopted</strong> as the model for
+  federation: Merkle tree, signed tree heads, consistency proofs, and monitors.</li>
+<li>Trillian and Sigstore Rekor (Rekor v2 moved to a tile-based Trillian-Tessera log; witness cosigning is in progress)
+  (<a href="https://blog.sigstore.dev/index.xml">Sigstore blog</a>). <strong>Considered:</strong> reference implementations if ProbOS ever
+  runs a shared federation log; too heavy for one ship.</li>
+<li>Git as a Merkle DAG: every commit hashes its tree and parents, so Ship's Records already has a chain whose head
+  is the commit id. <strong>Adopted:</strong> use it as is.</li>
+<li>C. Adams et al., RFC 3161, Time-Stamp Protocol (2001), and OpenTimestamps (P. Todd). <strong>Adopted</strong> as optional
+  external timestamps that send only a hash.</li>
+<li>M. Finck, <em>Blockchain and the General Data Protection Regulation</em>, EPRS/STOA, PE 634.445, July 2019
+  (<a href="https://www.uni.lu/wp-content/uploads/sites/3/2024/08/EPRS_STU2019634445_EN.pdf">PDF</a>). <strong>Adopted:</strong> keep
+  personal data off any immutable shared log; erasure needs designing in.</li>
+<li>Internal: no earlier ProbOS design of a Merkle tree, transparency log or blockchain. The only mentions are the
+  "hash-chain blockchain" wording above, the warm-boot design note's use of the EventLog chain as a tamper-evident
+  witness (<code>docs/research/warm-boot-fragmentation-design.md:34</code>), and the Nooplex vision's discussion of DAOs and
+  token-curated registries as cross-organisation governance (<code>Vibes/Nooplex_Final.md:141</code>), which this note leaves
+  to federation.</li>
+<li>Not fetched in full here (the hosts were unreachable from this session): the RFC 9162 text itself and the Crosby
+  and Wallach paper. Their summaries above rest on the RFCs' and paper's well-known content and search abstracts.</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+  <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright &copy; 2025-2026 Nooplex LLC
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.sections", "navigation.expand", "navigation.top", "search.suggest", "search.highlight", "content.code.copy", "content.tabs.link"], "search": "../../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.a5f9d56c.min.js"></script>
+      
+    
+  </body>
+</html>
