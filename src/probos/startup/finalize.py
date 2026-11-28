@@ -916,6 +916,37 @@ async def _start_transcript_reaper(*, runtime: Any, config: "SystemConfig") -> N
         )
 
 
+def _start_voice_prewarm(*, runtime: Any, config: "SystemConfig", delay_seconds: float | None = None) -> None:
+    """AD-738g S2 (#1662): warm the resident Kokoro worker in the background, after boot.
+
+    Only when speech is on, ``tts.backend`` is ``kokoro`` and ``tts.kokoro.prewarm`` is set, and only
+    with the runtime's own voice synthesis service; otherwise nothing starts. The task is stored on
+    ``runtime.voice_prewarm_task`` and never awaited here (a plain function, so startup cannot wait on
+    it); shutdown cancels and awaits it before the voice service closes (``startup/shutdown.py``). It
+    waits ``PREWARM_DELAY_SECONDS`` first; ``delay_seconds`` overrides that for tests.
+    """
+    runtime.voice_prewarm_task = None
+    tts = getattr(config, "tts", None)
+    if tts is None or tts.enabled is not True or tts.backend != "kokoro":
+        return
+    if tts.kokoro.prewarm is not True:
+        logger.info("AD-738g S2: tts.kokoro.prewarm is off; the first reply starts the kokoro worker")
+        return
+    from probos.audio.tts.kokoro_backend import PREWARM_DELAY_SECONDS, KokoroBackend
+    from probos.audio.tts.resident import VoiceSynthesisService
+
+    service = getattr(runtime, "voice_synthesis", None)
+    if not isinstance(service, VoiceSynthesisService):
+        logger.info("AD-738g S2: no voice synthesis service on this runtime; no kokoro prewarm")
+        return
+    delay = PREWARM_DELAY_SECONDS if delay_seconds is None else delay_seconds
+    backend = KokoroBackend(tts.kokoro, service=service)
+    runtime.voice_prewarm_task = asyncio.create_task(
+        backend.prewarm(delay_seconds=delay), name="ad738g-s2-kokoro-prewarm",
+    )
+    logger.info("AD-738g S2: kokoro prewarm scheduled in %.0f s", delay)
+
+
 async def _start_working_memory_cognition(*, runtime: Any, config: "SystemConfig") -> None:
     """AD-1270 (#1324): attach AD-668/AD-670 to crew working memory and start their cycle.
 
@@ -6385,6 +6416,9 @@ async def finalize_startup(
     # BF-779: name the consensus intents that have no commit gate, now that
     # every template is registered.
     runtime.log_consensus_gap_register()
+
+    # AD-738g S2 (#1662): warm the Kokoro worker in the background; never awaited here.
+    _start_voice_prewarm(runtime=runtime, config=config)
 
     runtime._started = True
 

@@ -14,11 +14,19 @@ and no file, and the worker keeps serving. A line it cannot read ends the worker
 model it cannot load, or a default voice the voices file lacks, ends it before it reads a line
 (exit 2). Logs go to stderr, which the service sends to a file; library prints go there too.
 
+AD-738g S3a: when the model reports durations (kokoro-onnx's ``has_timings``: the
+``model-files-v1.1`` export), the worker asks for the phoneme timings with no added pauses and,
+before it prints the path, writes ``<output_file>.timing.json`` (``write_timing``):
+``{"v": 1, "rate": R, "samples": N, "timings": [{"p": symbol, "s": start, "e": end}, ...]}``, the
+times in seconds from the start of the WAV. No timings, no file; a file it cannot write is logged
+and the audio stands. Any other engine is called exactly as in S1. The line protocol is unchanged.
+
 License posture: this file imports only the standard library and numpy at module level, and
 ``onnxruntime`` and ``kokoro_onnx`` (both MIT) inside ``load_engine``. kokoro-onnx loads
 phonemizer and espeak-ng (GPL-3.0-or-later) into this process, which the operator installs
 into ``tools/kokoro/venv`` (``scripts/kokoro-fetch.ps1``) and which exchanges only text, a
-voice id and a speed in and a WAV path out with ProbOS (THIRD_PARTY_LICENSES.md, "License policy").
+voice id and a speed in and a WAV path out with ProbOS, plus the timing file beside the WAV,
+which is data (THIRD_PARTY_LICENSES.md, "License policy").
 """
 
 from __future__ import annotations
@@ -36,14 +44,29 @@ import numpy as np
 #: Exit codes; the service's log shows them as ``exit=N``.
 EXIT_CANNOT_START = 2
 EXIT_UNREADABLE_LINE = 3
+#: AD-738g S3a: the timing file's name after the WAV's (``probos.audio.tts.resident.TIMING_SUFFIX``) and its format version
+#: (``probos.avatars.phoneme_visemes.TIMING_VERSION``); this process cannot import probos, so tests pin them equal.
+TIMING_SUFFIX = ".timing.json"
+TIMING_VERSION = 1
 
 
 class Engine(Protocol):
-    """The part of ``kokoro_onnx.Kokoro`` the worker uses."""
+    """The part of ``kokoro_onnx.Kokoro`` the worker uses.
+
+    AD-738g S3a: ``has_timings`` is kokoro-onnx 0.6.1's own flag, True when the model has a
+    ``duration`` output; ``create_timed`` returns the audio, the rate and one timing per spoken
+    symbol, each with ``phoneme``, ``start`` and ``end`` (seconds).
+    """
+
+    has_timings: bool
 
     def get_voices(self) -> list[str]: ...
 
     def create(self, text: str, voice: str, speed: float, lang: str) -> tuple[Any, int]: ...
+
+    def create_timed(
+        self, text: str, voice: str, speed: float, lang: str, sentence_pause: float, clause_pause: float,
+    ) -> tuple[Any, int, list[Any]]: ...
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -60,8 +83,11 @@ def lang_for(voice: str) -> str:
     return "en-gb" if voice.startswith("b") else "en-us"
 
 
-def write_wav(path: Path, samples: Any, rate: int) -> None:
-    """Write ``samples`` (floats in -1..1) as a 16-bit mono WAV; the file appears whole or not at all."""
+def write_wav(path: Path, samples: Any, rate: int) -> int:
+    """Write ``samples`` (floats in -1..1) as a 16-bit mono WAV; the file appears whole or not at all.
+
+    Returns the number of samples written (AD-738g S3a: the timing file records it).
+    """
     pcm = np.nan_to_num(np.asarray(samples, dtype=np.float32).reshape(-1), nan=0.0)
     if pcm.size == 0:
         raise ValueError("the engine returned no samples")
@@ -74,6 +100,26 @@ def write_wav(path: Path, samples: Any, rate: int) -> None:
             out.setframerate(int(rate))
             out.writeframes(frames)
         os.replace(part, path)
+    finally:
+        part.unlink(missing_ok=True)
+    return int(pcm.size)
+
+
+def write_timing(path: Path, timings: list[Any], rate: int, samples: int) -> None:
+    """AD-738g S3a: write ``timings`` beside the WAV at ``path`` as ASCII JSON; the file appears whole or not at all."""
+    body = {
+        "v": TIMING_VERSION,
+        "rate": int(rate),
+        "samples": int(samples),
+        "timings": [
+            {"p": str(t.phoneme), "s": round(float(t.start), 6), "e": round(float(t.end), 6)} for t in timings
+        ],
+    }
+    target = path.with_name(path.name + TIMING_SUFFIX)
+    part = target.with_name(target.name + ".part")
+    try:
+        part.write_bytes(json.dumps(body, ensure_ascii=True, separators=(",", ":")).encode("ascii"))
+        os.replace(part, target)
     finally:
         part.unlink(missing_ok=True)
 
@@ -99,13 +145,27 @@ def speak(engine: Engine, voices: frozenset[str], default_voice: str, request: d
         if voice is not None:
             _log(log, f"AD-738g: voice {voice!r} is not in the voices file; speaking {default_voice}")
         voice = default_voice
+    out = Path(request["output_file"])
+    timings: list[Any] = []
     try:
-        samples, rate = engine.create(text, voice=voice, speed=float(request.get("speed", 1.0)), lang=lang_for(voice))
-        write_wav(Path(request["output_file"]), samples, rate)
-        return True
+        speed = float(request.get("speed", 1.0))
+        if engine.has_timings:
+            # AD-738g S3a: no added pauses, so the pacing is S1's for a one-batch request (contract decision 5).
+            samples, rate, timings = engine.create_timed(
+                text, voice=voice, speed=speed, lang=lang_for(voice), sentence_pause=0.0, clause_pause=0.0,
+            )
+        else:
+            samples, rate = engine.create(text, voice=voice, speed=speed, lang=lang_for(voice))
+        written = write_wav(out, samples, rate)
     except Exception as exc:  # one request: answer with the path and no file, keep serving (contract D2)
         _log(log, f"AD-738g: no audio for {len(text)} chars in {voice}: {type(exc).__name__}: {exc}")
         return False
+    if timings:
+        try:
+            write_timing(out, timings, rate, written)
+        except Exception as exc:  # the audio stands; this sentence's lip-sync takes the rhubarb path
+            _log(log, f"AD-738g: no timing file for {len(text)} chars in {voice}: {type(exc).__name__}: {exc}")
+    return True
 
 
 def serve(engine: Engine, stdin: IO[bytes], stdout: IO[bytes], *, default_voice: str, log: IO[str]) -> int:

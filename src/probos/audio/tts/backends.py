@@ -13,10 +13,15 @@ class TTSResult:
     ``audio_bytes`` is the raw container payload (Piper produces WAV).
     ``mime`` is the container MIME (``audio/wav`` for Piper).
     ``None`` from a backend means "honest-degrade — caller falls back."
+
+    AD-738g S3a (#1662): ``timing`` is the Kokoro worker's phoneme-timing file for this audio
+    (JSON bytes, ``scripts/kokoro_worker.py``), or ``None``. The route checks it and makes lip-sync
+    frames from it only under ``lipsync.backend: synthesizer`` (``probos.avatars.phoneme_visemes``).
     """
 
     audio_bytes: bytes
     mime: str
+    timing: bytes | None = None
 
 
 class TTSBackend(Protocol):

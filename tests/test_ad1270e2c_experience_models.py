@@ -216,7 +216,9 @@ EXPECTED_DUMPS: dict[str, dict[str, object]] = {
                                    'threads': 4,
                                    'timeout_seconds': 30.0,
                                    # AD-738f S1 (#1868): the Captain's per-role voices, empty by default.
-                                   'agent_voices': {}}},
+                                   'agent_voices': {},
+                                   # AD-738g S2 (#1662): the boot warm-up, on by default, inert unless the backend is kokoro.
+                                   'prewarm': True}},
     'WakeWordConfig': {   'wake_word_trainer_enabled': False,
                           'custom_model_filename': 'captain.onnx',
                           'retain_training_samples': False,
@@ -402,7 +404,8 @@ def test_approval_inbox_exclusive_lower_bound_survived_the_move() -> None:
 @pytest.mark.parametrize(
     ("model_name", "value"),
     # AD-738g S1 (#1662): "kokoro" joins the TTS backend Literal; "espeak" stays rejected below.
-    [("TTSConfig", "piper"), ("TTSConfig", "kokoro"), ("LipSyncConfig", "rhubarb")],
+    # AD-738g S3a: "synthesizer" joins the lip-sync backend Literal.
+    [("TTSConfig", "piper"), ("TTSConfig", "kokoro"), ("LipSyncConfig", "rhubarb"), ("LipSyncConfig", "synthesizer")],
 )
 def test_backend_literals_accept_their_declared_alternative(
     model_name: str, value: str

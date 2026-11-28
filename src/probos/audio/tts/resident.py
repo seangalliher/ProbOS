@@ -59,6 +59,11 @@ PIPER_MAX_RESIDENT = 4
 _STDERR_TAIL_BYTES = 500
 #: BF-930: a Piper request that takes at least this long (milliseconds) is reported with its steps (log-only).
 SLOW_SYNTHESIS_MS = 750.0
+#: AD-738g S3a (#1662): the phoneme-timing file a Kokoro worker writes beside each WAV. The worker cannot
+#: import this module, so ``scripts/kokoro_worker.py`` keeps its own ``TIMING_SUFFIX`` and a test pins the two equal.
+TIMING_SUFFIX = ".timing.json"
+#: AD-738g S3a: a timing file over this size is not read (4096 timed symbols of about 45 bytes each, with headroom).
+TIMING_MAX_BYTES = 262144
 
 _T = TypeVar("_T")
 
@@ -102,6 +107,8 @@ class WorkerKey(Protocol):
     model in logs, and ``retire_on_empty`` says whether a request answered without audio
     retires the process (Piper: yes, as BF-918 shipped; Kokoro: no, its worker answers a
     request it cannot speak and stays healthy, and a restart reloads the model).
+    AD-738g S3a: ``timing_sidecar`` says whether the worker may leave a phoneme-timing file
+    beside the WAV (``TIMING_SUFFIX``), which the outcome then carries (Piper: no; Kokoro: yes).
     """
 
     @property
@@ -112,6 +119,9 @@ class WorkerKey(Protocol):
 
     @property
     def retire_on_empty(self) -> bool: ...
+
+    @property
+    def timing_sidecar(self) -> bool: ...
 
     def argv(self, output_dir: Path) -> list[str]: ...
 
@@ -138,6 +148,10 @@ class PiperWorkerKey:
     @property
     def retire_on_empty(self) -> bool:
         return True
+
+    @property
+    def timing_sidecar(self) -> bool:
+        return False
 
     def argv(self, output_dir: Path) -> list[str]:
         """The process's command line. ``--output_dir`` is a fallback; each request names its own file."""
@@ -183,6 +197,10 @@ class KokoroWorkerKey:
     def retire_on_empty(self) -> bool:
         return False
 
+    @property
+    def timing_sidecar(self) -> bool:
+        return True
+
     def argv(self, output_dir: Path) -> list[str]:
         """The process's command line. Each request names its own output file, so ``output_dir`` is unused."""
         return [
@@ -196,12 +214,17 @@ class KokoroWorkerKey:
 
 @dataclass(frozen=True)
 class PiperOutcome:
-    """One request's result. ``audio`` is set only when ``reason`` is ``ok``."""
+    """One request's result. ``audio`` is set only when ``reason`` is ``ok``.
+
+    AD-738g S3a: ``timing`` is the worker's phoneme-timing file for that audio, when its key has
+    ``timing_sidecar`` and the file was there and within ``TIMING_MAX_BYTES``; otherwise ``None``.
+    """
 
     audio: bytes | None
     reason: str
     returncode: int | None = None
     stderr_tail: str = ""
+    timing: bytes | None = None
 
 
 class PiperWorker:
@@ -301,17 +324,49 @@ class PiperWorker:
             if not answered:
                 return PiperOutcome(None, "exited", self._reap(proc), self._stderr_tail())
             audio = out.read_bytes() if out.is_file() else b""
-            return PiperOutcome(audio, "ok") if audio else PiperOutcome(None, "empty")
+            if not audio:
+                return PiperOutcome(None, "empty")
+            # AD-738g S3a: a timing key's worker may have left phoneme timings beside the WAV.
+            timing = self._read_timing(out) if self.key.timing_sidecar else None
+            return PiperOutcome(audio, "ok", timing=timing)
         except (OSError, ValueError) as exc:
             if self._timed_out:
                 return PiperOutcome(None, "timeout")
             return PiperOutcome(None, f"error: {type(exc).__name__}: {exc}")
         finally:
             if out is not None:
-                try:
-                    out.unlink(missing_ok=True)
-                except OSError:
-                    pass
+                # AD-738g S3a: the timing file goes with its WAV (a leftover would also go with the directory).
+                leftovers = (out, out.with_name(out.name + TIMING_SUFFIX)) if self.key.timing_sidecar else (out,)
+                for leftover in leftovers:
+                    try:
+                        leftover.unlink(missing_ok=True)
+                    except OSError:
+                        pass
+
+    @staticmethod
+    def _read_timing(wav: Path) -> bytes | None:
+        """AD-738g S3a: the timing file beside ``wav``. ``None`` when there is none (a model that reports
+        no durations, or a write the worker gave up on), when it cannot be read, or when it is over
+        ``TIMING_MAX_BYTES``; the last two log one WARNING. Never raises."""
+        path = wav.with_name(wav.name + TIMING_SUFFIX)
+        try:
+            with path.open("rb") as handle:
+                data = handle.read(TIMING_MAX_BYTES + 1)
+        except FileNotFoundError:
+            return None
+        except OSError as exc:
+            logger.warning(
+                "AD-738g: cannot read the timing file (%s: %s); this sentence has no synthesizer timings",
+                type(exc).__name__, exc,
+            )
+            return None
+        if len(data) > TIMING_MAX_BYTES:
+            logger.warning(
+                "AD-738g: the timing file is over %d bytes; this sentence has no synthesizer timings",
+                TIMING_MAX_BYTES,
+            )
+            return None
+        return data
 
     @staticmethod
     def _await_answer(stdout: IO[bytes], name: str) -> bool:
@@ -493,8 +548,17 @@ class VoiceSynthesisService:
         """WAV bytes for ``text`` from the resident process for ``key``, or ``None`` to degrade.
 
         AD-738g: ``fields`` join the request line (Kokoro's voice and speed); Piper passes
-        none, so its line is unchanged.
+        none, so its line is unchanged. AD-738g S3a: ``synthesize_outcome`` without the timing.
         """
+        outcome = await self.synthesize_outcome(key, text, timeout, fields=fields)
+        return None if outcome is None else outcome.audio
+
+    async def synthesize_outcome(
+        self, key: WorkerKey, text: str, timeout: float, *, fields: Mapping[str, str | float] | None = None,
+    ) -> PiperOutcome | None:
+        """AD-738g S3a: the ``ok`` outcome for ``text`` (its WAV bytes and, for a ``timing_sidecar``
+        key, its timing file or ``None``), or ``None`` to degrade. Admission, locking, retirement and
+        the BF-930 timing line are ``synthesize``'s, unchanged."""
         with self.admit() as admitted:
             if not admitted:
                 if not self._closed:
@@ -554,7 +618,7 @@ class VoiceSynthesisService:
                         "ok" if outcome.audio is not None else "failed", self._in_flight,
                     )
                 if outcome.audio is not None:
-                    return outcome.audio
+                    return outcome
                 if not self._closed:  # a request that shutdown ended is not a voice failure
                     self._log_failure(key.label, outcome, text, timeout)
                 if outcome.reason == "empty" and not key.retire_on_empty:

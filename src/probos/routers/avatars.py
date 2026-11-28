@@ -66,7 +66,9 @@ async def generate_lipsync(
         # for the configured backend without reading config separately.
         return {"backend": "heuristic", "frames": []}
 
-    # backend == "rhubarb". BF-918: on the voice executor, inside its admission bound.
+    # backend == "rhubarb", or "synthesizer" (AD-738g S3a: a deferred request under it is one whose
+    # sentence had no usable timings, so rhubarb serves it; the client accepts backend "rhubarb").
+    # BF-918: on the voice executor, inside its admission bound.
     audio_path = await store.get_path(attachment_id)
     started = time.perf_counter()
     frames = await _bounded_visemes(runtime, audio_path, cfg)
@@ -330,8 +332,22 @@ async def _synthesize_tts_impl(req: Request, runtime: Any) -> dict[str, Any]:
     visemes_payload: list[dict[str, Any]] = []
     visemes_mode = "off"
     lipsync_cfg = getattr(runtime.config, "lipsync", None)
-    if lipsync_cfg is not None and lipsync_cfg.enabled and lipsync_cfg.backend == "rhubarb":
-        if defer_visemes:
+    if lipsync_cfg is not None and lipsync_cfg.enabled and lipsync_cfg.backend in ("rhubarb", "synthesizer"):
+        # AD-738g S3a (#1662): under "synthesizer" a sentence whose backend sent phoneme timings gets
+        # its frames from them, inline: no rhubarb run, so nothing to defer, and the client takes inline
+        # frames whatever it asked (ui/src/audio/voice.ts). A sentence without timings, or with timings
+        # the check refuses, takes the rhubarb path below exactly as "rhubarb" does.
+        timed = None
+        if lipsync_cfg.backend == "synthesizer" and result.timing is not None:
+            from probos.avatars.phoneme_visemes import frames_from_timing
+            timed = frames_from_timing(result.timing, result.audio_bytes)
+        if timed:
+            visemes_mode = "synthesizer"
+            visemes_payload = [
+                {"time": f.time, "duration": f.duration, "viseme": f.viseme}
+                for f in timed
+            ]
+        elif defer_visemes:
             visemes_mode = "deferred"
         else:
             visemes_mode = "inline"

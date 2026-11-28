@@ -10,6 +10,26 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ## Era V — Civilization (Phases 31-36)
 
+### AD-738g S2 -- the resident Kokoro worker is warmed once, in the background, after boot (2026-11-28, #1662)
+
+- *Scope.* `audio/tts/kokoro_backend.py` (`prewarm`, `PREWARM_TEXT`, `PREWARM_DELAY_SECONDS`), `startup/finalize.py` (`_start_voice_prewarm`), `startup/shutdown.py` (the BF-881 table's row and `service_attr=None`), `config_models/experience.py` (`KokoroTTSConfig.prewarm`). Contract `prompts/ad-738g-s2-kokoro-prewarm.md`.
+- *D1.* One real request, not a process start. S1's 3.2 s cold start is 0.72 s of model load and 2.43 s of first call, so a start alone saves little.
+- *D2.* The warm-up calls the backend's own request path, the only place the worker key is built, so it can never start a second worker.
+- *D3.* It does not go through the route: no speech activity for the dream scheduler, and no attachment.
+- *D4.* The task is stored, never awaited at startup, and cancelled and awaited by the shutdown table before the voice service closes, rollback included.
+- *D5.* `tts.kokoro.prewarm` defaults on because it acts only on a vessel already set to `kokoro`. The cost is the worker's memory from boot in a session that never speaks, measured at about 0.5 GB working set and 1.3 GB private bytes after the warm-up (about 0.62 GB and 1.44 GB after eleven replies).
+- *Reversal.* `tts.kokoro.prewarm: false`, or revert the two commits. No persisted format changes.
+
+### AD-738g S3a -- lip-sync timed by the synthesizer: the kokoro-onnx export that reports durations, a timing file beside each WAV, an opt-in lip-sync backend (2026-11-28, #1662)
+
+- *Scope.* `scripts/kokoro-fetch.ps1` (the `-TimedModel` opt-in and its pin), `scripts/kokoro_worker.py` (`create_timed`, `write_timing`), `audio/tts/resident.py` (`timing_sidecar`, `PiperOutcome.timing`, `synthesize_outcome`), `audio/tts/backends.py` (`TTSResult.timing`), `audio/tts/kokoro_backend.py`, `avatars/phoneme_visemes.py` (new), `routers/avatars.py`, `config_models/experience.py` (`LipSyncConfig.backend` gains `synthesizer`). Contract `prompts/ad-738g-s3a-synthesizer-timed-lipsync.md`.
+- *D1.* Option D (the `model-files-v1.1` ONNX export, same weights, a `duration` output) over B (PyTorch kokoro in a second venv): the same engine, voices, licences and CPU path, one 326 MB file instead of about 1.6 GB, and timings asserted equal to torch's by the export script. B is the fallback if the file fails the raw duration check or the Captain rejects how it sounds. D0 and D2's numeric ratio passed before the build. The Captain's D2 listen is pending and gates neither the build, the PR nor the merge, only his own opt-in and the later default flip (contract 12.4).
+- *D1b.* The new model is an installer opt-in, and no default changes: a default naming a file the operator has not fetched would drop his Kokoro voice to the browser voice on the next pull. Flipping the `model_path` default is a later slice, after the Captain accepts the sound.
+- *D2.* Timings travel as the raw file (`TTSResult.timing`), and frames are made in the route. A backend-side `visemes` field would import `avatars` from `audio`, which `rhubarb_backend` already imports: a cycle. The lip-sync choice belongs to the route.
+- *D3.* Zero added pauses, and only on a model with timings, so a one-batch sentence keeps S1's pacing. Zero also drops the batch-join silence on requests over 510 phonemes; a later slice may opt in to the library's pauses.
+- *D4.* The file is checked against the WAV (rate, sample count, bounds, order, at most 4096 entries); a refusal logs one WARNING and the sentence is served as `rhubarb`. `/api/avatars/lipsync` is unchanged.
+- *Reversal.* Set the operator's `tts.kokoro.model_path` and `lipsync.backend` back to their previous values (S1's model and behaviour exactly). Deleting them is not the same: an absent `lipsync.backend` is `heuristic`, and an absent `model_path` is the default folder's file. Or revert the three commits. No persisted format changes.
+
 ### AD-738f S1 -- a distinct Kokoro voice per crew role: the route resolves the speaker's role through the registry; a built-in table and a Captain override per role (2026-11-27, #1868)
 
 - *Scope.* #1868 slice S1. `audio/tts/backends.py`, `null_backend.py`, `piper_backend.py`, `kokoro_backend.py` (`KOKORO_ROLE_VOICES`, `resolve_voice`), `config_models/experience.py` (`KokoroTTSConfig.agent_voices`), `routers/avatars.py` (`agent_id`), `ui/src/audio/voice.ts`. Contract `prompts/ad-738f-s1-per-agent-kokoro-voices.md`.

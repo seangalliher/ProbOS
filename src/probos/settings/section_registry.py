@@ -282,7 +282,7 @@ SECTIONS: tuple[SectionDescriptor, ...] = (
                 "lipsync.backend",
                 "Lip-sync backend",
                 "enum",
-                enum_values=("heuristic", "rhubarb"),
+                enum_values=("heuristic", "rhubarb", "synthesizer"),
             ),
             FieldDescriptor("lipsync.binary_path", "Rhubarb binary path", "text"),
             FieldDescriptor(

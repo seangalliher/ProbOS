@@ -9,13 +9,15 @@ travel on each request line.
 License posture: kokoro-onnx and onnxruntime are MIT and the Kokoro-82M weights Apache-2.0;
 the phonemizer (GPL-3.0-or-later) and the espeak-ng library it loads (GPL-3.0-or-later) run
 only in that separate process, which receives text, a voice id and a speed and returns a WAV
-file path. Nothing in ProbOS imports them (THIRD_PARTY_LICENSES.md, "License policy").
+file path; beside the WAV it may leave a JSON file of phoneme timings (AD-738g S3a), which is
+data. Nothing in ProbOS imports them (THIRD_PARTY_LICENSES.md, "License policy").
 
 Tier-2 log-and-degrade: ``synthesize`` returns ``None`` on any failure, and the browser speaks.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from collections.abc import Mapping
@@ -25,7 +27,7 @@ from typing import get_args
 from probos.audio.tts.backends import TTSResult
 from probos.audio.tts.piper_backend import anchor_install_path, resolve_executable_path
 from probos.audio.tts.prosody import resolve_prosody_overrides
-from probos.audio.tts.resident import KokoroWorkerKey, VoiceSynthesisService
+from probos.audio.tts.resident import KokoroWorkerKey, PiperOutcome, VoiceSynthesisService
 from probos.config import KokoroTTSConfig
 
 logger = logging.getLogger(__name__)
@@ -37,6 +39,13 @@ KOKORO_VOICES: frozenset[str] = frozenset(get_args(KokoroTTSConfig.model_fields[
 #: kokoro-onnx raises ``ValueError`` for a speed outside this range.
 SPEED_MIN = 0.5
 SPEED_MAX = 2.0
+#: AD-738g S2 (#1662): the line the boot warm-up speaks and discards. It is one ordinary reply-length
+#: sentence, so the worker's first request (its model graph, and buffers sized for a sentence) is
+#: paid before the first reply. ASCII, no name, nothing the Captain would mind in a log.
+PREWARM_TEXT = "Voice systems are online, and the crew is ready when you are."
+#: AD-738g S2: how long after boot the warm-up starts (seconds), so its CPU does not compete with
+#: the rest of the start. A module constant, not config: there is no measured need to tune it.
+PREWARM_DELAY_SECONDS = 5.0
 #: AD-738f (#1868) S1: each crew role's own voice, keyed by ``agent_type`` so a roster change
 #: keeps it: one voice per role, none the ship's ``af_heart``, the gender following each role's
 #: archetype in ``voice_profile_defaults.py``. hexgrad/Kokoro-82M VOICES.md (read 2026-11-27)
@@ -97,6 +106,40 @@ class KokoroBackend:
                 return KOKORO_ROLE_VOICES[agent_type]
         return self._config.voice
 
+    async def prewarm(self, *, delay_seconds: float = 0.0) -> bool:
+        """AD-738g S2 (#1662): start the resident worker and speak ``PREWARM_TEXT`` once; the audio is discarded.
+
+        The worker loads its model when it starts, and its first request pays a further first-call
+        cost (S1 measured 0.72 s and 2.43 s of the 3.2 s cold start), so a process start alone would
+        save little. This sends one real request through ``_speak``, the only place the worker key is
+        built, so the first reply finds the same worker warm. No route is involved: the warm-up is not
+        speech activity for the dream scheduler and stores no attachment, and the service deletes the
+        WAV (and its timing file) as it does for every request. The ship's voice is used; the voice
+        travels on the request line and is not part of the key, so one warm-up serves every voice.
+
+        Returns True when the worker answered with audio. Never raises but a cancellation (shutdown
+        cancels the task): any failure leaves the service as a failed reply leaves it, and the next
+        reply starts the worker cold, as before S2. One INFO line reports the result.
+        """
+        started = time.perf_counter()
+        try:
+            if delay_seconds > 0:
+                await asyncio.sleep(delay_seconds)
+            started = time.perf_counter()
+            outcome = await self._speak(PREWARM_TEXT, self._config.voice, 1.0)
+        except asyncio.CancelledError:
+            logger.info("AD-738g S2: kokoro prewarm cancelled")
+            raise
+        except Exception:  # _speak never raises; this keeps a later defect below it inside the task
+            logger.warning("AD-738g S2: kokoro prewarm failed; the first reply starts the worker", exc_info=True)
+            outcome = None
+        ok = outcome is not None and outcome.audio is not None
+        logger.info(
+            "AD-738g S2: kokoro prewarm result=%s ms=%.0f",
+            "ok" if ok else "degraded", (time.perf_counter() - started) * 1000,
+        )
+        return ok
+
     async def synthesize(
         self,
         text: str,
@@ -118,22 +161,24 @@ class KokoroBackend:
         voice = self.resolve_voice(override, role)
         speed = kokoro_speed(self._config.speed, emotion if isinstance(emotion, str) else None)
         started = time.perf_counter()
-        wav = await self._speak(text, voice, speed)
+        outcome = await self._speak(text, voice, speed)
         # D10: one line for every attempt, the early degradations in _speak included. The role
         # goes last (AD-738f, #1868), so the Captain can read which role spoke in which voice;
         # no agent id is logged.
         logger.info(
             "AD-738g: kokoro voice=%s speed=%.2f chars=%d synth_ms=%.0f result=%s role=%s",
             voice, speed, len(text), (time.perf_counter() - started) * 1000,
-            "ok" if wav is not None else "degraded", role or "-",
+            "ok" if outcome is not None else "degraded", role or "-",
         )
-        if wav is None:
+        if outcome is None or outcome.audio is None:
             return None
-        return TTSResult(audio_bytes=wav, mime="audio/wav")
+        # AD-738g S3a: the worker's timing file rides with the audio; the route decides whether to use it.
+        return TTSResult(audio_bytes=outcome.audio, mime="audio/wav", timing=outcome.timing)
 
-    async def _speak(self, text: str, voice: str, speed: float) -> bytes | None:
-        """The worker's WAV bytes, or ``None`` after a WARNING: no service, an install path the
-        OS cannot resolve or a missing file, or the service's own degradation. Never raises."""
+    async def _speak(self, text: str, voice: str, speed: float) -> PiperOutcome | None:
+        """The service's ``ok`` outcome (the WAV and its timing file, if any), or ``None`` after a WARNING:
+        no service, an install path the OS cannot resolve or a missing file, or the service's own
+        degradation. Never raises."""
         if self._service is None:
             logger.warning("AD-738g: no voice synthesis service on this runtime; degrading to browser")
             return None
@@ -167,4 +212,6 @@ class KokoroBackend:
             threads=cfg.threads,
             default_voice=cfg.voice,
         )
-        return await self._service.synthesize(key, text, cfg.timeout_seconds, fields={"voice": voice, "speed": speed})
+        return await self._service.synthesize_outcome(
+            key, text, cfg.timeout_seconds, fields={"voice": voice, "speed": speed},
+        )

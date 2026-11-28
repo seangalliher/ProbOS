@@ -80,7 +80,7 @@ Projects appear here only as technical design references. Positioning against th
 
 | Project | Last reviewed | Depth | Where recorded |
 |---|---|---|---|
-| Kokoro / misaki / HeadTTS / mlx-audio | 2026-11-27 | checked | AD-738g (#1662) Prior Art; S1 contract `prompts/ad-738g-s1-local-kokoro-voice.md`: kokoro-onnx 0.6.1 and its dependencies (phonemizer GPL-3; espeakng-loader bundles espeak-ng with no licence file), model-files-v1.0 hashes from the Hugging Face LFS ids, and `kokoro-v1.0.onnx` has no `duration` output (no synthesizer timings) |
+| Kokoro / misaki / HeadTTS / mlx-audio | 2026-11-28 | checked | AD-738g (#1662) Prior Art; S1 contract `prompts/ad-738g-s1-local-kokoro-voice.md`: kokoro-onnx 0.6.1 and its dependencies (phonemizer GPL-3; espeakng-loader bundles espeak-ng with no licence file), model-files-v1.0 hashes from the Hugging Face LFS ids, and that release's `kokoro-v1.0.onnx` has no `duration` output. S3a contract `prompts/ad-738g-s3a-synthesizer-timed-lipsync.md`: release `model-files-v1.1` re-exports the same weights with a `duration` output that kokoro-onnx 0.6.1 reads (`has_timings`, `create_timed`); its asset digests from the GitHub API; HeadTTS's viseme timing offsets (`deltaStart` -10 ms, `deltaEnd` +10 ms) |
 
 ## Research lines (interval: 180 days)
 

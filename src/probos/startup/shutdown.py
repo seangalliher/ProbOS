@@ -429,7 +429,7 @@ def _close_sync_store(
 async def _stop_held_start_service(
     runtime: Any,
     *,
-    service_attr: str,
+    service_attr: str | None,
     start_task_attr: str | None,
     label: str,
 ) -> None:
@@ -450,12 +450,16 @@ async def _stop_held_start_service(
     for the whole teardown. Any other failure is logged and shutdown continues. Both
     attributes are cleared either way.
     """
-    service = getattr(runtime, service_attr, None)
+    # AD-738g S2 (#1662): no service_attr for a task that has no service (the Kokoro warm-up).
+    service = getattr(runtime, service_attr, None) if service_attr else None
     start_task = getattr(runtime, start_task_attr, None) if start_task_attr else None
     stop = getattr(service, "stop", None)
     start_pending = isinstance(start_task, asyncio.Task) and not start_task.done()
     stop_awaitable = inspect.iscoroutinefunction(stop)
-    if not (start_pending or stop_awaitable):
+    # AD-738g S2 (#1662): a task-only row (no service) reaches the finally even when its task has
+    # ended, so the attribute is cleared; there is nothing to cancel, await or stop.
+    task_only = service_attr is None and start_task is not None
+    if not (start_pending or stop_awaitable or task_only):
         return
 
     current = asyncio.current_task()
@@ -493,7 +497,7 @@ async def _stop_held_start_service(
                     exc_info=True,
                 )
     finally:
-        if service is not None:
+        if service is not None and service_attr:
             setattr(runtime, service_attr, None)
         if start_task is not None and start_task_attr:
             setattr(runtime, start_task_attr, None)
@@ -1586,6 +1590,9 @@ async def shutdown(
          "AD-477 CaptainsLogService"),
         ("plan_of_day_service", "plan_of_day_start_task",
          "AD-477 PlanOfDayService"),
+        # AD-738g S2 (#1662): the Kokoro warm-up has no service to stop. Its task is cancelled and
+        # awaited here, before _close_voice_synthesis below stops the worker it may be talking to.
+        (None, "voice_prewarm_task", "AD-738g S2 Kokoro prewarm"),
     ):
         await _stop_held_start_service(
             runtime,

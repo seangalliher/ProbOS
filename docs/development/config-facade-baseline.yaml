@@ -47,13 +47,13 @@ handoff_to_e2:
 pydantic_version: 2.12.5
 surface_counts:
   aliased_fields: 1
-  canonical_dump_leaves: 1892
-  field_definitions: 1887
+  canonical_dump_leaves: 1893
+  field_definitions: 1888
   incidental: 13
   own_models: 229
   owned: 298
   public_names: 311
-canonical_dump_sha256: 2f6e769684e4702cab5123823878548a211e41522cf25402e4663c26dc5d80b8
+canonical_dump_sha256: 1902a2bfc3c9ac1f0858a4c9b54d45b8653cb8720514b6c78e35e7efaaa2629c
 non_instantiable:
 - A2APeerConfig
 - BaseModel
@@ -2233,7 +2233,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: 372c6f87d7c32d4ddaf0ed99e0ac6d1596aff5df0f7d1db6340f71c8428eecbf
+    schema_sha256: 7c22971875b1ddbe60fc28b6c32d0cfe9b1631c14d0b17a92917d645db5d6759
     fields:
     - {default: '''tools/kokoro/venv/Scripts/python''', name: python_path}
     - {default: '''tools/kokoro/kokoro-v1.0.onnx''', name: model_path}
@@ -2243,6 +2243,7 @@ models:
     - {default: '4', name: threads}
     - {default: '30.0', name: timeout_seconds}
     - {default: <required>, has_default_factory: true, name: agent_voices}
+    - {default: 'True', name: prewarm}
   LLMRateConfig:
     qualname: LLMRateConfig
     bases:
@@ -2284,7 +2285,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: d5adee563ab41080001fdcb8b20360072647629e1589fab0e1d6ec8bd7e58dc6
+    schema_sha256: f07fcef579cb75e70621d9e9520aec7d0add0dfedc8edea88760173cfc4b516c
     fields:
     - {default: 'True', name: enabled}
     - {default: '''heuristic''', name: backend}
@@ -3428,7 +3429,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: 75da647dd89e3377b5a763c34b3c686234297eb3b328d4f9c79175c841fd7e5c
+    schema_sha256: e976640a4b3ebd5c384a3ccbba93d72461b181875fc3dec52e0c65b2a0b651b0
     fields:
     - {default: SystemInfo(...), name: system}
     - {default: PoolConfig(...), name: pools}
@@ -3640,7 +3641,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: e4a572139c4c0559ccada982a7ef62e4216634d4841f18628ce365e2fc80b994
+    schema_sha256: 630f4c4fc8cac1e6be8e1da8868b789d549247c3039f2fc4a602bd9eb4469023
     fields:
     - {default: 'True', name: enabled}
     - {default: '''browser''', name: backend}
