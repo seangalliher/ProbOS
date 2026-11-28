@@ -10,6 +10,16 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ## Era V — Civilization (Phases 31-36)
 
+### AD-738g S2 -- the resident Kokoro worker is warmed once, in the background, after boot (2026-11-28, #1662)
+
+- *Scope.* `audio/tts/kokoro_backend.py` (`prewarm`, `PREWARM_TEXT`, `PREWARM_DELAY_SECONDS`), `startup/finalize.py` (`_start_voice_prewarm`), `startup/shutdown.py` (the BF-881 table's row and `service_attr=None`), `config_models/experience.py` (`KokoroTTSConfig.prewarm`). Contract `prompts/ad-738g-s2-kokoro-prewarm.md`.
+- *D1.* One real request, not a process start. S1's 3.2 s cold start is 0.72 s of model load and 2.43 s of first call, so a start alone saves little.
+- *D2.* The warm-up calls the backend's own request path, the only place the worker key is built, so it can never start a second worker.
+- *D3.* It does not go through the route: no speech activity for the dream scheduler, and no attachment.
+- *D4.* The task is stored, never awaited at startup, and cancelled and awaited by the shutdown table before the voice service closes, rollback included.
+- *D5.* `tts.kokoro.prewarm` defaults on because it acts only on a vessel already set to `kokoro`. The cost is the worker's memory from boot in a session that never speaks.
+- *Reversal.* `tts.kokoro.prewarm: false`, or revert the two commits. No persisted format changes.
+
 ### AD-738g S3a -- lip-sync timed by the synthesizer: the kokoro-onnx export that reports durations, a timing file beside each WAV, an opt-in lip-sync backend (2026-11-28, #1662)
 
 - *Scope.* `scripts/kokoro-fetch.ps1` (the `-TimedModel` opt-in and its pin), `scripts/kokoro_worker.py` (`create_timed`, `write_timing`), `audio/tts/resident.py` (`timing_sidecar`, `PiperOutcome.timing`, `synthesize_outcome`), `audio/tts/backends.py` (`TTSResult.timing`), `audio/tts/kokoro_backend.py`, `avatars/phoneme_visemes.py` (new), `routers/avatars.py`, `config_models/experience.py` (`LipSyncConfig.backend` gains `synthesizer`). Contract `prompts/ad-738g-s3a-synthesizer-timed-lipsync.md`.
