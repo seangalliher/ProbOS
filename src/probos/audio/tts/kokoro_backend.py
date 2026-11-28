@@ -9,7 +9,8 @@ travel on each request line.
 License posture: kokoro-onnx and onnxruntime are MIT and the Kokoro-82M weights Apache-2.0;
 the phonemizer (GPL-3.0-or-later) and the espeak-ng library it loads (GPL-3.0-or-later) run
 only in that separate process, which receives text, a voice id and a speed and returns a WAV
-file path. Nothing in ProbOS imports them (THIRD_PARTY_LICENSES.md, "License policy").
+file path; beside the WAV it may leave a JSON file of phoneme timings (AD-738g S3a), which is
+data. Nothing in ProbOS imports them (THIRD_PARTY_LICENSES.md, "License policy").
 
 Tier-2 log-and-degrade: ``synthesize`` returns ``None`` on any failure, and the browser speaks.
 """
@@ -25,7 +26,7 @@ from typing import get_args
 from probos.audio.tts.backends import TTSResult
 from probos.audio.tts.piper_backend import anchor_install_path, resolve_executable_path
 from probos.audio.tts.prosody import resolve_prosody_overrides
-from probos.audio.tts.resident import KokoroWorkerKey, VoiceSynthesisService
+from probos.audio.tts.resident import KokoroWorkerKey, PiperOutcome, VoiceSynthesisService
 from probos.config import KokoroTTSConfig
 
 logger = logging.getLogger(__name__)
@@ -118,22 +119,24 @@ class KokoroBackend:
         voice = self.resolve_voice(override, role)
         speed = kokoro_speed(self._config.speed, emotion if isinstance(emotion, str) else None)
         started = time.perf_counter()
-        wav = await self._speak(text, voice, speed)
+        outcome = await self._speak(text, voice, speed)
         # D10: one line for every attempt, the early degradations in _speak included. The role
         # goes last (AD-738f, #1868), so the Captain can read which role spoke in which voice;
         # no agent id is logged.
         logger.info(
             "AD-738g: kokoro voice=%s speed=%.2f chars=%d synth_ms=%.0f result=%s role=%s",
             voice, speed, len(text), (time.perf_counter() - started) * 1000,
-            "ok" if wav is not None else "degraded", role or "-",
+            "ok" if outcome is not None else "degraded", role or "-",
         )
-        if wav is None:
+        if outcome is None or outcome.audio is None:
             return None
-        return TTSResult(audio_bytes=wav, mime="audio/wav")
+        # AD-738g S3a: the worker's timing file rides with the audio; the route decides whether to use it.
+        return TTSResult(audio_bytes=outcome.audio, mime="audio/wav", timing=outcome.timing)
 
-    async def _speak(self, text: str, voice: str, speed: float) -> bytes | None:
-        """The worker's WAV bytes, or ``None`` after a WARNING: no service, an install path the
-        OS cannot resolve or a missing file, or the service's own degradation. Never raises."""
+    async def _speak(self, text: str, voice: str, speed: float) -> PiperOutcome | None:
+        """The service's ``ok`` outcome (the WAV and its timing file, if any), or ``None`` after a WARNING:
+        no service, an install path the OS cannot resolve or a missing file, or the service's own
+        degradation. Never raises."""
         if self._service is None:
             logger.warning("AD-738g: no voice synthesis service on this runtime; degrading to browser")
             return None
@@ -167,4 +170,6 @@ class KokoroBackend:
             threads=cfg.threads,
             default_voice=cfg.voice,
         )
-        return await self._service.synthesize(key, text, cfg.timeout_seconds, fields={"voice": voice, "speed": speed})
+        return await self._service.synthesize_outcome(
+            key, text, cfg.timeout_seconds, fields={"voice": voice, "speed": speed},
+        )

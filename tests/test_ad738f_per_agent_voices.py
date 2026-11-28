@@ -25,7 +25,7 @@ from httpx import ASGITransport, AsyncClient
 from probos.audio.tts import KokoroBackend, NullBackend, PiperBackend, kokoro_backend
 from probos.audio.tts.backends import TTSBackend
 from probos.audio.tts.kokoro_backend import KOKORO_ROLE_VOICES, KOKORO_VOICES
-from probos.audio.tts.resident import VoiceSynthesisService
+from probos.audio.tts.resident import PiperOutcome, VoiceSynthesisService
 from probos.config import AttachmentsConfig, KokoroTTSConfig, SystemConfig, TTSConfig
 from probos.routers import avatars as avatars_router_mod
 from probos.routers import chat as chat_router_mod
@@ -50,6 +50,11 @@ class _RecordingService:
     async def synthesize(self, key, text, timeout, *, fields=None):
         self.calls.append((key, text, timeout, dict(fields or {})))
         return b"RIFF"
+
+    async def synthesize_outcome(self, key, text, timeout, *, fields=None):
+        # AD-738g S3a: KokoroBackend's call; PiperBackend (test_p1) still calls synthesize.
+        self.calls.append((key, text, timeout, dict(fields or {})))
+        return PiperOutcome(b"RIFF", "ok")
 
 
 def _installed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, **overrides) -> KokoroTTSConfig:

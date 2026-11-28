@@ -28,7 +28,7 @@ from probos.audio.tts import KokoroBackend, PiperBackend, TTSResult, select_back
 from probos.audio.tts import kokoro_backend, resident
 from probos.audio.tts.kokoro_backend import KOKORO_VOICES, kokoro_speed
 from probos.audio.tts.piper_backend import resolve_executable_path
-from probos.audio.tts.resident import KokoroWorkerKey, PiperWorkerKey, VoiceSynthesisService
+from probos.audio.tts.resident import KokoroWorkerKey, PiperOutcome, PiperWorkerKey, VoiceSynthesisService
 from probos.config import AttachmentsConfig, KokoroTTSConfig, LipSyncConfig, TTSConfig
 from probos.execution.command_env import trusted_command_env
 from probos.routers import avatars as avatars_router_mod
@@ -102,9 +102,10 @@ class _RecordingService:
         self.wav = wav
         self.calls: list[tuple] = []
 
-    async def synthesize(self, key, text, timeout, *, fields=None):
+    async def synthesize_outcome(self, key, text, timeout, *, fields=None):
+        # AD-738g S3a: KokoroBackend calls synthesize_outcome; this stand-in has no synthesize, so a call to it fails.
         self.calls.append((key, text, timeout, dict(fields or {})))
-        return self.wav
+        return None if self.wav is None else PiperOutcome(self.wav, "ok")
 
 
 def _installed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, **overrides) -> KokoroTTSConfig:
@@ -191,6 +192,8 @@ def test_w1_the_worker_writes_a_24khz_mono_16bit_wav_and_prints_its_path(tmp_pat
     import numpy
 
     class _ToneEngine:
+        has_timings = False  # AD-738g S3a: an S1-style engine, which the worker calls through create as before
+
         def get_voices(self) -> list[str]:
             return ["af_heart"]
 
