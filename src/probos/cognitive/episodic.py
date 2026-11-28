@@ -61,8 +61,12 @@ from probos.types import (
     resolve_provenance,
 )
 from probos.types import EBBINGHAUS_DEFAULT_STABILITY_SECONDS
+from probos.utils.loop_yield import LoopYield  # BF-932
 
 logger = logging.getLogger(__name__)
+
+# BF-932 (#1670): the AD-873 decay sweep gives the event loop a turn every this many episodes (a count, not a time).
+_DECAY_EPISODES_PER_YIELD = 8
 
 # AD-1340: at most one "episode archive unavailable" warning per interval.
 _ARCHIVE_WARN_INTERVAL_S = 300.0
@@ -2667,7 +2671,12 @@ class EpisodicMemory:
                 activations = {}
 
         now = time.time()
+        # BF-932 (#1670): each episode is a synchronous Chroma read and write, so the page held the event loop for the
+        # whole sweep; give the loop a turn every _DECAY_EPISODES_PER_YIELD episodes.
+        pacer = LoopYield(_DECAY_EPISODES_PER_YIELD)
         for i, ep_id in enumerate(ids):
+            if pacer.due():
+                await asyncio.sleep(0)
             try:
                 meta = metas[i] if i < len(metas) else {}
                 ep = self._metadata_to_episode(ep_id, "", meta or {})
