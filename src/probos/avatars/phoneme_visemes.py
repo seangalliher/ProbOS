@@ -125,7 +125,7 @@ def _checked_spans(timing: bytes, wav: bytes) -> tuple[list[tuple[str, float, fl
         body = json.loads(timing.decode("ascii"))
         with wave.open(io.BytesIO(wav), "rb") as handle:
             rate, samples = handle.getframerate(), handle.getnframes()
-    except (ValueError, EOFError, wave.Error, struct.error) as exc:
+    except (ValueError, EOFError, wave.Error, struct.error, RecursionError) as exc:  # RecursionError: nested too deep
         return _refused(f"unreadable: {type(exc).__name__}")
     if not isinstance(body, dict) or body.get("v") != TIMING_VERSION:
         return _refused("not a version-1 timing object")
@@ -159,7 +159,13 @@ def _is_int(value: Any) -> bool:
 
 
 def _is_number(value: Any) -> bool:
-    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+    """A JSON int or float with a finite float value; an int past float range has none (``OverflowError``)."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    try:
+        return math.isfinite(value)
+    except OverflowError:
+        return False
 
 
 def _refused(reason: str) -> None:

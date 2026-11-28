@@ -93,6 +93,8 @@ def _shape(frames) -> list[tuple[str, float, float]]:
 
 _GOOD = [("m", 0.0, 0.1), ("\u0251", 0.1, 0.5)]
 _HALF = _wav(12000)  # 0.5 s
+_DEEP = b"[" * 100_000 + b"]" * 100_000  # 200,000 B, under TIMING_MAX_BYTES; deeper than any parser recursion limit
+_HUGE = 10**400  # 401 digits: parses (under the 4,300-digit limit) but has no float value
 
 
 # --- the table --------------------------------------------------------------------------------
@@ -216,12 +218,14 @@ def test_f6_a_rounding_gap_is_closed_not_shown_as_sil() -> None:
         (_timing([("m", True, 0.1)], 12000), _HALF),
         (_timing([("m", "0", 0.1)], 12000), _HALF),
         (_timing([("m", float("nan"), 0.1)], 12000), _HALF),
+        (_DEEP, _HALF),
+        (_timing([("m", _HUGE, 0.1)], 12000), _HALF),
     ],
     ids=[
         "not-utf8", "truncated-json", "not-an-object", "not-a-wav", "version-2", "rate-22050", "rate-bool",
         "samples-11999", "samples-float", "no-timings", "4097-timings", "timings-not-a-list", "entry-not-an-object",
         "symbol-two-chars", "symbol-not-a-string", "end-before-start", "negative-start", "past-the-audio",
-        "start-goes-back", "time-bool", "time-string", "time-nan",
+        "start-goes-back", "time-bool", "time-string", "time-nan", "nested-past-the-recursion-limit", "integer-past-float-range",
     ],
 )
 def test_x1_a_file_that_fails_a_check_is_refused_with_one_warning(
@@ -400,6 +404,43 @@ async def test_t8_refused_timings_fall_back_to_rhubarb_with_one_warning(
 
     body = (await http.post("/api/avatars/tts", json={"text": "BADTIMING"})).json()
 
+    assert body["visemes"] == _RHUBARB and body["visemes_deferred"] is False
+    assert len(calls) == 1
+    refused = [r for r in caplog.records if "the synthesizer's timings were refused" in r.getMessage()]
+    assert len(refused) == 1 and refused[0].levelno == logging.WARNING
+
+
+def _deep_timing(real):
+    return lambda wav: _DEEP if real(wav) is not None else None
+
+
+def _huge_timing(real):
+    def _read(wav):
+        data = real(wav)
+        if data is None:
+            return None
+        body = json.loads(data)
+        body["timings"][0]["s"] = _HUGE
+        return json.dumps(body).encode("ascii")
+    return _read
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("make", [_deep_timing, _huge_timing], ids=["nested-past-the-recursion-limit", "integer-past-float-range"])
+async def test_t9_timings_past_the_parsers_limits_keep_the_audio_and_fall_back_to_rhubarb_with_one_warning(
+    client, monkeypatch, tmp_path, caplog: pytest.LogCaptureFixture, make,
+) -> None:
+    caplog.set_level(logging.WARNING)
+    http, rt = client
+    _kokoro(rt, monkeypatch, tmp_path, timed=True, lipsync="synthesizer")
+    calls = _stub_rhubarb(monkeypatch)
+    monkeypatch.setattr(resident.PiperWorker, "_read_timing", staticmethod(make(resident.PiperWorker._read_timing)))
+
+    response = await http.post("/api/avatars/tts", json={"text": "Hello."})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["backend"] == "kokoro" and body["audio_attachment_id"] and body["duration_ms"] > 0
     assert body["visemes"] == _RHUBARB and body["visemes_deferred"] is False
     assert len(calls) == 1
     refused = [r for r in caplog.records if "the synthesizer's timings were refused" in r.getMessage()]

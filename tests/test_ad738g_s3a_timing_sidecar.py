@@ -120,10 +120,13 @@ def test_w11_an_engine_without_timings_is_called_exactly_as_in_s1_and_writes_no_
 
 
 def test_w12_a_timed_engine_that_returns_no_timings_writes_no_timing_file(tmp_path: Path) -> None:
+    engine = FakeEngine(timed=True)
     out = tmp_path / "out.wav"
     log = io.StringIO()
 
-    assert worker.speak(FakeEngine(timed=True), frozenset(VOICES), "af_heart", {"text": "NOTIMINGS", "output_file": str(out)}, log)
+    assert worker.speak(engine, frozenset(VOICES), "af_heart", {"text": "NOTIMINGS", "output_file": str(out)}, log)
+
+    assert [(c.get("method"), c.get("sentence_pause"), c.get("clause_pause")) for c in engine.calls] == [("create_timed", 0.0, 0.0)]
 
     assert sorted(p.name for p in tmp_path.iterdir()) == ["out.wav"]
     assert log.getvalue() == ""

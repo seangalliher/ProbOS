@@ -13,7 +13,7 @@
 #      weights, which has a duration output (phoneme timings for lip-sync). The release names
 #      it kokoro-v1.0.onnx too, so it is saved as kokoro-v1.1.onnx beside S1's file; its pin is
 #      the release's own asset digest (read 2026-11-28). Nothing changes until
-#      tts.kokoro.model_path is set to it; removing that line goes back to S1's file.
+#      tts.kokoro.model_path is set to it; setting it back to its previous value undoes that.
 #   3. One test sentence spoken through scripts/kokoro_worker.py, the worker ProbOS runs.
 #
 # The destination must be an ASCII-only path: espeak-ng, inside the venv, cannot open its
@@ -146,5 +146,8 @@ Write-Host "Kokoro is installed at: $DestDir" -ForegroundColor White
 Write-Host "Set tts.backend: kokoro and tts.sentence_pipelining_enabled: true in config/system.yaml, then restart." -ForegroundColor White
 if ($TimedModel) {
     $Setting = if ($PSBoundParameters.ContainsKey("DestDir")) { $Model } else { "tools/kokoro/kokoro-v1.1.onnx" }
-    Write-Host "For lip-sync timed by the voice, also set tts.kokoro.model_path: $Setting and lipsync.backend: synthesizer, then restart. Remove those two lines to go back to kokoro-v1.0.onnx." -ForegroundColor White
+    $S1Model = Join-Path (Split-Path -Parent $Model) "kokoro-v1.0.onnx"
+    if (-not $PSBoundParameters.ContainsKey("DestDir")) { $S1Model = "tools/kokoro/kokoro-v1.0.onnx" }
+    Write-Host "For lip-sync timed by the voice, also set tts.kokoro.model_path: $Setting and lipsync.backend: synthesizer, then restart." -ForegroundColor White
+    Write-Host "To go back, set those two settings to the values they had before, then restart. The S1 model file for this install is $S1Model." -ForegroundColor White
 }

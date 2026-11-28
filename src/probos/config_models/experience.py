@@ -727,7 +727,8 @@ class LipSyncConfig(BaseModel):
     """``heuristic``: AD-721b v1 text→viseme. ``rhubarb``: subprocess to
     rhubarb-lip-sync for phonetic alignment of real audio. ``synthesizer``
     (AD-738g S3a, #1662): frames from the phoneme timings the Kokoro worker reports
-    when its model has a duration output (``tts.kokoro.model_path``'s default does),
+    when its model has a duration output (the default ``kokoro-v1.0.onnx`` has none: this also needs
+    ``tts.kokoro.model_path`` set to the ``kokoro-fetch.ps1 -TimedModel`` file),
     sent inline with the audio; a sentence without usable timings (Piper, an older
     Kokoro model, a timing file the check refuses) is served exactly as ``rhubarb``."""
 

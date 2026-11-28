@@ -1,6 +1,7 @@
 # AD-738g S3a (#1662): lip-sync timed by the synthesizer, from the kokoro-onnx export that reports durations
 
 **Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-28
+**Amended:** same author, 2026-11-28, after the Diff Reviewer's round 1 (findings 1 to 5); no design change. The rollback restores the previous values instead of deleting the lines. The timing check refuses `RecursionError` and `OverflowError` input. A comment and the D2 status are corrected. W12 checks its own premise. `test_t9` and two `test_x1` cases are new; mutation rows S21 and S22 are new.
 **Amended:** same author, 2026-11-28, for two orchestrator decisions: (1) no existing default changes, so the duration-reporting model is an installer opt-in (`-TimedModel`) and `KokoroTTSConfig.model_path` stays `tools/kokoro/kokoro-v1.0.onnx`; (2) the go/no-go measurements D0 to D4 run before the build (section 12.1), and only D0e and the installer sessions run after it (12.2).
 **Orchestrator ruling, 2026-11-28 (after the amendment, in the delegated envelope):** (3) the D2 listen does **not** gate the build, the PR or the merge. The model is an installer opt-in and no default changes, so a pending listen puts nothing at risk, and a rejection after the fact loses only M3 (12.4). The listen gates the Captain's own opt-in and the later default flip. Sections 12.1, 12.4 and 16 (criterion 6) say so; nothing else changes.
 **Amended:** same author, 2026-11-27, after the orchestrator's dry build on tree `490bdbb8` (8.1); no design change. D1: `test_x1`'s float-`samples` case passed `samples` twice. D2: `test_x1` gains `ids` (Windows' 32,767-character environment limit). D3: `test_f5`'s tolerance is `abs=2e-4`. D4: the wider `Literal` moves two facade `schema_sha256` rows, so M2 runs `--update-baseline` (decision 11, 6.11, 9.9, 16.2). The base moves to `fae613df` and the citations of the two files the S1 repair changed are re-read (section 17).
@@ -8,7 +9,7 @@
 **Base:** the repaired S1 batch head `fae613dff8688abe336d7b4ee4eae60b516015cb` (tree `490bdbb893cecc2ffa4f8ec35d1562860f0519da`; PR #1872, repair commits `5140323b` and `fae613df`), which becomes main when PR #1872 merges. Rebase onto that merge before building. The anchors were first read on `88676ab1` (tree `6b9082a9`); the repair moved only `src/probos/audio/tts/piper_backend.py` and `tests/test_ad738g_kokoro_voice.py`, whose citations are re-read on `490bdbb8` (section 17), and every SEARCH matches once on `490bdbb8` (8.1). **Number:** a slice of AD-738g, the issue's own number, as S1 was. No new AD or BF number. `scripts/ad_ceiling.py` exited 1 on this run (git log AD-1359, prompts AD-1361, GitHub titles FAILED: no gh host for this clone's remote), so no number could have been allocated anyway.
 **Design base:** the Architect re-rank of 2026-11-28 (`s3-rerank-decision.md`: option D, design points 1 to 7, measurements D0 to D4). The router, outcome and timing-carrier design comes from `s3-architect-decision.md`, with one change (decision 3). The evidence is `s3-evidence-pack.md` sections 6 and 8. The PyTorch reading (pack sections 2 to 5) is the fallback's evidence only.
 **Line endings:** the working copies are CRLF and the blocks below are LF; match after normalising. Every SEARCH starts at the beginning of a line and occurs once in its file at its turn. All new text is ASCII, and IPA symbols in Python are `\uXXXX` escapes.
-**Estimated tests:** Python 30 new functions in two new files (11 in 7.2, 19 in 7.4) (one is parametrised over the 114 vocabulary symbols, one over 22 refusals). 1 case added to a parametrised test. 1 test updated in place (a stand-in engine attribute, with its reason inline). 2 test stand-ins gain the new service method. The three existing default-path pins are not touched. 0 removed. No UI change.
+**Estimated tests:** Python 31 new functions in two new files (11 in 7.2, 20 in 7.4) (one is parametrised over the 114 vocabulary symbols, one over 24 refusals, one over 2 route cases). 1 case added to a parametrised test. 1 test updated in place (a stand-in engine attribute, with its reason inline). 2 test stand-ins gain the new service method. The three existing default-path pins are not touched. 0 removed. No UI change.
 
 ## 1. Problem (premise table)
 
@@ -613,7 +614,8 @@ REPLACE:
     """``heuristic``: AD-721b v1 text→viseme. ``rhubarb``: subprocess to
     rhubarb-lip-sync for phonetic alignment of real audio. ``synthesizer``
     (AD-738g S3a, #1662): frames from the phoneme timings the Kokoro worker reports
-    when its model has a duration output (``tts.kokoro.model_path``'s default does),
+    when its model has a duration output (the default ``kokoro-v1.0.onnx`` has none: this also needs
+    ``tts.kokoro.model_path`` set to the ``kokoro-fetch.ps1 -TimedModel`` file),
     sent inline with the audio; a sentence without usable timings (Piper, an older
     Kokoro model, a timing file the check refuses) is served exactly as ``rhubarb``."""
 ```
@@ -771,7 +773,7 @@ d:/ProbOS/.venv/Scripts/python.exe -c "import json; from probos.avatars.phoneme_
 Expected:
 - `git diff docs/development/config-reference.md` is the one line `:2042`, which becomes `Literal['heuristic', 'rhubarb', 'synthesizer']`.
 - `git diff docs/development/config-facade-baseline.yaml` is exactly two lines: the `schema_sha256` of `LipSyncConfig` (`:2287`) and of `SystemConfig` (`:3431`). No default row and no count changes. Informative only (measured on tree `490bdbb8`): `LipSyncConfig` `d5adee56...` becomes `f07fcef579cb75e70621d9e9520aec7d0add0dfedc8edea88760173cfc4b516c`, and `SystemConfig` `809d14b4...` becomes `09bc44854361aed334f26d899554c03a6d2043aeeac06d4612035840e411d77f`; `SystemConfig`'s digest depends on every config model, so if `main` has taken another config change its value differs and the rule (these two rows only, counts unchanged) still holds. A third row, or any `default:` row, means something else moved: stop and report.
-- The facade `--check` then passes: `config facade check passed (names=311, owned=298, incidental=13, models=229, fields=1886, env rows=4)`. Without `--update-baseline` it fails with two `facade-schema-digest` problems, and so does `tests/test_ad1270e1_config_facade.py::test_check_is_green_on_the_committed_baseline` (`:1813`).
+- The facade `--check` then passes: `config facade check passed (names=311, owned=298, incidental=13, models=229, fields=1886, env rows=4)`. (Measured on `490bdbb8`; on the re-anchored base `55ae03eb` the count is `fields=1887`, because main's PR #1873 added one config field and S3a adds none.) Without `--update-baseline` it fails with two `facade-schema-digest` problems, and so does `tests/test_ad1270e1_config_facade.py::test_check_is_green_on_the_committed_baseline` (`:1813`).
 - The last command prints `114 114 []`. Any symbol it prints means the table or V1's literal is wrong: stop and report.
 
 **M3** (after 6.13; no config regeneration, since no default changes):
@@ -791,7 +793,7 @@ Expected:
 **The switch: `-TimedModel`.** Without it, the script runs exactly as S1's: the same two files, the same lines, the same test sentence on `kokoro-v1.0.onnx`, the same closing lines. Every new line is inside `if ($TimedModel)`, except the one URL line of P12.3, which yields S1's URL for S1's two files. With it:
 - a third entry joins the file list: `model-files-v1.1`'s asset `kokoro-v1.0.onnx`, saved as `kokoro-v1.1.onnx` under `$DestDir` beside S1's files, size- and SHA-256-checked by S1's loop, with S1's skip, `.part` and mismatch handling and messages;
 - the test sentence runs through `kokoro-v1.1.onnx`, and the run **throws** unless the worker wrote the timing file;
-- the closing lines name the two config lines to set, and the rollback.
+- the closing lines name the two config lines to set and, for the rollback, the S1 model file of this install (restore the previous values; never delete the lines).
 
 How it composes:
 - **`-DestDir`:** the new file goes into the same resolved, ASCII-checked folder as the other two. The printed `model_path` is `tools/kokoro/kokoro-v1.1.onnx` when `-DestDir` was not passed, and the absolute path otherwise (as S1's header asks for a non-default folder).
@@ -817,7 +819,7 @@ REPLACE:
 #      weights, which has a duration output (phoneme timings for lip-sync). The release names
 #      it kokoro-v1.0.onnx too, so it is saved as kokoro-v1.1.onnx beside S1's file; its pin is
 #      the release's own asset digest (read 2026-11-28). Nothing changes until
-#      tts.kokoro.model_path is set to it; removing that line goes back to S1's file.
+#      tts.kokoro.model_path is set to it; setting it back to its previous value undoes that.
 ```
 
 **P12.1b** SEARCH:
@@ -932,7 +934,10 @@ Write-Host "Kokoro is installed at: $DestDir" -ForegroundColor White
 Write-Host "Set tts.backend: kokoro and tts.sentence_pipelining_enabled: true in config/system.yaml, then restart." -ForegroundColor White
 if ($TimedModel) {
     $Setting = if ($PSBoundParameters.ContainsKey("DestDir")) { $Model } else { "tools/kokoro/kokoro-v1.1.onnx" }
-    Write-Host "For lip-sync timed by the voice, also set tts.kokoro.model_path: $Setting and lipsync.backend: synthesizer, then restart. Remove those two lines to go back to kokoro-v1.0.onnx." -ForegroundColor White
+    $S1Model = Join-Path (Split-Path -Parent $Model) "kokoro-v1.0.onnx"
+    if (-not $PSBoundParameters.ContainsKey("DestDir")) { $S1Model = "tools/kokoro/kokoro-v1.0.onnx" }
+    Write-Host "For lip-sync timed by the voice, also set tts.kokoro.model_path: $Setting and lipsync.backend: synthesizer, then restart." -ForegroundColor White
+    Write-Host "To go back, set those two settings to the values they had before, then restart. The S1 model file for this install is $S1Model." -ForegroundColor White
 }
 ```
 Without the switch the output is S1's line for line: the `$Timing` assignment prints nothing, and the stale-file removal and both new blocks are skipped.
@@ -968,7 +973,7 @@ REPLACE:
 ```text
 # ProbOS Progress
 
-**AD-738g S3a (2026-11-28), #1662 -- lip-sync timed by the synthesizer, opt in.** `scripts/kokoro-fetch.ps1 -TimedModel` also fetches kokoro-onnx's `model-files-v1.1` export, which reports phoneme durations, saved as `tools/kokoro/kokoro-v1.1.onnx` beside S1's `kokoro-v1.0.onnx`. No default changes: `tts.kokoro.model_path` stays S1's file until the operator sets it to the new one. The worker asks that model for phoneme timings with no added pauses and writes `<wav>.timing.json` beside each WAV; the resident service and `TTSResult.timing` carry it to the route. Under the new `lipsync.backend: synthesizer` the route checks the file against the WAV and sends Oculus frames inline (`src/probos/avatars/phoneme_visemes.py`, a 114-symbol espeak-IPA table); a sentence without usable timings is served exactly as `rhubarb`. The default stays `heuristic` and `rhubarb` is unchanged. To opt in, the operator runs `scripts/kokoro-fetch.ps1 -TimedModel` (326 MB) and sets `tts.kokoro.model_path` and `lipsync.backend: synthesizer`; removing the two lines is the rollback. Contract `prompts/ad-738g-s3a-synthesizer-timed-lipsync.md`.
+**AD-738g S3a (2026-11-28), #1662 -- lip-sync timed by the synthesizer, opt in.** `scripts/kokoro-fetch.ps1 -TimedModel` also fetches kokoro-onnx's `model-files-v1.1` export, which reports phoneme durations, saved as `tools/kokoro/kokoro-v1.1.onnx` beside S1's `kokoro-v1.0.onnx`. No default changes: `tts.kokoro.model_path` stays S1's file until the operator sets it to the new one. The worker asks that model for phoneme timings with no added pauses and writes `<wav>.timing.json` beside each WAV; the resident service and `TTSResult.timing` carry it to the route. Under the new `lipsync.backend: synthesizer` the route checks the file against the WAV and sends Oculus frames inline (`src/probos/avatars/phoneme_visemes.py`, a 114-symbol espeak-IPA table); a sentence without usable timings is served exactly as `rhubarb`. The default stays `heuristic` and `rhubarb` is unchanged. To opt in, the operator runs `scripts/kokoro-fetch.ps1 -TimedModel` (326 MB) and sets `tts.kokoro.model_path` and `lipsync.backend: synthesizer`; the rollback is to set both back to their previous values (the installer prints this install's S1 model path), not to delete them. Contract `prompts/ad-738g-s3a-synthesizer-timed-lipsync.md`.
 
 ```
 
@@ -984,12 +989,12 @@ REPLACE:
 ### AD-738g S3a -- lip-sync timed by the synthesizer: the kokoro-onnx export that reports durations, a timing file beside each WAV, an opt-in lip-sync backend (2026-11-28, #1662)
 
 - *Scope.* `scripts/kokoro-fetch.ps1` (the `-TimedModel` opt-in and its pin), `scripts/kokoro_worker.py` (`create_timed`, `write_timing`), `audio/tts/resident.py` (`timing_sidecar`, `PiperOutcome.timing`, `synthesize_outcome`), `audio/tts/backends.py` (`TTSResult.timing`), `audio/tts/kokoro_backend.py`, `avatars/phoneme_visemes.py` (new), `routers/avatars.py`, `config_models/experience.py` (`LipSyncConfig.backend` gains `synthesizer`). Contract `prompts/ad-738g-s3a-synthesizer-timed-lipsync.md`.
-- *D1.* Option D (the `model-files-v1.1` ONNX export, same weights, a `duration` output) over B (PyTorch kokoro in a second venv): the same engine, voices, licences and CPU path, one 326 MB file instead of about 1.6 GB, and timings asserted equal to torch's by the export script. B is the fallback if the file fails the raw duration check or the Captain rejects how it sounds; both were checked before the build.
+- *D1.* Option D (the `model-files-v1.1` ONNX export, same weights, a `duration` output) over B (PyTorch kokoro in a second venv): the same engine, voices, licences and CPU path, one 326 MB file instead of about 1.6 GB, and timings asserted equal to torch's by the export script. B is the fallback if the file fails the raw duration check or the Captain rejects how it sounds. D0 and D2's numeric ratio passed before the build. The Captain's D2 listen is pending and gates neither the build, the PR nor the merge, only his own opt-in and the later default flip (contract 12.4).
 - *D1b.* The new model is an installer opt-in, and no default changes: a default naming a file the operator has not fetched would drop his Kokoro voice to the browser voice on the next pull. Flipping the `model_path` default is a later slice, after the Captain accepts the sound.
 - *D2.* Timings travel as the raw file (`TTSResult.timing`), and frames are made in the route. A backend-side `visemes` field would import `avatars` from `audio`, which `rhubarb_backend` already imports: a cycle. The lip-sync choice belongs to the route.
 - *D3.* Zero added pauses, and only on a model with timings, so a one-batch sentence keeps S1's pacing. Zero also drops the batch-join silence on requests over 510 phonemes; a later slice may opt in to the library's pauses.
 - *D4.* The file is checked against the WAV (rate, sample count, bounds, order, at most 4096 entries); a refusal logs one WARNING and the sentence is served as `rhubarb`. `/api/avatars/lipsync` is unchanged.
-- *Reversal.* Remove the operator's `tts.kokoro.model_path` and `lipsync.backend` lines (S1's model and behaviour exactly); or revert the three commits. No persisted format changes.
+- *Reversal.* Set the operator's `tts.kokoro.model_path` and `lipsync.backend` back to their previous values (S1's model and behaviour exactly). Deleting them is not the same: an absent `lipsync.backend` is `heuristic`, and an absent `model_path` is the default folder's file. Or revert the three commits. No persisted format changes.
 
 ```
 
@@ -1233,10 +1238,13 @@ def test_w11_an_engine_without_timings_is_called_exactly_as_in_s1_and_writes_no_
 
 
 def test_w12_a_timed_engine_that_returns_no_timings_writes_no_timing_file(tmp_path: Path) -> None:
+    engine = FakeEngine(timed=True)
     out = tmp_path / "out.wav"
     log = io.StringIO()
 
-    assert worker.speak(FakeEngine(timed=True), frozenset(VOICES), "af_heart", {"text": "NOTIMINGS", "output_file": str(out)}, log)
+    assert worker.speak(engine, frozenset(VOICES), "af_heart", {"text": "NOTIMINGS", "output_file": str(out)}, log)
+
+    assert [(c.get("method"), c.get("sentence_pause"), c.get("clause_pause")) for c in engine.calls] == [("create_timed", 0.0, 0.0)]
 
     assert sorted(p.name for p in tmp_path.iterdir()) == ["out.wav"]
     assert log.getvalue() == ""
@@ -1499,7 +1507,7 @@ def _checked_spans(timing: bytes, wav: bytes) -> tuple[list[tuple[str, float, fl
         body = json.loads(timing.decode("ascii"))
         with wave.open(io.BytesIO(wav), "rb") as handle:
             rate, samples = handle.getframerate(), handle.getnframes()
-    except (ValueError, EOFError, wave.Error, struct.error) as exc:
+    except (ValueError, EOFError, wave.Error, struct.error, RecursionError) as exc:  # RecursionError: nested too deep
         return _refused(f"unreadable: {type(exc).__name__}")
     if not isinstance(body, dict) or body.get("v") != TIMING_VERSION:
         return _refused("not a version-1 timing object")
@@ -1533,7 +1541,13 @@ def _is_int(value: Any) -> bool:
 
 
 def _is_number(value: Any) -> bool:
-    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+    """A JSON int or float with a finite float value; an int past float range has none (``OverflowError``)."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    try:
+        return math.isfinite(value)
+    except OverflowError:
+        return False
 
 
 def _refused(reason: str) -> None:
@@ -1639,6 +1653,8 @@ def _shape(frames) -> list[tuple[str, float, float]]:
 
 _GOOD = [("m", 0.0, 0.1), ("\u0251", 0.1, 0.5)]
 _HALF = _wav(12000)  # 0.5 s
+_DEEP = b"[" * 100_000 + b"]" * 100_000  # 200,000 B, under TIMING_MAX_BYTES; deeper than any parser recursion limit
+_HUGE = 10**400  # 401 digits: parses (under the 4,300-digit limit) but has no float value
 
 
 # --- the table --------------------------------------------------------------------------------
@@ -1762,12 +1778,14 @@ def test_f6_a_rounding_gap_is_closed_not_shown_as_sil() -> None:
         (_timing([("m", True, 0.1)], 12000), _HALF),
         (_timing([("m", "0", 0.1)], 12000), _HALF),
         (_timing([("m", float("nan"), 0.1)], 12000), _HALF),
+        (_DEEP, _HALF),
+        (_timing([("m", _HUGE, 0.1)], 12000), _HALF),
     ],
     ids=[
         "not-utf8", "truncated-json", "not-an-object", "not-a-wav", "version-2", "rate-22050", "rate-bool",
         "samples-11999", "samples-float", "no-timings", "4097-timings", "timings-not-a-list", "entry-not-an-object",
         "symbol-two-chars", "symbol-not-a-string", "end-before-start", "negative-start", "past-the-audio",
-        "start-goes-back", "time-bool", "time-string", "time-nan",
+        "start-goes-back", "time-bool", "time-string", "time-nan", "nested-past-the-recursion-limit", "integer-past-float-range",
     ],
 )
 def test_x1_a_file_that_fails_a_check_is_refused_with_one_warning(
@@ -1950,6 +1968,43 @@ async def test_t8_refused_timings_fall_back_to_rhubarb_with_one_warning(
     assert len(calls) == 1
     refused = [r for r in caplog.records if "the synthesizer's timings were refused" in r.getMessage()]
     assert len(refused) == 1 and refused[0].levelno == logging.WARNING
+
+
+def _deep_timing(real):
+    return lambda wav: _DEEP if real(wav) is not None else None
+
+
+def _huge_timing(real):
+    def _read(wav):
+        data = real(wav)
+        if data is None:
+            return None
+        body = json.loads(data)
+        body["timings"][0]["s"] = _HUGE
+        return json.dumps(body).encode("ascii")
+    return _read
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("make", [_deep_timing, _huge_timing], ids=["nested-past-the-recursion-limit", "integer-past-float-range"])
+async def test_t9_timings_past_the_parsers_limits_keep_the_audio_and_fall_back_to_rhubarb_with_one_warning(
+    client, monkeypatch, tmp_path, caplog: pytest.LogCaptureFixture, make,
+) -> None:
+    caplog.set_level(logging.WARNING)
+    http, rt = client
+    _kokoro(rt, monkeypatch, tmp_path, timed=True, lipsync="synthesizer")
+    calls = _stub_rhubarb(monkeypatch)
+    monkeypatch.setattr(resident.PiperWorker, "_read_timing", staticmethod(make(resident.PiperWorker._read_timing)))
+
+    response = await http.post("/api/avatars/tts", json={"text": "Hello."})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["backend"] == "kokoro" and body["audio_attachment_id"] and body["duration_ms"] > 0
+    assert body["visemes"] == _RHUBARB and body["visemes_deferred"] is False
+    assert len(calls) == 1
+    refused = [r for r in caplog.records if "the synthesizer's timings were refused" in r.getMessage()]
+    assert len(refused) == 1 and refused[0].levelno == logging.WARNING
 ```
 
 Rules for 7.4 (orchestrator dry build, 2026-11-27):
@@ -1964,6 +2019,8 @@ Rules for 7.4 (orchestrator dry build, 2026-11-27):
 - A/B: on the base tree, 7.2 and 7.4 fail at collection (`TIMING_SUFFIX` and `phoneme_visemes` do not exist). On the candidate, all pass.
 
 **Oracle and dry build of record (the orchestrator, 2026-11-27, local Windows).** On a `git archive` of `fae613df` (tree `490bdbb8`), the oracle found 39 SEARCH/REPLACE pairs in section 6, each matching exactly once at a line start, and the four files of section 7 were written. With D1 to D4 corrected (D1 the `samples-float` case of `test_x1`, D2 its `ids`, D3 `test_f5`'s `abs=2e-4`, D4 the facade `--update-baseline` of 6.11), the 8.2 lines gave: M1 `141 passed, 1 skipped`; M2 `587 passed`; M3 pytest line `458 passed, 1 skipped`; `tests/test_ad1152_agentic_correlation.py -k default_off` `3 passed`; the facade check `passed (names=311, owned=298, incidental=13, models=229, fields=1886, env rows=4)`. The Builder's runs should reproduce these counts on the same tree; a different count is a stop-and-report, not a re-count.
+
+**Re-anchor of record (the orchestrator, 2026-11-28).** Batch head `55ae03eb` (tree `04e94e65`): the facade reports `fields=1887`, and `SystemConfig`'s `schema_sha256` differs from 6.11's informative value (PR #1873); 6.11's rule holds. After the round-1 repair, the M2 and M3 pytest lines each gain 4 cases and M1 gains none.
 
 ### 8.2 Focused checks on the candidate
 
@@ -1984,7 +2041,7 @@ All: d:/ProbOS/.venv/Scripts/python.exe scripts/run_test_gate.py --preflight-onl
 
 | ID | File: line (stripped) | Becomes | Killed by |
 |---|---|---|---|
-| S1 | worker: `if engine.has_timings:` | `if False:` | W10, R8, T6 |
+| S1 | worker: `if engine.has_timings:` | `if False:` | W10, W12, R8, T6 |
 | S2 | worker: `sentence_pause=0.0, clause_pause=0.0,` | `sentence_pause=0.25, clause_pause=0.1,` | W10, T6 |
 | S3 | worker: `samples, rate = engine.create(text, voice=voice, speed=speed, lang=lang_for(voice))` | `samples, rate, timings = engine.create_timed(text, voice=voice, speed=speed, lang=lang_for(voice), sentence_pause=0.0, clause_pause=0.0)` | W11, T7 (the untimed fake has no `create_timed` record shape) |
 | S4 | worker: `if timings:` | `if True:` | W11, W12 (an empty timing file appears) |
@@ -2005,8 +2062,10 @@ All: d:/ProbOS/.venv/Scripts/python.exe scripts/run_test_gate.py --preflight-onl
 | S18 | phoneme_visemes: `MAX_TIMINGS = 4096` | `MAX_TIMINGS = 4097` | X1 4097 entries |
 | S19 | phoneme_visemes: `("aa", "a\u0251...` | `\u0251` moved to the `E` group | V2 `U+0251` |
 | S20 | experience (unchanged by S3a): `model_path: str = "tools/kokoro/kokoro-v1.0.onnx"` | `"tools/kokoro/kokoro-v1.1.onnx"` (the default flip this slice does not make) | `test_c6`, `test_ad738g_kokoro_voice.py`:647, `test_ad1270e2c_experience_models.py`:212, `test_ad1152 -k default_off` |
+| S21 | phoneme_visemes: `except (..., struct.error, RecursionError) as exc:` | `, RecursionError` removed | X1 `nested-past-the-recursion-limit`, T9 `nested-...` |
+| S22 | phoneme_visemes: `except OverflowError:` | `except ZeroDivisionError:` | X1 `integer-past-float-range`, T9 `integer-...` |
 
-S20 now guards the decision not to move the default, so it runs against a line S3a does not edit. The installer has no mutation rows; its `-TimedModel` behaviour is checked by the hand sessions of 12.2. Record the base tree and each file's sha256 with the campaign, so a Builder whose files match does not repeat it. Rows to rerun if a file differs: S1 to S4 (worker), S5 to S8 (resident), S9 (backend), S10 to S12 (router), S13 to S19 (phoneme_visemes), S20 (experience).
+S20 now guards the decision not to move the default, so it runs against a line S3a does not edit. The installer has no mutation rows; its `-TimedModel` behaviour is checked by the hand sessions of 12.2. Record the base tree and each file's sha256 with the campaign, so a Builder whose files match does not repeat it. Rows to rerun if a file differs: S1 to S4 (worker), S5 to S8 (resident), S9 (backend), S10 to S12 (router), S13 to S19, S21, S22 (phoneme_visemes), S20 (experience).
 
 ## 9. Diff Reviewer brief (properties to verify)
 
@@ -2163,7 +2222,7 @@ Nothing breaks on a pull: S3a moves no default, so his S1 voice and his `lipsync
    - the mouth moves with no rhubarb delay.
 
    A Piper sentence still logs `visemes=inline` or `visemes=deferred`.
-5. **Rollback, any time:** remove the two lines and restart. That gives S1's model, pacing and rhubarb lip-sync exactly. Setting `lipsync.backend: rhubarb` alone keeps the new model with rhubarb frames.
+5. **Rollback, any time:** set `tts.kokoro.model_path: tools/kokoro/kokoro-v1.0.onnx` and `lipsync.backend: rhubarb` (the values before step 2), and restart. That gives S1's model, pacing and rhubarb lip-sync exactly. Do not delete the lines: an absent `lipsync.backend` is the code default `heuristic`. Setting `lipsync.backend: rhubarb` alone keeps the new model with rhubarb frames.
 
 ### 12.4 If D0 or the D2 listen fails
 
@@ -2174,10 +2233,10 @@ Nothing breaks on a pull: S3a moves no default, so his S1 voice and his `lipsync
 ## 13. Text for #1662 (the orchestrator posts both; no closing keyword)
 
 **Finding (the engine decision):**
-> S3 engine: option D, the kokoro-onnx `model-files-v1.1` export, over B (PyTorch kokoro in a second venv). The Captain's order was PyTorch first, then the ONNX export only if PyTorch failed. The PyTorch check succeeded: hexgrad's `KPipeline` gives `pred_dur` and English word timestamps. While answering it, the research found that kokoro-onnx's own `model-files-v1.1` release re-exports the same `.pth` weights with a `duration` output, which the kokoro-onnx 0.6.1 we already run reads (`has_timings`, `create_timed`). It is the same engine, voices file, licence set and CPU path. It is one 326 MB file instead of about 585 MB plus about 1 GB of torch, with no unproven pin set and no second venv, and its durations are asserted equal to torch's by the export script. Same answer, smaller cost, so D is built first. B stays the fallback if the file fails the raw duration check (D0) or the Captain rejects how it sounds (D2); both run before the build. The new model is an installer opt-in and no default changes, so nothing changes for anyone until they choose it. Contract: `prompts/ad-738g-s3a-synthesizer-timed-lipsync.md`. Refs #1662.
+> S3 engine: option D, the kokoro-onnx `model-files-v1.1` export, over B (PyTorch kokoro in a second venv). The Captain's order was PyTorch first, then the ONNX export only if PyTorch failed. The PyTorch check succeeded: hexgrad's `KPipeline` gives `pred_dur` and English word timestamps. While answering it, the research found that kokoro-onnx's own `model-files-v1.1` release re-exports the same `.pth` weights with a `duration` output, which the kokoro-onnx 0.6.1 we already run reads (`has_timings`, `create_timed`). It is the same engine, voices file, licence set and CPU path. It is one 326 MB file instead of about 585 MB plus about 1 GB of torch, with no unproven pin set and no second venv, and its durations are asserted equal to torch's by the export script. Same answer, smaller cost, so D is built first. B stays the fallback if the file fails the raw duration check (D0) or the Captain rejects how it sounds (D2). D0 and D2's numeric ratio passed before the build; the listen is pending and gates only the Captain's own opt-in. The new model is an installer opt-in and no default changes, so nothing changes for anyone until they choose it. Contract: `prompts/ad-738g-s3a-synthesizer-timed-lipsync.md`. Refs #1662.
 
 **Wave comment (when the S3a PR opens):**
-> AD-738g S3a in review: lip-sync timed by the synthesizer, opt in (`lipsync.backend: synthesizer`). No default changes: `lipsync.backend` stays `heuristic`, `rhubarb` is unchanged, and `tts.kokoro.model_path` stays S1's `kokoro-v1.0.onnx`, so a pull changes nothing. To opt in (after the weekend, whenever convenient): run `scripts\kokoro-fetch.ps1 -TimedModel` (326 MB, saved as `tools/kokoro/kokoro-v1.1.onnx` beside S1's file); set `tts.kokoro.model_path: tools/kokoro/kokoro-v1.1.onnx` and `lipsync.backend: synthesizer` in `config/system.yaml`; restart and reload; check the log for `visemes=synthesizer`. Rollback: remove those two lines. Pre-build checks D0 to D4: <results>. D0e and installer sessions: <results>. Refs #1662.
+> AD-738g S3a in review: lip-sync timed by the synthesizer, opt in (`lipsync.backend: synthesizer`). No default changes: `lipsync.backend` stays `heuristic`, `rhubarb` is unchanged, and `tts.kokoro.model_path` stays S1's `kokoro-v1.0.onnx`, so a pull changes nothing. To opt in (after the weekend, whenever convenient): run `scripts\kokoro-fetch.ps1 -TimedModel` (326 MB, saved as `tools/kokoro/kokoro-v1.1.onnx` beside S1's file); set `tts.kokoro.model_path: tools/kokoro/kokoro-v1.1.onnx` and `lipsync.backend: synthesizer` in `config/system.yaml`; restart and reload; check the log for `visemes=synthesizer`. Rollback: set them back to what they were (`tts.kokoro.model_path: tools/kokoro/kokoro-v1.0.onnx`, `lipsync.backend: rhubarb`) and restart; deleting them would leave lip-sync on `heuristic`. Pre-build checks D0 to D4: <results>. D0e and installer sessions: <results>. Refs #1662.
 
 ## 14. Tracking
 
@@ -2224,6 +2283,8 @@ Nothing breaks on a pull: S3a moves no default, so his S1 voice and his `lipsync
 ## 17. Verified Against Codebase (2026-11-28, tree `6b9082a9`; re-anchored 2026-11-27 on tree `490bdbb8`)
 
 The repair of PR #1872 changed only `src/probos/audio/tts/piper_backend.py` and `tests/test_ad738g_kokoro_voice.py` (`git diff --stat 88676ab1 fae613df`); their rows below are re-read on `490bdbb8`, and the other rows stand as read on `6b9082a9`.
+
+Re-anchored 2026-11-28 on `55ae03eb` (tree `04e94e65`) by the orchestrator; the round-1 repair's citations are `phoneme_visemes.py`:128 and :161-162, `experience.py`:730, `kokoro-fetch.ps1`:16 and :149, `resident.py`:346-347, and `fake_kokoro_worker.py`:73-78.
 
 ```text
 git rev-parse HEAD HEAD^{tree}
