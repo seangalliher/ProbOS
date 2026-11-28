@@ -456,7 +456,10 @@ async def _stop_held_start_service(
     stop = getattr(service, "stop", None)
     start_pending = isinstance(start_task, asyncio.Task) and not start_task.done()
     stop_awaitable = inspect.iscoroutinefunction(stop)
-    if not (start_pending or stop_awaitable):
+    # AD-738g S2 (#1662): a task-only row (no service) reaches the finally even when its task has
+    # ended, so the attribute is cleared; there is nothing to cancel, await or stop.
+    task_only = service_attr is None and start_task is not None
+    if not (start_pending or stop_awaitable or task_only):
         return
 
     current = asyncio.current_task()

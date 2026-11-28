@@ -20,6 +20,7 @@ Nothing here needs kokoro-onnx.
 - P11 startup starts the warm-up and returns before the worker answers
 - P12 finalize starts it, and shutdown cancels it before the voice service closes (the wiring)
 - P13 the switch is on by default and can be turned off
+- P14 shutdown clears a warm-up that has already ended, finished or cancelled
 """
 
 from __future__ import annotations
@@ -386,3 +387,31 @@ def test_p13_the_switch_is_on_by_default_and_can_be_turned_off() -> None:
     assert TTSConfig().backend == "browser"  # on by default, and inert on the default backend
     assert TTSConfig.model_validate({"backend": "kokoro", "kokoro": {"prewarm": False}}).kokoro.prewarm is False
     assert list(KokoroTTSConfig().model_dump())[-1] == "prewarm"
+
+
+# --- shutdown, a warm-up that has ended -------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("ending", ["finished", "cancelled"])
+async def test_p14_shutdown_clears_a_warm_up_that_has_already_ended(
+    ending: str, service, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cfg, record = _installed(tmp_path, monkeypatch)
+    rt = _runtime(TTSConfig(backend="kokoro", kokoro=cfg), service)
+
+    finalize_module._start_voice_prewarm(runtime=rt, config=rt.config, delay_seconds=0.0)
+    task = rt.voice_prewarm_task
+    if ending == "finished":
+        assert (await task) is True
+    else:
+        task.cancel()  # before its first step: the coroutine never runs
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    assert task.done() and rt.voice_prewarm_task is task
+
+    await _stop_task(rt)
+
+    assert rt.voice_prewarm_task is None
+    assert service.resident_count == (1 if ending == "finished" else 0)
+    assert len(_calls(record)) == (1 if ending == "finished" else 0)

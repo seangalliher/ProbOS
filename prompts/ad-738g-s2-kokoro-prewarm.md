@@ -1,14 +1,14 @@
 # AD-738g S2 (#1662): warm the resident Kokoro worker once, in the background, after boot
 
 **Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-28
-**Amended by:** the orchestrator, 2026-11-28, after the dry build (8.1): the `_installed` helper in 7.1 merges `update` over its defaults, so `test_p3` can override `python_path`. As drafted the helper passed `python_path` twice and P3 failed at 18 passed, 1 failed. The expected `-k default_off` count in 8.2 is corrected from 2 to 3: the second test is parametrised over two platforms. Amended again 2026-11-28 after E1 to E3 (12.2): 12.3 step 3's memory command now also shows ParentProcessId and Name, with a note to read the worker's row, because the command lists two processes, the venv launcher (about 5 MB) and its child, the worker. In 8.3, F5 is killed by P7, P8, P10 and P11; P9 calls prewarm() directly and cannot see it.
+**Amended by:** the orchestrator, 2026-11-28, after the dry build (8.1): the `_installed` helper in 7.1 merges `update` over its defaults, so `test_p3` can override `python_path`. As drafted the helper passed `python_path` twice and P3 failed at 18 passed, 1 failed. The expected `-k default_off` count in 8.2 is corrected from 2 to 3: the second test is parametrised over two platforms. Amended again 2026-11-28 after E1 to E3 (12.2): 12.3 step 3's memory command now also shows ParentProcessId and Name, with a note to read the worker's row, because the command lists two processes, the venv launcher (about 5 MB) and its child, the worker. In 8.3, F5 is killed by P7, P8, P10 and P11; P9 calls prewarm() directly and cannot see it. Amended a third time 2026-11-28 after review round 1 (finding F1: a task-only task that had already ended was never cleared at shutdown): the early-return guard of `_stop_held_start_service` gains `task_only` (P3.5), test P14 pins it (two cases, 21 collected items), mutation row S3 is added, and 8.1's pair total is corrected (its own list sums to 18 with P3.5; it said 19). F2 and F3 are text fixes: the ASCII rule now names its exceptions (the generator's dash, the quoted DECISIONS anchor), two arrows are words, and the warm-up sentence is 61 characters.
 **Status:** ready to build once the orchestrator's oracle and dry build (8.1) pass on the final base. **Owning issue:** #1662. It stays open: S4, S5 and the Captain's live acceptance remain. Commit bodies end `Refs #1662.`. No subject carries an `AD-` or `BF-` token or the words close, fix or resolve, and the PR text has no closing keyword.
 **Base:** stacked on `fb0dc4850897d435df17d53c805943b940bb2c8e` (tree `a63b3690b48b248c76ddc37c03abde248748b09b`): S1, AD-738f and S3a. Main does not have S1 yet. S3a is in review and a repair may move its code. Every pair below anchors on lines S3a did not write, except where 6.1 and 6.5 name the S3a lines they rely on. S2 may share one broad gate with S3a as a batch if S3a's gate has not run yet; otherwise it gets its own.
 **Number:** a slice of AD-738g, the issue's own number, as S1 and S3a were. No new AD or BF number is allocated.
 **Design base:** the Architect decision of 2026-11-28 01:02 (`s2-options-decision.md`): option A, one real sentence after boot, `tts.kokoro.prewarm: bool = True`, the hook in `startup/finalize.py`, the stored task, the shutdown cancel table, the failure behaviour, the tests and measurements. This contract changes that note in three places, and decision 2, 5 and 6 give the reasons: no `_worker_key()` extraction; `_stop_held_start_service` accepts a missing service; the warm-up line has reply length.
 **The Captain's direction (2026-11-28 UTC):** S3 first, then S2. CPU only, because the GPU stays with Ollama. The GPL stays in the worker process. Nothing may change a default he is not already using: `tts.backend` stays `browser`, and the new switch acts only when `tts.backend == "kokoro"`.
-**Line endings:** the working copies are CRLF and the blocks below are LF; match after normalising. Every SEARCH starts at the beginning of a line and occurs once in its file at its turn. All new text is ASCII.
-**Estimated tests:** one new file with 13 test functions, 19 collected items (P10 is parametrised over 7 cases). Three existing tests are updated in place, each with its reason inline: two default-dump pins and one facade count. The fake worker fixture gains three test texts. Nothing is removed. No UI change.
+**Line endings:** the working copies are CRLF and the blocks below are LF; match after normalising. Every SEARCH starts at the beginning of a line and occurs once in its file at its turn. New authored text is ASCII; a quotation of a generated row or of an existing anchor keeps its characters (the generator's dash in `config-reference.md`, the em dash of the DECISIONS heading).
+**Estimated tests:** one new file with 14 test functions, 21 collected items (P10 is parametrised over 7 cases, P14 over 2). Three existing tests are updated in place, each with its reason inline: two default-dump pins and one facade count. The fake worker fixture gains three test texts. Nothing is removed. No UI change.
 
 ## 1. Problem (premise table)
 
@@ -38,7 +38,7 @@ S2 is one slice in two commits.
   - It acts only when `tts.enabled`, `tts.backend == "kokoro"`, `tts.kokoro.prewarm` and `runtime.voice_synthesis` is a real `VoiceSynthesisService`.
   - It stores `runtime.voice_prewarm_task = asyncio.create_task(backend.prewarm(delay_seconds=PREWARM_DELAY_SECONDS), name="ad738g-s2-kokoro-prewarm")`.
   - `finalize_startup` calls it once, just before `runtime._started = True`.
-- **Shutdown.** The BF-881 table gains the row `(None, "voice_prewarm_task", "AD-738g S2 Kokoro prewarm")`. `_stop_held_start_service` accepts `service_attr=None`, so the row cancels and awaits the task. This happens before `_close_voice_synthesis`, in a rollback too.
+- **Shutdown.** The BF-881 table gains the row `(None, "voice_prewarm_task", "AD-738g S2 Kokoro prewarm")`. `_stop_held_start_service` accepts `service_attr=None`, so the row cancels and awaits the task, or only clears the attribute when the task has already ended. This happens before `_close_voice_synthesis`, in a rollback too.
 - **Config.** `KokoroTTSConfig.prewarm: bool = True`, defaulted on, with the reason in its docstring: it acts only on a vessel already set to `kokoro`. Every pinned or generated file moves in the same commit (6.6, 6.7).
 - **Tests.** One new file runs the real worker loop with the fake engine as a real subprocess under the real service. The fake engine gains three texts: `CRASH` exits, `SLOW` takes 0.5 s and `HANG` sleeps 60 s.
 
@@ -59,8 +59,8 @@ Rejected, one line each:
 | 2 | `prewarm` calls `_speak`; nothing is moved out of it | `_speak` (`kokoro_backend.py`:136-175) holds the only key-building code and the only service call. Calling it gives the same guarantee the note's `_worker_key()` was meant to give, and S3a's lines :165-175 stay as they are. P2 pins key equality and P1 pins one process. |
 | 3 | The ship's voice (`cfg.voice`) at speed 1.0 | The voice and speed travel on the request line and are not part of `KokoroWorkerKey` (`resident.py`:181-186). One warm-up therefore serves all 28 voices and every role in the same language. Speed 1.0 is inside the engine's range whatever `cfg.speed` is. |
 | 4 | Not through the route | The route records speech activity for the dream scheduler (`avatars.py`:288-290) and stores the audio as an attachment. The warm-up does neither. The service deletes the WAV, and S3a's timing file, as it does for every request (`resident.py`:336-344). P1 checks that the worker's directory holds only `stderr.log` afterwards, and P7 and P11 check that the dream scheduler saw nothing. |
-| 5 | `_stop_held_start_service(service_attr=None)` cancels a task that has no service | The table's loop already does the hard part. It cancels a pending start task first, swallows only that task's own `CancelledError`, re-raises an outer cancellation (BF-303 Ctrl+C), logs any other failure and clears the attribute. Three lines change: the parameter type, the `getattr` and the guard on the `setattr`. Every existing caller passes a string and is unchanged. |
-| 6 | `PREWARM_TEXT` is one ordinary reply-length sentence (62 characters), not a word | ONNX Runtime's CPU arena grows to the largest input it has seen (onnxruntime #11627, section 15). A sentence of reply length warms the buffers a reply needs, where one word might leave the first reply paying part of the cost again. E1 measures it. |
+| 5 | `_stop_held_start_service(service_attr=None)` cancels a task that has no service | The table's loop already does the hard part. It cancels a pending start task first, swallows only that task's own `CancelledError`, re-raises an outer cancellation (BF-303 Ctrl+C), logs any other failure and clears the attribute. Four places change: the parameter type, the `getattr`, the early-return guard (a task-only row reaches the `finally` when its task has ended, so the attribute is cleared) and the guard on the `setattr`. Every existing caller passes a string and is unchanged. |
+| 6 | `PREWARM_TEXT` is one ordinary reply-length sentence (61 characters), not a word | ONNX Runtime's CPU arena grows to the largest input it has seen (onnxruntime #11627, section 15). A sentence of reply length warms the buffers a reply needs, where one word might leave the first reply paying part of the cost again. E1 measures it. |
 | 7 | The delay is the module constant `PREWARM_DELAY_SECONDS = 5.0` | Its only job is to keep the warm-up's CPU out of the rest of the start, and there is no measured need to tune it. The `delay_seconds` argument exists for tests and is not config. |
 | 8 | The switch defaults on | It acts only when `tts.backend` is already `kokoro`, and the default is `browser` (`experience.py`:839), so no default the Captain is not using changes. On a vessel already on Kokoro the only change is that the load happens at boot, and is also paid in a session that never speaks. `tts.kokoro.prewarm: false` restores S1's behaviour exactly. |
 | 9 | Failure leaves the service exactly as a failed reply would | Not installed: `_speak`'s existing WARNING, then the S2 INFO line with `degraded`, and nothing starts. A crash or a timeout makes `synthesize_outcome` retire the worker (`resident.py`:622-629), and the next reply starts it cold, as today. Cancellation is passed on. Anything else is logged with its traceback and ends in `degraded`. |
@@ -302,6 +302,20 @@ REPLACE:
     ):
 ```
 
+**P3.5** SEARCH:
+```python
+    if not (start_pending or stop_awaitable):
+        return
+```
+REPLACE:
+```python
+    # AD-738g S2 (#1662): a task-only row (no service) reaches the finally even when its task has
+    # ended, so the attribute is cleared; there is nothing to cancel, await or stop.
+    task_only = service_attr is None and start_task is not None
+    if not (start_pending or stop_awaitable or task_only):
+        return
+```
+
 The table runs unconditionally in `shutdown()` (`:1582`, function body level), so a startup rollback cancels the task too. It runs before `_close_voice_synthesis` (`:1661`).
 
 ### 6.4 `src/probos/config_models/experience.py` (M1)
@@ -426,7 +440,7 @@ Expected:
 - `git diff docs/development/config-reference.md` is one added row after `:2079` (the `agent_voices` row of `## tts.kokoro`): ``| `prewarm` | `bool` | `True` | — |  |``. Any other line is a stop.
 - `git diff docs/development/config-facade-baseline.yaml` adds one row and changes six. The orchestrator's dry build confirms the values.
   - Added after `:2245`: `    - {default: 'True', name: prewarm}`.
-  - Changed: `surface_counts.canonical_dump_leaves` (`:50`, 1892 → 1893) and `surface_counts.field_definitions` (`:51`, 1887 → 1888).
+  - Changed: `surface_counts.canonical_dump_leaves` (`:50`, 1892 to 1893) and `surface_counts.field_definitions` (`:51`, 1887 to 1888).
   - Changed: `canonical_dump_sha256` (`:56`).
   - Changed: the `schema_sha256` of `KokoroTTSConfig` (`:2236`), of `TTSConfig` (`:3643`, whose schema embeds the nested model) and of `SystemConfig` (`:3431`, which depends on every config model).
   - Nothing else moves: no other `default:` row, no `names` or `models` entry, no other count. Anything else is a stop. `SystemConfig`'s value also differs if main has taken another config change; the rule (these rows only) still holds.
@@ -503,6 +517,7 @@ Nothing here needs kokoro-onnx.
 - P11 startup starts the warm-up and returns before the worker answers
 - P12 finalize starts it, and shutdown cancels it before the voice service closes (the wiring)
 - P13 the switch is on by default and can be turned off
+- P14 shutdown clears a warm-up that has already ended, finished or cancelled
 """
 
 from __future__ import annotations
@@ -869,6 +884,34 @@ def test_p13_the_switch_is_on_by_default_and_can_be_turned_off() -> None:
     assert TTSConfig().backend == "browser"  # on by default, and inert on the default backend
     assert TTSConfig.model_validate({"backend": "kokoro", "kokoro": {"prewarm": False}}).kokoro.prewarm is False
     assert list(KokoroTTSConfig().model_dump())[-1] == "prewarm"
+
+
+# --- shutdown, a warm-up that has ended -------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("ending", ["finished", "cancelled"])
+async def test_p14_shutdown_clears_a_warm_up_that_has_already_ended(
+    ending: str, service, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cfg, record = _installed(tmp_path, monkeypatch)
+    rt = _runtime(TTSConfig(backend="kokoro", kokoro=cfg), service)
+
+    finalize_module._start_voice_prewarm(runtime=rt, config=rt.config, delay_seconds=0.0)
+    task = rt.voice_prewarm_task
+    if ending == "finished":
+        assert (await task) is True
+    else:
+        task.cancel()  # before its first step: the coroutine never runs
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    assert task.done() and rt.voice_prewarm_task is task
+
+    await _stop_task(rt)
+
+    assert rt.voice_prewarm_task is None
+    assert service.resident_count == (1 if ending == "finished" else 0)
+    assert len(_calls(record)) == (1 if ending == "finished" else 0)
 ```
 
 Notes for the reviewer of 7.1:
@@ -880,7 +923,7 @@ Notes for the reviewer of 7.1:
 
 ### 8.1 Oracle tree, before the Builder starts
 
-- Count each SEARCH of section 6 at its turn: 1 each, 19 pairs (6.1: 3, 6.2: 2, 6.3: 4, 6.4: 1, 6.5: 2, 6.6: 3, 6.8: 2). 7.1 does not exist.
+- Count each SEARCH of section 6 at its turn: 1 each, 18 pairs (6.1: 3, 6.2: 2, 6.3: 5, 6.4: 1, 6.5: 2, 6.6: 3, 6.8: 2). 7.1 does not exist.
 - A/B: on the base tree 7.1 fails at collection, because `finalize_module._start_voice_prewarm` is missing and `kokoro_backend.PREWARM_TEXT` is read. On the candidate all of it passes.
 - The orchestrator's dry build supplies the counts of 8.2 and the digests of 6.7. The Builder's runs should reproduce them on the same tree; a different count is a stop-and-report, not a re-count.
 
@@ -895,7 +938,7 @@ M2: the two commands of 6.7 (M2)
 All: d:/ProbOS/.venv/Scripts/python.exe scripts/run_test_gate.py --preflight-only --label ad-738g-s2
 ```
 Expected:
-- `tests/test_ad738g_s2_kokoro_prewarm.py` alone gives `19 passed`.
+- `tests/test_ad738g_s2_kokoro_prewarm.py` alone gives `21 passed`.
 - The whole first M1 line gives the dry build's count, with nothing skipped that was not skipped on the base.
 - `-k default_off` gives `3 passed`: `test_default_off_matches_pinned_base` (`:572`) and `test_default_off_golden_pins_only_descriptor_owner_platform` (`:587`), which is parametrised over `linux` and `win32`.
 
@@ -927,9 +970,10 @@ Retriage a parallel failure at `-n 0`.
 | F7 | finalize: `_start_voice_prewarm(runtime=runtime, config=config)` (in `finalize_startup`) | removed | P12 |
 | S1 | shutdown: `(None, "voice_prewarm_task", "AD-738g S2 Kokoro prewarm"),` | removed | P12 |
 | S2 | shutdown: `service = getattr(runtime, service_attr, None) if service_attr else None` | `service = getattr(runtime, service_attr, None)` | P7, P8 (`getattr` with `None` raises `TypeError`) |
+| S3 | shutdown: `if not (start_pending or stop_awaitable or task_only):` | `if not (start_pending or stop_awaitable):` | P14 finished, cancelled |
 | C1 | experience: `prewarm: bool = True` | `prewarm: bool = False` | P13, `test_ad1270e2c_experience_models.py` (the dump pin), `test_ad1152_agentic_correlation.py -k default_off` |
 
-P3.3 is a type guard only: `service_attr` is falsy only when `service` is `None`. It has no row. Record the base tree and each file's sha256 with the campaign, so a Builder whose files match does not repeat it. Rows to rerun if a file differs: W1 to W6 (kokoro_backend), F1 to F7 (finalize), S1 and S2 (shutdown), C1 (experience).
+P3.3 is a type guard only: `service_attr` is falsy only when `service` is `None`. It has no row. Record the base tree and each file's sha256 with the campaign, so a Builder whose files match does not repeat it. Rows to rerun if a file differs: W1 to W6 (kokoro_backend), F1 to F7 (finalize), S1 to S3 (shutdown), C1 (experience).
 
 ## 9. Diff Reviewer brief (properties to verify)
 
@@ -943,13 +987,13 @@ The consumers that must accept the change are:
 1. When `tts.backend` is `browser` or `piper`, or `tts.enabled` is false, or the switch is off, or the runtime has no real `VoiceSynthesisService`, startup creates no task and starts no process. The default config behaves as before.
 2. The warm-up builds no worker key of its own: it calls `_speak`, and the admission, lock, claim and retire logic is the service's, unchanged. It cannot start a second worker.
 3. The warm-up never calls `record_speech_activity`, never reaches a route or the attachment store, and leaves no file. The service deletes the WAV and the timing file as for any request.
-4. The task is stored on `runtime.voice_prewarm_task`, named, and never awaited in `finalize_startup`. Shutdown cancels and awaits it before `_close_voice_synthesis`, in a rollback too. An outer cancellation (BF-303) still propagates.
+4. The task is stored on `runtime.voice_prewarm_task`, named, and never awaited in `finalize_startup`. Shutdown cancels and awaits it before `_close_voice_synthesis`, in a rollback too. A task that has already ended (finished or cancelled) is not awaited again; its attribute is cleared. An outer cancellation (BF-303) still propagates.
 5. `prewarm` never raises except `CancelledError`. After a crash, a timeout or a missing install the service is as a failed reply leaves it, and the next reply starts the worker cold.
 6. `_stop_held_start_service` behaves byte for byte as before for every existing caller, all of which pass a string `service_attr`.
 7. M1 holds the field and every file it moves, with exactly 6.7's diffs.
 8. No census count moves: AD-1346 file-write and effect, BF-892 spawn.
 9. No default the Captain uses changes: `tts.backend` (`browser`), `lipsync.backend` (`heuristic`) and every Kokoro field but the new one.
-10. New text is ASCII, and `git diff --check` is clean.
+10. New authored text is ASCII; a quotation of a generated row or of an existing anchor keeps its characters (the generator's dash in `config-reference.md`, the em dash of the DECISIONS heading), and `git diff --check` is clean.
 
 ## 10. What this does not change, and what waits
 
@@ -1149,7 +1193,7 @@ His vessel is already on `tts.backend: kokoro`, so S2 acts on the next restart.
    - Pre-existing tests in those files pass unchanged, except the in-place edits of 6.6 a to c, each with its reason inline.
    - The config tools pass in `--check` form with exactly 6.7's diffs.
    - No census count moves.
-3. `git diff --check` is clean, new text is ASCII, and no unnamed file changes.
+3. `git diff --check` is clean, new authored text is ASCII (quotations excepted, as in 9.10), and no unnamed file changes.
 4. The Diff Reviewer verifies the properties of section 9.
 5. One receipted broad gate on the committed head is green, shared with S3a as a batch if S3a's has not run.
 6. E1 to E3 (12.2) run before the PR opens, with no gate running, and are recorded on #1662. On a failure the defaults stay and the Architect decides as 12.2 says.
@@ -1197,7 +1241,7 @@ src/probos/runtime.py 859 self.voice_synthesis = VoiceSynthesisService(); 3728 f
 src/probos/startup/shutdown.py
   9 import asyncio; 11 import inspect; 22 from probos.audio.tts.resident import VoiceSynthesisService
   109-121 _close_voice_synthesis; 429-499 _stop_held_start_service (432 service_attr: str, 453 getattr,
-  456 start_pending, 461-465 outer cancel, 468-481 cancel and await the start task, 496-497 setattr guard)
+  456 start_pending, 459 early return, 461-465 outer cancel, 468-481 cancel and await the start task, 496-497 setattr guard)
   870-871 async def shutdown(runtime, reason="", *, rollback=False)
   1582-1595 the BF-881 table (1587-1588 the plan_of_day row); 1660-1661 _close_voice_synthesis(runtime)
 src/probos/config_models/experience.py 639 class KokoroTTSConfig; 676-682 agent_voices and its docstring;
