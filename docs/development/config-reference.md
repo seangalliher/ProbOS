@@ -2040,7 +2040,7 @@ AD-721b-1 — Server-side lip-sync backend selection.
 | Field | Type | Default | Bounds | Description |
 |---|---|---|---|---|
 | `enabled` | `bool` | `True` | — |  |
-| `backend` | `Literal['heuristic', 'rhubarb']` | `'heuristic'` | — |  |
+| `backend` | `Literal['heuristic', 'rhubarb', 'synthesizer']` | `'heuristic'` | — |  |
 | `binary_path` | `str` | `'tools/rhubarb/rhubarb'` | — |  |
 | `timeout_seconds` | `float` | `30.0` | — |  |
 | `ffmpeg_binary_path` | `str` | `'tools/ffmpeg/ffmpeg'` | — |  |

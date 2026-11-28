@@ -723,9 +723,13 @@ class LipSyncConfig(BaseModel):
     """Master switch for the lip-sync pipeline. ``False`` disables both
     backends — CrewVRM falls back to the AD-721 D5 amplitude path."""
 
-    backend: Literal["heuristic", "rhubarb"] = "heuristic"
+    backend: Literal["heuristic", "rhubarb", "synthesizer"] = "heuristic"
     """``heuristic``: AD-721b v1 text→viseme. ``rhubarb``: subprocess to
-    rhubarb-lip-sync for phonetic alignment of real audio."""
+    rhubarb-lip-sync for phonetic alignment of real audio. ``synthesizer``
+    (AD-738g S3a, #1662): frames from the phoneme timings the Kokoro worker reports
+    when its model has a duration output (``tts.kokoro.model_path``'s default does),
+    sent inline with the audio; a sentence without usable timings (Piper, an older
+    Kokoro model, a timing file the check refuses) is served exactly as ``rhubarb``."""
 
     binary_path: str = "tools/rhubarb/rhubarb"
     """Path (relative to repo root or absolute) to the rhubarb binary.

@@ -402,7 +402,8 @@ def test_approval_inbox_exclusive_lower_bound_survived_the_move() -> None:
 @pytest.mark.parametrize(
     ("model_name", "value"),
     # AD-738g S1 (#1662): "kokoro" joins the TTS backend Literal; "espeak" stays rejected below.
-    [("TTSConfig", "piper"), ("TTSConfig", "kokoro"), ("LipSyncConfig", "rhubarb")],
+    # AD-738g S3a: "synthesizer" joins the lip-sync backend Literal.
+    [("TTSConfig", "piper"), ("TTSConfig", "kokoro"), ("LipSyncConfig", "rhubarb"), ("LipSyncConfig", "synthesizer")],
 )
 def test_backend_literals_accept_their_declared_alternative(
     model_name: str, value: str
